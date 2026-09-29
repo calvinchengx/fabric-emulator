@@ -764,6 +764,47 @@ jobs:
       # python/tests/test_make_check_runs_in_ci.py requires of anything in
       # that target.
       - run: uv run --frozen --no-sync python scripts/check_script_test_coverage.py --strict
+      # THE ONE DIMENSION NONE OF THE GUARDS ABOVE CAN SEE: cost. `func
+      # Benchmark` returns 0 hits across 552 test files here and there is no
+      # stored timing baseline anywhere in the tree, so no performance
+      # regression in this repository is detectable by measurement -- not by
+      # this job, not by `make check`, not by anything. Standing up a benchmark
+      # corpus and a comparison harness is a different and much larger piece of
+      # work; what is decidable offline and today is the shape that needs no
+      # stopwatch to be a regression: per-request work whose size the CALLER
+      # chooses and nothing bounds.
+      #
+      # Measured when this landed: 70 sites consume an inbound request body
+      # (68 `json.NewDecoder(r.Body)` and 2 bare `io.ReadAll(r.Body)`) against
+      # ZERO uses of `http.MaxBytesReader` in the whole repository. A streaming
+      # decoder allocates as it reads, so any client could make the emulator
+      # allocate without limit on any of those 68, and a 69th added tomorrow
+      # inherited it invisibly. The 23 `httpx.ReadBounded` sites WERE bounded,
+      # which is what made the gap read as closed: every site reading a body as
+      # bytes went through a ceiling, every site streaming it through a decoder
+      # went through none. internal/httpx/guard_test.go does not cover it
+      # either -- it bans the `io.ReadAll(io.LimitReader(...))` idiom, a bound
+      # that truncates, and is blind to the absence of a bound.
+      #
+      # Both bare reads were repaired onto ReadBounded and ONE outer bound now
+      # sits at the root handler, behind FABRIC_MAX_REQUEST_BYTES with a
+      # 320 MiB default and 0 meaning unlimited -- a knob because it NARROWS
+      # what a released binary accepts, which check_backward_compat.py one
+      # gate up exists to make reviewable. So the ledger ships empty rather
+      # than 70 entries deep: a ledger of 70 accepted entries documents a
+      # problem instead of closing it.
+      #
+      # It also holds the ORDERING of the ceilings, which is the half nobody
+      # would think to check. ReadBounded detects overflow by probing max+1, so
+      # an outer bound set AT an inner ceiling makes the probe itself trip and
+      # replaces httpx's specific fit-vs-truncated message with net/http's
+      # generic refusal. A 256 MiB outer bound -- exactly MaxBlobWrite, the
+      # ceiling Microsoft's `fab cp` has actually crossed once
+      # (docs/34-fab-driven-example.md) -- would have shipped that while
+      # looking obviously correct. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_perf_regressions.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the

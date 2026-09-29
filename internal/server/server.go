@@ -248,7 +248,7 @@ func (s *Server) Handler() http.Handler {
 	recorded := s.record(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mux.ServeHTTP(w, r)
 	}))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.Host, "onelake.blob."):
 			s.OneLake.ServeBlob(w, r)
@@ -261,6 +261,70 @@ func (s *Server) Handler() http.Handler {
 		default:
 			recorded.ServeHTTP(w, r)
 		}
+	})
+	return s.boundBodies(routed)
+}
+
+// boundBodies installs the ONE outer ceiling on every inbound request body.
+//
+// WHY AT THE ROOT AND NOT PER HANDLER. internal/httpx already bounds the sites
+// that read a body as BYTES -- 23 ReadBounded calls, each with a ceiling chosen
+// by the handler that knows what it is reading. What no ceiling reached was the
+// 68 `json.NewDecoder(r.Body)` sites: a streaming decoder allocates as it goes,
+// so before this the emulator would allocate whatever a client chose to send on
+// any of them, and a 69th added tomorrow inherited the same exposure invisibly.
+// One bound at the root closes the class instead of the instances, which is why
+// it is not 68 edits. scripts/check_perf_regressions.py holds the coupling.
+//
+// IT WRAPS THE DATA PLANE TOO, unlike the recorder above. The recorder is
+// diagnostics and has no business on a Delta file's response path; this is a
+// memory bound, and the data plane is the surface most able to exhaust memory.
+// Large uploads are unaffected because the ceiling sits ABOVE the Blob one --
+// httpx.DefaultMaxRequestBody is 320 MiB against MaxBlobWrite's 256 MiB, so an
+// oversized blob write still fails with that package's specific fit-vs-truncated
+// message rather than this one's generic refusal. That ordering is the whole
+// reason the default is not 256 MiB; see httpx.DefaultMaxRequestBody.
+//
+// TWO PATHS, because http.MaxBytesReader alone cannot answer 413. It makes reads
+// FAIL, and the handler that was decoding then reports its own error -- so an
+// oversized body would be refused as "malformed JSON", telling the caller
+// something untrue about their request. So:
+//
+//   - A declared Content-Length over the bound is refused here, unread, with
+//     413. Every client sending a body sets it, so this is the path real traffic
+//     takes and the one the status code matters for.
+//   - Anything else (chunked, or no declared length) is wrapped in
+//     MaxBytesReader. The allocation is still capped -- which is the property
+//     that matters -- and the handler reports the read failure in its own voice.
+//
+// A bound of 0 disables both, which is FABRIC_MAX_REQUEST_BYTES=0: the documented
+// escape hatch for anyone already posting something larger than the default.
+func (s *Server) boundBodies(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		max := s.Cfg.MaxRequestBytes
+		if max <= 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.ContentLength > max {
+			// Written in the control plane's error shape. The data plane's
+			// dialects spell errors differently, but a request refused before
+			// routing has not yet been attributed to a surface, and 413 with a
+			// readable reason is more use to a caller than a guess at which
+			// vocabulary they expected.
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+				"error":           "request body too large",
+				"maxRequestBytes": max,
+				"contentLength":   r.ContentLength,
+				"hint": "Raise or remove the bound with FABRIC_MAX_REQUEST_BYTES " +
+					"(0 means unlimited); see docs/04-configuration.md.",
+			})
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, max)
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

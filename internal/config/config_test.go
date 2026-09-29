@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
+)
 
 func fromEnvForTest(t *testing.T) (*Config, error) {
 	t.Helper()
@@ -305,5 +309,55 @@ func TestForceLROFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_DEFINITION_LRO", "true")
 	if !FromEnvPartial().ForceLRO {
 		t.Fatal("FABRIC_DEFINITION_LRO no longer enables the async path")
+	}
+}
+
+// TestMaxRequestBytesFromEnv pins the three-way reading UNSET / 0 / explicit,
+// which is the whole reason this knob does not go through intEnv.
+//
+// intEnv answers 0 for both "unset" and "0", and here those are opposite
+// instructions: unset must take the 320 MiB default, while 0 is the documented
+// escape hatch meaning no limit at all. Collapsing them would make
+// FABRIC_MAX_REQUEST_BYTES=0 mean 320 MiB — the one value it must not mean, and
+// a failure that would look like the knob working.
+func TestMaxRequestBytesFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+
+	t.Run("unset takes the default", func(t *testing.T) {
+		t.Setenv("FABRIC_MAX_REQUEST_BYTES", "")
+		if got := FromEnvPartial().MaxRequestBytes; got != httpx.DefaultMaxRequestBody {
+			t.Fatalf("unset = %d, want the %d default", got, int64(httpx.DefaultMaxRequestBody))
+		}
+	})
+
+	t.Run("zero means unlimited", func(t *testing.T) {
+		// The escape hatch for anyone already posting something larger than the
+		// default: a released binary's accepted inputs must not narrow with no
+		// way back.
+		t.Setenv("FABRIC_MAX_REQUEST_BYTES", "0")
+		if got := FromEnvPartial().MaxRequestBytes; got != 0 {
+			t.Fatalf("0 = %d, want 0 (unlimited)", got)
+		}
+	})
+
+	t.Run("an explicit value is honoured", func(t *testing.T) {
+		t.Setenv("FABRIC_MAX_REQUEST_BYTES", "1048576")
+		if got := FromEnvPartial().MaxRequestBytes; got != 1<<20 {
+			t.Fatalf("explicit 1048576 = %d", got)
+		}
+	})
+
+	// A typo must read as the DEFAULT, never as unlimited. Falling back to
+	// unlimited would restore the exact exposure the bound exists to close,
+	// while the configuration looked set — the permissive direction, which is
+	// the one that does not announce itself.
+	for _, bad := range []string{"not-a-number", "-1", "12MiB", " "} {
+		t.Run("garbage "+bad+" falls back to the default", func(t *testing.T) {
+			t.Setenv("FABRIC_MAX_REQUEST_BYTES", bad)
+			if got := FromEnvPartial().MaxRequestBytes; got != httpx.DefaultMaxRequestBody {
+				t.Fatalf("%q = %d, want the %d default (never unlimited)",
+					bad, got, int64(httpx.DefaultMaxRequestBody))
+			}
+		})
 	}
 }

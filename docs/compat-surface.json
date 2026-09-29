@@ -22,7 +22,7 @@
   "counts": {
     "subcommands": 2,
     "cliFlags": 28,
-    "envVars": 37,
+    "envVars": 38,
     "routes": 1056
   },
   "subcommands": [
@@ -83,6 +83,7 @@
     "FABRIC_KAFKA_BOOTSTRAP",
     "FABRIC_KQL_URL",
     "FABRIC_LIST_PAGE_SIZE",
+    "FABRIC_MAX_REQUEST_BYTES",
     "FABRIC_MLFLOW_URL",
     "FABRIC_NAME_RESERVATION",
     "FABRIC_RECORD_RESPONSES",

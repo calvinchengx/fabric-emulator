@@ -3,10 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -78,7 +78,17 @@ func (a *API) putDataAccessMode(w http.ResponseWriter, r *http.Request, p *auth.
 		return
 	}
 	var body dataAccessModeBody
-	raw, _ := io.ReadAll(r.Body)
+	// `{"dataAccessMode": ...}` -- MaxControlBody is far more than it needs. Read
+	// through no ceiling until scripts/check_perf_regressions.py found it; the
+	// bytes are buffered here (rather than decoded from the stream) so
+	// DisallowUnknownFields can report on the whole document, which is exactly
+	// the shape that makes an unbounded read allocate whatever was sent.
+	raw, ok := httpx.ReadBounded(r.Body, httpx.MaxControlBody)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The request body is too large, or could not be read.")
+		return
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
