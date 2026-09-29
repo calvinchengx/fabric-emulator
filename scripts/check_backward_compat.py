@@ -104,7 +104,8 @@ _CASE = re.compile(r"\bcase\s+([^:\n]+):")
 # Every way this tree reads a FABRIC_* variable: os directly, or one of
 # internal/config's own typed helpers.
 _ENV_READ = re.compile(
-    r"\b(?:os\.Getenv|os\.LookupEnv|envOr|envDefault|boolEnv|intEnv|durationEnv)"
+    r"\b(?:os\.Getenv|os\.LookupEnv|envOr|envDefault|boolEnv|intEnv|durationEnv"
+    r"|maxRequestBytesEnv)"
     r'\(\s*"(FABRIC_[A-Z0-9_]+)"\s*[,)]')
 # …and every FABRIC_* string literal at all, so a read form this parser does
 # NOT know gets NAMED instead of silently dropping a knob out of the surface.

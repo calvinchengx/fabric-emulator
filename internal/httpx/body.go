@@ -70,3 +70,25 @@ const (
 	// someone else's storage account.
 	MaxExternalRead = 100 << 20
 )
+
+// DefaultMaxRequestBody is the OUTER bound, installed once at the root handler
+// (internal/server.Server.Handler) and overridable with FABRIC_MAX_REQUEST_BYTES.
+// Every ceiling above is an INNER one, chosen by the handler that knows what it
+// is reading; this is the backstop for the 68 `json.NewDecoder(r.Body)` sites
+// that read through no ceiling at all, because a streaming decoder allocates as
+// it goes and nothing above bounds it.
+//
+// IT MUST STAY STRICTLY GREATER THAN EVERY CEILING ABOVE, and that is a
+// correctness requirement rather than a matter of taste. ReadBounded detects
+// overflow by probing max+1, so an outer limiter set AT an inner ceiling makes
+// the probe itself the thing that trips: an oversized Blob write would fail with
+// net/http's generic "request body too large" instead of this package's specific
+// message, and the fit-vs-truncated distinction this package exists to provide
+// would be lost at exactly the ceiling where it matters most (MaxBlobWrite,
+// 256 MiB, the largest — and the one `fab cp` actually crossed).
+//
+// 320 MiB is therefore 64 MiB of headroom above MaxBlobWrite rather than a round
+// number chosen for its own sake. scripts/check_perf_regressions.py asserts the
+// ordering, so a ceiling raised past this one fails the build instead of quietly
+// swallowing its neighbour's error message.
+const DefaultMaxRequestBody = 320 << 20

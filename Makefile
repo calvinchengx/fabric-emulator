@@ -261,6 +261,31 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# landed: 11 of 51 scripts, govern_ingest.py at 717 lines the
 	@# largest; 3 were closed with real tests and 8 recorded.
 	@$(PY) scripts/check_script_test_coverage.py --strict
+	@# ...and the one dimension none of the guards above can see at all:
+	@# COST. `func Benchmark` returns 0 hits across 552 test files and there
+	@# is no stored timing baseline anywhere in this tree, so no performance
+	@# regression here is detectable by measurement -- not by this target,
+	@# not by CI, not by anything. What IS decidable statically is the shape
+	@# that needs no stopwatch to be a regression: per-request work whose
+	@# size the CALLER chooses and nothing bounds.
+	@#
+	@# Measured when this landed: 70 sites consume an inbound request body
+	@# (68 `json.NewDecoder(r.Body)`, 2 bare `io.ReadAll(r.Body)`) against 0
+	@# uses of `http.MaxBytesReader` in the entire repository. The 23
+	@# `httpx.ReadBounded` sites were already bounded, so the tree was
+	@# half-guarded in a way that read as fully guarded: every site reading
+	@# a body as BYTES went through a ceiling and every site streaming it
+	@# through a DECODER went through none. Both bare reads were repaired
+	@# and one outer bound now sits at the root handler, which is why the
+	@# ledger ships empty rather than 70 entries deep.
+	@#
+	@# It also holds the ORDERING, which is the half a reader would not
+	@# think to check: ReadBounded probes max+1, so an outer bound set AT an
+	@# inner ceiling replaces httpx's specific fit-vs-truncated message with
+	@# net/http's generic refusal. A 256 MiB outer bound -- equal to
+	@# MaxBlobWrite, the ceiling `fab cp` has actually crossed -- would have
+	@# shipped that defect looking correct.
+	@$(PY) scripts/check_perf_regressions.py --strict
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

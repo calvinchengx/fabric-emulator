@@ -93,6 +93,7 @@ export default defineConfig({
             { slug: '11-testing-with-fabric-cicd' },
             { slug: '12-e2e-matrix' },
             { slug: '60-test-flakiness' },
+            { slug: '62-performance-regressions' },
           ],
         },
         {

@@ -27,11 +27,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
@@ -93,7 +93,17 @@ func (s *Service) principalAccess(w http.ResponseWriter, r *http.Request, p *aut
 	}
 
 	var req principalAccessRequest
-	body, _ := io.ReadAll(r.Body)
+	// Bounded like every other body here: this one is a named principal and a
+	// path, so MaxControlBody is generous. It read through no ceiling at all
+	// until scripts/check_perf_regressions.py measured it -- the bare
+	// io.ReadAll shape that httpx's guard_test.go does not ban, because that
+	// test bans the io.LimitReader idiom rather than the absence of a bound.
+	body, ok := httpx.ReadBounded(r.Body, httpx.MaxControlBody)
+	if !ok {
+		writeDFSErr(w, dfsError{"RequestBodyTooLarge", http.StatusRequestEntityTooLarge,
+			"The request body is too large, or could not be read."})
+		return
+	}
 	if len(strings.TrimSpace(string(body))) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
 			writeDFSErr(w, dfsError{"InvalidInput", http.StatusBadRequest,

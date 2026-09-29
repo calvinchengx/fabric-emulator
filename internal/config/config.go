@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 )
 
 // Config is the resolved emulator configuration.
@@ -256,6 +258,34 @@ type Config struct {
 	// ARMPollSeconds is how often the ARM capacities feed is refreshed.
 	ARMPollSeconds int
 
+	// MaxRequestBytes bounds the body of ANY inbound request, installed once at
+	// the root handler. Default httpx.DefaultMaxRequestBody (320 MiB); 0 means
+	// unlimited, which is what the emulator did before this existed.
+	//
+	// WHY IT IS A KNOB AND NOT A CONSTANT. It NARROWS what a released binary
+	// accepts, and no released binary's accepted inputs may shrink unremarked.
+	// The measured exposure it closes is 68 `json.NewDecoder(r.Body)` sites
+	// whose bodies passed through no ceiling at all -- a streaming decoder
+	// allocates as it reads, so any client could make the emulator allocate
+	// without limit on any of them. The 23 `httpx.ReadBounded` sites were
+	// already bounded and are unaffected; this is the backstop for everything
+	// that never reached one.
+	//
+	// 0 rather than a smaller floor as the escape hatch: someone posting
+	// something larger than 320 MiB today is doing so successfully, and the
+	// honest migration is a documented way to keep doing it, not a number we
+	// guess is big enough. See docs/62-performance-regressions.md.
+	//
+	// THE DEFAULT IS APPLIED BY FromEnvPartial, NOT BY Finish, so a Config
+	// constructed literally in a test gets 0 -- unlimited -- and is unaffected by
+	// this. That is deliberate in both directions: the binary always goes through
+	// FromEnvPartial (cmd/fabric-emulator/main.go), so a released build always
+	// carries the bound; and Finish CANNOT supply the default without destroying
+	// the escape hatch, because 0 is both the zero value and the documented way
+	// to ask for no limit. Defaulting there would make FABRIC_MAX_REQUEST_BYTES=0
+	// mean 320 MiB, which is the one value it must not mean.
+	MaxRequestBytes int64
+
 	// Version and Commit are stamped at build time — `-ldflags -X main.version`
 	// and `-X main.commit`, set by GoReleaser for the binaries and by a build
 	// arg for the image. Empty in a plain `go build`, which is honest: a source
@@ -304,6 +334,7 @@ func FromEnvPartial() *Config {
 		DatabricksTLSInsecure: boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
 		ARMURL:                os.Getenv("FABRIC_ARM_URL"),
 		ARMPollSeconds:        intEnv("FABRIC_ARM_POLL_SECONDS"),
+		MaxRequestBytes:       maxRequestBytesEnv("FABRIC_MAX_REQUEST_BYTES"),
 		RetryAfterSeconds:     1,
 	}
 }
@@ -391,6 +422,26 @@ func boolEnv(key string) bool {
 // FABRIC_WEB_ACTIVITY=stub as the hermetic escape.
 func customActivityEnabled(v string) bool {
 	return !strings.EqualFold(strings.TrimSpace(v), "off")
+}
+
+// maxRequestBytesEnv reads the outer body bound, and must distinguish UNSET from
+// SET-TO-ZERO the way envDefault does for DataDir -- intEnv cannot, because it
+// answers 0 for both, and here those are opposite instructions: unset means
+// "use the 320 MiB default" and 0 means "no limit at all".
+//
+// An unparseable value reads as the DEFAULT rather than as unlimited. A typo
+// must not silently remove the bound: that is the permissive direction, and it
+// would restore the exact exposure this exists to close while looking configured.
+func maxRequestBytesEnv(key string) int64 {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return httpx.DefaultMaxRequestBody
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil || n < 0 {
+		return httpx.DefaultMaxRequestBody
+	}
+	return n
 }
 
 // intEnv reads an integer environment variable, 0 when unset or unparseable.
