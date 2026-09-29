@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Timing-coupled sites in the portal's vitest suite (portal/src/**/*.test.ts)",
+    "that scripts/check_vitest_test_flakiness.py has seen and that are ACCEPTED.",
+    "The checker fails on any site not listed here, and equally on any entry here",
+    "that no longer matches a site -- a stale allowance is how a ban quietly stops",
+    "applying.",
+    "",
+    "The third sibling of docs/test-flakiness.json (Go) and",
+    "docs/python-test-flakiness.json (Python). Same shape, same both-directions",
+    "contract, same kind-in-the-key reasoning -- see docs/60-test-flakiness.md.",
+    "",
+    "This one is EMPTY, and that is the intended steady state rather than a gap:",
+    "the suite's one real-clock setTimeout (Flow.test.ts, asserting the",
+    "dropped-count chip stayed absent) was rewritten onto src/testing.ts",
+    "staysAbsent rather than recorded, the same repair the Go sweep made onto",
+    "StaysFalse and the Python one onto stays_empty. `bare-sleep` and",
+    "`long-sleep` are both defined as kinds a future site could land in; neither",
+    "has an entry today because none should be needed for the one shape this",
+    "suite actually has (a negative assertion), which staysAbsent already covers."
+  ],
+  "accepted": []
+}

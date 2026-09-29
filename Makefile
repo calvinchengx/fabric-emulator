@@ -237,10 +237,20 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# suites as unanalysed; 104 sleep sites across them were inspected by
 	@# nothing, 5 were genuinely unbounded, and 3 of those were real.
 	@$(PY) scripts/check_python_test_flakiness.py --strict
-	@# ...and one level in from both of them: every script in THIS
+	@# THE SAME BAN, A THIRD LANGUAGE OVER: docs/60-test-flakiness.md's own
+	@# first bullet named the portal's vitest suite as the toolchain neither
+	@# checker above can see. A regex scan again, like the Go side, since a
+	@# TypeScript parser is a third-party import this repo's guards do not
+	@# take -- and it needs no Node or pnpm to run, only the source text, so
+	@# it belongs here rather than in portal-types below. Measured when this
+	@# landed: one real-clock setTimeout across 24 test files, asserting a
+	@# negative; rewritten onto src/testing.ts staysAbsent rather than
+	@# recorded, so the ledger it checks against ships empty.
+	@$(PY) scripts/check_vitest_test_flakiness.py --strict
+	@# ...and one level in from all three of them: every script in THIS
 	@# directory has a dedicated python/tests/test_<stem>.py, or is
 	@# recorded with the reason it does not. These scripts ARE the
-	@# invariant enforcement -- the thirty-one lines above -- and a
+	@# invariant enforcement -- the thirty-two lines above -- and a
 	@# guard whose own behaviour nothing asserts can stop guarding and
 	@# go on reporting green. That is the failure
 	@# python/tests/test_make_check_runs_in_ci.py was written about one

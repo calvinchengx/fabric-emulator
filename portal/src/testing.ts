@@ -98,3 +98,42 @@ export function groupOf(el: HTMLElement | null): Element {
   if (!g) throw new Error('element is not inside a <g> — the graph did not render it');
   return g;
 }
+
+/** Assert `probe()` stays falsy for the whole of `windowMs`.
+ *
+ * The negative assertion, checked continuously rather than once: `probe` is
+ * polled every `intervalMs` until the window elapses, and the first truthy
+ * answer fails immediately, naming what was found. A single
+ * `setTimeout`-then-check only samples the last instant of the window — it
+ * reads as clean if the wrong thing appeared and then disappeared again before
+ * that one check ran, which is not "stayed absent", and it is exactly the
+ * shape scripts/check_vitest_test_flakiness.py exists to keep out of this
+ * suite. Modelled on this repo's own Go (`internal/testsupport.StaysFalse`)
+ * and Python (`e2e/waiting.py stays_empty`) siblings, which poll the same way
+ * for the same reason.
+ *
+ * Not a `*.test.ts` file, so the checker above does not see this function's
+ * own `setTimeout` — the same reason `internal/testsupport/wait.go` and
+ * `e2e/waiting.py` are exempt from their siblings: a helper is not a test, and
+ * bounding it correctly here is what a caller is trusting instead of writing
+ * its own sleep.
+ */
+export async function staysAbsent(
+  probe: () => unknown,
+  windowMs: number,
+  intervalMs = 5,
+): Promise<void> {
+  const check = () => {
+    const got = probe();
+    if (got) throw new Error(`expected to stay absent, but found: ${String(got)}`);
+  };
+  const deadline = Date.now() + windowMs;
+  while (Date.now() < deadline) {
+    check();
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  // Probed once more after the window closes: without this the last
+  // `intervalMs` of the window is never actually observed, so the assertion
+  // would cover slightly less time than it claims to.
+  check();
+}

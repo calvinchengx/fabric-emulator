@@ -426,9 +426,9 @@ with no test and nothing says so. Two finding kinds:
   entry would silently re-cover the file if that test were later deleted, so the
   ledger would absorb a real regression without a word.
 
-Both directions, like `docs/test-flakiness.json` and
-`docs/python-test-flakiness.json` before it. A one-directional ledger only ever
-grows. Of the two kinds, STALE is the one that needs a checker: an unrecorded
+Both directions, like `docs/test-flakiness.json`,
+`docs/python-test-flakiness.json` and `docs/vitest-test-flakiness.json` before
+it. A one-directional ledger only ever grows. Of the two kinds, STALE is the one that needs a checker: an unrecorded
 script is loud by construction — somebody adds a file and the build goes red the
 same day — while a stale entry is green, silent, and re-arms itself.
 

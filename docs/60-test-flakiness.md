@@ -1,22 +1,25 @@
 # 60 — Test flakiness: what was measured, what was fixed, what now guards it
 
 **Status: the Go suite is clean under the race detector and under randomised
-test order. Three load-dependent Go tests were rewritten (§3b) and three Python
-sites were (§7.2). Three guards: a CI job running both flags, and one static
-checker with a ledger per language.**
+test order. Three load-dependent Go tests were rewritten (§3b), three Python
+sites were (§7.2), and the portal's one was (§8.2). Three guards became four: a
+CI job running all four, and one static checker with a ledger per surface.**
 
 **Finding: this suite's flakiness exposure was LATENT, not active. The timing
 discipline was already good; what was missing was any mechanism that would have
-told us if it were not. That held for the Go suite (§1–5) and it held again,
+told us if it were not. That held for the Go suite (§1–5), it held again,
 independently, for the Python surface (§7) — where nothing had inspected 104
-`time.sleep` sites and three of the five unbounded ones turned out to be real.**
+`time.sleep` sites and three of the five unbounded ones turned out to be real —
+and it held a third time for the portal's vitest suite (§8), whose one
+real-clock site was the same shape as those three: a fixed sleep before a
+negative assertion.**
 
 Sections 1–5 are scoped to the Go suite — **304** `*_test.go` files as of this
 revision (285 when they were written; the figure is refreshed rather than
 reworded, because a count that drifts is how a measured document turns into an
-approximate one). §7 covers the Python surface, added later on the same
-architecture. The portal's vitest suite remains out of scope and is not claimed
-to have been analysed.
+approximate one). §7 covers the Python surface and §8 the portal's vitest
+suite, both added later on the same architecture. Nothing under this document's
+scope remains unanalysed; §6 records what a timing sweep cannot see at all.
 
 No historical CI failure data is reachable from a checkout, so flakiness was
 identified two ways rather than by mining past runs: an empirical sweep, and a
@@ -234,11 +237,6 @@ the suite.
 
 ## 6. What is not covered
 
-- **The portal's vitest suite.** 24 test files under `portal/src/`, out of scope
-  as a separate toolchain: they run under vitest/jsdom rather than pytest or
-  `go test`, so neither guard in §5 nor the one in §7 can see them and a third
-  checker would need a third ledger. The pytest and e2e suites are NO LONGER in
-  this bullet — see §7, which measured and closed that half.
 - **Flakiness with no timing tell.** A test depending on map iteration order, on
   a port being free, or on the network would not be found by either the sweep or
   the checker. `-shuffle=on` covers cross-test order dependence; nothing here
@@ -467,3 +465,106 @@ not detecting a bare imported sleep, reverting the deadline scoping to
 `ast.walk`, counting a nested-loop `break` as an exit, and pruning the counter
 search at nested loops. A mutation that leaves the suite green means the
 corresponding test is not testing anything.
+
+## 8. The portal's vitest suite — the third surface, out of scope no longer
+
+§6 used to carry a first bullet reading "the portal's vitest suite ... out of
+scope as a separate toolchain." This section is what closed it, on the same
+architecture as §7: a static sweep, a ledger, a guard in `make check` and in
+CI. What is different here is smaller than either sibling — 24 test files
+rather than hundreds, and a regex scan rather than a real parser, because
+TypeScript has no `ast` module in Python's stdlib and this repository's
+checkers do not import third-party packages (`docs/60` §5's own reasoning,
+carried over unchanged).
+
+### 8.1 What was measured
+
+Every `*.test.ts` under `portal/src/` (`vite.config.ts`'s own `testpaths`:
+`include: ['src/**/*.test.ts']`) — 24 files, and exactly one real-clock
+`setTimeout` among them. Nine further sites across five files drive a *fake*
+clock instead (`vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync`), which is
+not flagged at all: advancing a virtual clock is deterministic and races
+nothing, the same reason a `for _ in range(60)` in the Python suite is not a
+violation merely for containing a `time.sleep`.
+
+### 8.2 The one real-clock site, and the fix
+
+`Flow.test.ts`, "counts a dropped notice that does not say how many": a bare
+`await new Promise((r) => setTimeout(r, 20))`, then `expect(...).not
+.toBeInTheDocument()`. The same shape as the three Go sites (§3b) and the one
+real Python site (§7.2) — a fixed sleep gating a **negative** assertion, which
+is exactly the shape a single sleep-then-check cannot prove: it shows the chip
+was absent *at the instant checked*, not that it stayed absent for the window.
+
+Rewritten onto `staysAbsent` (`portal/src/testing.ts`), the vitest-side sibling
+of `internal/testsupport.StaysFalse` and `e2e/waiting.py stays_empty`: it polls
+the probe every 5ms across the window and fails at the first instant it stops
+being empty, naming what was found. `docs/vitest-test-flakiness.json` therefore
+ships **empty** rather than recording the site — the same choice the Python
+ledger's own comment states as the standard to hold to: "an escape hatch that
+is easier to reach than a fix is how a checker stops mattering."
+
+`staysAbsent` is not itself in a `*.test.ts` file, so `check_vitest_test_flakiness.py`
+does not see its own `setTimeout` — the same exemption `internal/testsupport/wait.go`
+and `e2e/waiting.py` get from their siblings, for the same reason: a helper is
+not a test, and bounding it correctly there is what a caller is trusting instead
+of writing its own sleep.
+
+### 8.3 The guard
+
+`scripts/check_vitest_test_flakiness.py --strict`, in `make check` and in the
+`witnesses` CI job. It flags every `setTimeout(` inside a `*.test.ts` file that
+is not under `vi.useFakeTimers()` control at that point, in two kinds:
+
+- `bare-sleep` — the shape the ledger exists to keep **empty**. `staysAbsent`
+  covers the one legitimate use this suite has found (asserting an absence);
+  anything else wanting a fixed real-clock wait belongs on the fake clock.
+- `long-sleep` — a `bare-sleep` of a second or more. None exist today; the kind
+  is defined so a slow one lands as a recorded decision rather than an
+  unnoticed cost, exactly as the Go and Python ledgers use theirs.
+
+**Fake-timer state is tracked in file order, top to bottom** — `useFakeTimers()`
+turns it on, `useRealTimers()` turns it off, real timers are the default at the
+top of every file. That is a straight-line reading of a file that is not itself
+straight-line control flow, the same simplification the Go checker's
+brace-counter makes about a loop's extent, and it is exactly right for every
+file in this tree today: each block that switches to fake timers switches back
+before the next real-clock wait (`Flow.test.ts` does this four times). It would
+misread a file that toggled the clock from a shared helper called by several
+tests rather than inline — there is no such helper here.
+
+**The symbol is the enclosing `it`/`test` block's title**, with a `<module>`
+fallback for a site outside any of them (a `beforeEach`, say) — the vitest
+analogue of the Python ledger's `<module>` entries for e2e drivers with no
+enclosing function. Matching the title needs a title-preserving comment strip
+that is *not* also a string strip: an earlier draft ran both passes together,
+which blanked `'flakes here'` into `''` along with every other quoted literal
+and named every finding by the empty string — caught by
+`python/tests/test_check_vitest_test_flakiness.py` failing on the very first
+synthetic violation it was driven against, in this document's own first
+category: found by driving the checker, not by reading it. `its_of` now takes
+two passes — comments-only for the title match, comments-and-strings for the
+brace-depth extent — so a title survives and a mock JSON payload's braces still
+cannot shift a block's boundary.
+
+Same three-part ledger key as the Python checker (`file:symbol:kind`), refused
+by name when an entry carries no kind, and checked in **both** directions —
+`docs/vitest-test-flakiness.json`'s single stale-entry test exists for the same
+reason the other two ledgers' do.
+
+### 8.4 On this checker also guarding a line already held
+
+Same awkwardness as §5 and §7.6: the one real violation was fixed in the same
+change that added the checker, so running it against the real tree proves only
+that it did not crash. `python/tests/test_check_vitest_test_flakiness.py`
+therefore drives it with synthetic violations it must catch — a bare sleep
+before a positive assertion, a ≥1s sleep, a site outside any `it` block — and
+with the fake-clock idiom it must *not* catch, including a test that switches
+back to real timers partway through and must be judged on the real clock again
+from that point on. Two tests pin the noise-stripping directly: a `setTimeout`
+named inside a `//` comment or a string literal must not be flagged, and a
+multi-line JSDoc block above a finding must not shift its reported line number.
+The real tree is read from disk in a closing pair of tests — zero unrecorded
+findings under `--strict`, and `findings_for` on the actual `Flow.test.ts`
+returns nothing — so a passing synthetic suite cannot drift away from the file
+it claims to describe.
