@@ -87,23 +87,64 @@ func (c *Client) checkVaultURI(vaultURI string) (*url.URL, error) {
 	return nil, ErrVaultNotAllowed
 }
 
-// New builds a client. insecure skips TLS verification (the emulator's
-// self-signed cert); client overrides when non-nil (tests). extraHost is the
-// one non-Azure host:port to accept — the family's keyvault-emulator.
-func New(insecure bool, client *http.Client, extraHost string) *Client {
-	if client == nil {
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		if insecure {
-			tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-		client = &http.Client{Transport: tr}
+// hostScopedTLS decides TLS verification PER HOST rather than per client.
+//
+// WHY THIS EXISTS. `insecure` means "the family's keyvault-emulator serves a
+// self-signed cert", and it arrives from FABRIC_ENTRA_TLS_INSECURE, which
+// docker-compose.yml sets to "true" and docs/04-configuration.md documents as
+// being for entra-emulator's cert alone. Applied to the whole transport it also
+// turned verification off for every host in AzureVaultSuffixes — and this is
+// the one client whose allowlist deliberately admits a REAL vault, over https
+// specifically because (checkVaultURI's own words) "a token for vault.azure.net
+// does not go out over cleartext". Requiring https while not verifying the
+// certificate buys nothing: whoever terminates the TLS keeps both the
+// workspace-identity bearer token and the secret it fetches. The scheme was
+// enforced; the trust decision behind it was not.
+//
+// So the skip is scoped to the ONE host it was justified for. An Azure vault
+// domain verifies whatever the flag says, which is what makes that flag safe to
+// leave set in a compose file that also resolves real AKV references.
+type hostScopedTLS struct {
+	verify   http.RoundTripper // every host, including all AzureVaultSuffixes
+	skip     http.RoundTripper // skipHost alone
+	skipHost string            // host:port, compared case-insensitively
+}
+
+func (t *hostScopedTLS) RoundTrip(req *http.Request) (*http.Response, error) {
+	// req.URL.Host, not Hostname(): extraHost carries a port and the allowlist
+	// compares the same way (checkVaultURI's EqualFold on u.Host), so "right
+	// host, wrong port" stays a different host here too.
+	if strings.EqualFold(req.URL.Host, t.skipHost) {
+		return t.skip.RoundTrip(req)
 	}
+	return t.verify.RoundTrip(req)
+}
+
+// New builds a client. insecure skips TLS verification FOR extraHost ONLY (the
+// emulator's self-signed cert) — never for an Azure vault domain, see
+// hostScopedTLS; client overrides when non-nil (in-process tests). extraHost is
+// the one non-Azure host:port to accept — the family's keyvault-emulator.
+func New(insecure bool, client *http.Client, extraHost string) *Client {
 	// extraHost is host:port, but callers may pass a full URL (a stub vault's
 	// address, or a deployment naming its scheme explicitly). Split it: the
-	// allowlist compares hosts, VaultURI needs the scheme.
+	// allowlist compares hosts, VaultURI needs the scheme. Split BEFORE the
+	// transport below, which is keyed on the bare host.
 	scheme := "https"
 	if i := strings.Index(extraHost, "://"); i >= 0 {
 		scheme, extraHost = extraHost[:i], extraHost[i+3:]
+	}
+	if client == nil {
+		verify := http.DefaultTransport.(*http.Transport).Clone()
+		var rt http.RoundTripper = verify
+		// With no extraHost configured there is nothing to exempt: every host
+		// this client may reach is then an Azure vault domain, so `insecure`
+		// has no host it could honestly apply to and verification stays on.
+		if insecure && extraHost != "" {
+			skip := http.DefaultTransport.(*http.Transport).Clone()
+			skip.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			rt = &hostScopedTLS{verify: verify, skip: skip, skipHost: extraHost}
+		}
+		client = &http.Client{Transport: rt}
 	}
 	return &Client{http: client, extraHost: extraHost, extraScheme: scheme}
 }

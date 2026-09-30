@@ -70,7 +70,16 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	if origin, err := entra.OriginFromIssuer(cfg.EntraIssuer); err == nil {
 		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
 	}
-	a.AKV = akv.New(cfg.EntraTLSInsecure, jwksClient, cfg.AKVVaultHost)
+	// AKV GETS ITS OWN TRANSPORT, and is the one client here that must.
+	// jwksClient is built for entra-emulator's self-signed cert, so handing
+	// it over made the vault client inherit a trust decision taken about a
+	// different host — and akv's allowlist deliberately admits a REAL
+	// *.vault.azure.net, where a secret and the token fetching it would then
+	// cross an unverified connection. akv.New scopes the skip to
+	// cfg.AKVVaultHost instead (see hostScopedTLS there); nil keeps the
+	// injected-client parameter for in-process tests, which set API.AKV
+	// directly.
+	a.AKV = akv.New(cfg.EntraTLSInsecure, nil, cfg.AKVVaultHost)
 	if err := a.SetLivyAgent(cfg.SparkAgentURL); err != nil {
 		return nil, err
 	}

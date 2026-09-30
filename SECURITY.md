@@ -71,6 +71,35 @@ running it, or teaches code a lesson that is wrong in production:
 If you are unsure which side a report falls on, send it. A misfiled report costs
 little; a silent one costs more.
 
+### Part of that list is now enforced mechanically
+
+The in-scope list above is a judgement about what matters, and until recently
+nothing checked this repository's own source against any of it. Three scanners
+run here and all three look elsewhere: govulncheck reads the dependency graph,
+gitleaks reads committed strings, Dependabot reads manifests. The two tools that
+*do* read this source carry no security analyser — `.golangci.yml` enables no
+gosec, and `pyproject.toml` does not select ruff's flake8-bandit family, though
+fifteen `# noqa: S###` directives in the tree were written as though it did.
+
+`scripts/check_security_footguns.py` now covers the subset of the list above
+that is decidable from source text, offline, on every push and in `make check`:
+TLS verification skips, non-cryptographic randomness for security material,
+non-constant-time secret comparison, a credential value reaching a log or error,
+Python shell and dynamic-execution misuse, and world-writable file modes. Its
+first run found one real defect — `internal/akv` disabled certificate
+verification for its whole transport, on the one client whose allowlist
+deliberately admits a real `*.vault.azure.net`.
+
+It is a floor, not a ceiling: a source-shape checker, not a taint analysis. The
+sites where this emulator's documented local-by-design posture legitimately
+produces one of those shapes are **recorded** in `docs/security-footguns.json`
+with the host set each client can reach and the reason, rather than silently
+excluded — so the distinction between "a compose sibling's self-signed
+certificate" and "a real cloud endpoint" stays written down and reviewable.
+[docs/63-security-footguns.md](docs/63-security-footguns.md) explains each rule,
+what it deliberately does not flag, and how to record an accepted site. A report
+about something it cannot see is still very much worth sending.
+
 ## What scans the dependencies, and what does not
 
 Stated rather than implied, because the gap between "we run scanners" and "this

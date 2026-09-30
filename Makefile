@@ -286,6 +286,33 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# MaxBlobWrite, the ceiling `fab cp` has actually crossed -- would have
 	@# shipped that defect looking correct.
 	@$(PY) scripts/check_perf_regressions.py --strict
+	@# ...and the dimension none of the guards above can see either: whether
+	@# this repository's own source is WRITTEN in a shape that leaks a
+	@# credential or drops a trust check. Measured when this landed:
+	@# .golangci.yml enables [errcheck, govet, ineffassign, staticcheck,
+	@# unused] and NO gosec, so the Go linter carries no security analyser at
+	@# all; ruff's flake8-bandit family is not in pyproject.toml's `select`,
+	@# though fifteen `# noqa: S###` directives in the tree were written as
+	@# though it were -- suppressions for a check nobody ran. The two
+	@# scanners that DO run answer different questions: govulncheck watches
+	@# DEPENDENCIES (a vulnerable symbol this code can reach) and gitleaks
+	@# watches COMMITTED STRINGS (a secret in the pack). Neither reads this
+	@# source for code shape, and SECURITY.md's "what does not run" section
+	@# could not name the gap because the gap was the whole category.
+	@#
+	@# The rule set is SECURITY.md's IN-SCOPE list, not a generic scanner's,
+	@# because this emulator is deliberately insecure in documented ways --
+	@# seeded secrets, self-signed TLS, an unauthenticated admin API -- and a
+	@# checker that reported those would be argued with rather than fixed.
+	@# So the emulator-only sites are LEDGERED with the host set each client
+	@# reaches (docs/security-footguns.json), and 30 are. Two rules ship at
+	@# zero as pure regression guards; the first run found one real defect --
+	@# internal/akv disabled certificate verification transport-wide from a
+	@# flag documented for entra-emulator's cert, on the one client whose
+	@# allowlist deliberately admits a real *.vault.azure.net, so a secret
+	@# could come from a real vault over a connection nobody authenticated
+	@# while the https check that exists for that reason still passed.
+	@$(PY) scripts/check_security_footguns.py --strict
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

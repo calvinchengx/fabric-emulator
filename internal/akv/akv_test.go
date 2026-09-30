@@ -2,6 +2,7 @@ package akv
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -214,3 +215,145 @@ func TestTheRequestedURLComesFromTheValidatedVault(t *testing.T) {
 		t.Fatalf("allowlist bypass: %v", err)
 	}
 }
+
+// TestTLSVerificationIsScopedToTheConfiguredVaultHost is the regression test
+// for a transport-wide InsecureSkipVerify on the one client that may reach a
+// real Azure Key Vault.
+//
+// `insecure` arrives from FABRIC_ENTRA_TLS_INSECURE, which docker-compose.yml
+// sets to "true" and docs/04-configuration.md documents as being for
+// entra-emulator's self-signed cert. Before the fix it disabled certificate
+// verification for EVERY host this client dials, and checkVaultURI
+// deliberately admits `*.vault.azure.net` — so a connection body naming a real
+// vault sent a workspace-identity bearer token, and received a secret, over a
+// connection nobody authenticated. The https requirement that comment leans on
+// ("a token for vault.azure.net does not go out over cleartext") was enforced
+// while the trust behind it was not.
+//
+// ONE untrusted certificate, ONE request URL, TWO clients differing only in
+// which host was configured as the emulator vault. That isolation is the whole
+// point: it cannot pass because of a cert detail or a URL detail, only because
+// the skip is keyed on the host. On the old code the second half succeeds.
+func TestTLSVerificationIsScopedToTheConfiguredVaultHost(t *testing.T) {
+	// An untrusted cert, exactly like the emulator's own: httptest signs with
+	// its own CA, which the system pool does not carry. srv.Client() is NOT
+	// used anywhere here — the point is what New builds for itself.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"value":"hunter2"}`))
+	}))
+	defer srv.Close()
+	host := hostOf(t, srv.URL)
+
+	// The transport New BUILT, exercised directly. Going through ResolveSecret
+	// cannot ask this question: the allowlist refuses any host that is neither
+	// an Azure vault nor the configured one, so the refusal would come from
+	// checkVaultURI before a single byte was dialed and the TLS decision would
+	// never be reached. What is under test is the trust decision, so the
+	// request has to get as far as making one.
+	get := func(c *Client) error {
+		resp, err := c.http.Get(srv.URL)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		return err
+	}
+
+	// Configured AS the emulator vault: the skip is what that flag was for, so
+	// its self-signed cert is accepted.
+	if err := get(New(true, nil, host)); err != nil {
+		t.Fatalf("the configured emulator vault was refused its own cert: %v", err)
+	}
+
+	// The SAME host and the SAME cert, with some OTHER host configured as the
+	// emulator vault. Verification must now apply, because this host is not the
+	// one the flag was justified for. A real deployment has keyvault-emulator
+	// configured here and an Azure vault as the target; this is that case with
+	// the two swapped, so it needs no network and names no real vault.
+	err := get(New(true, nil, "keyvault-emulator:8444"))
+	if err == nil {
+		t.Fatal("a host that is NOT the configured emulator vault was served an " +
+			"untrusted certificate and accepted it: the skip is transport-wide, " +
+			"so a real *.vault.azure.net gets no verification either")
+	}
+	if !strings.Contains(err.Error(), "certificate") && !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("refused, but not for the certificate: %v", err)
+	}
+
+	// And with NO emulator vault configured there is nothing to exempt, so the
+	// flag must weaken nothing: every host reachable then is an Azure one.
+	if err := get(New(true, nil, "")); err == nil {
+		t.Fatal("insecure with no configured vault host still skipped verification")
+	}
+
+	// The flag off is the same decision for the emulator host too.
+	if err := get(New(false, nil, host)); err == nil {
+		t.Fatal("insecure=false accepted an untrusted certificate")
+	}
+}
+
+// TestAnAzureVaultHostAlwaysVerifies names the routing decision per host,
+// including the sovereign-cloud domains a single end-to-end case cannot reach.
+//
+// AzureVaultSuffixes is what the allowlist admits; every one of them must land
+// on the VERIFYING transport however `insecure` is set. Asserted on the
+// RoundTripper rather than over the network so each domain is actually covered
+// instead of standing in for the others.
+func TestAnAzureVaultHostAlwaysVerifies(t *testing.T) {
+	var used string
+	mark := func(name string) http.RoundTripper {
+		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			used = name
+			return nil, fmt.Errorf("stub %s", name)
+		})
+	}
+	rt := &hostScopedTLS{
+		verify:   mark("verify"),
+		skip:     mark("skip"),
+		skipHost: "keyvault-emulator:8444",
+	}
+	send := func(rawurl string) string {
+		used = ""
+		req, err := http.NewRequest(http.MethodGet, rawurl, nil)
+		if err != nil {
+			t.Fatalf("new request %q: %v", rawurl, err)
+		}
+		_, _ = rt.RoundTrip(req)
+		return used
+	}
+
+	for _, suffix := range AzureVaultSuffixes {
+		for _, uri := range []string{
+			"https://contoso" + suffix,
+			"https://CONTOSO" + strings.ToUpper(suffix), // case must not exempt
+			"https://contoso" + suffix + ":443",         // an explicit port either
+		} {
+			if got := send(uri); got != "verify" {
+				t.Errorf("%s went to the %s transport; an Azure vault must always verify", uri, got)
+			}
+		}
+	}
+
+	// The configured emulator vault, and only on an exact host:port match.
+	if got := send("https://keyvault-emulator:8444/secrets/s"); got != "skip" {
+		t.Errorf("the configured emulator vault went to the %s transport", got)
+	}
+	if got := send("https://KeyVault-Emulator:8444"); got != "skip" {
+		t.Errorf("the configured host was case-sensitive: went to %s", got)
+	}
+	for _, near := range []string{
+		"https://keyvault-emulator:9999",          // right host, wrong port
+		"https://keyvault-emulator",               // no port at all
+		"https://keyvault-emulator.evil.com:8444", // the host as a prefix
+		"https://evil.com",
+	} {
+		if got := send(near); got != "verify" {
+			t.Errorf("%s went to the %s transport; only the configured host:port is exempt", near, got)
+		}
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper, so the test above can
+// tell which of the two transports a request was handed to.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -1,0 +1,256 @@
+{
+  "_comment": [
+    "Security anti-patterns in this repository's own source that are ACCEPTED, each with the",
+    "reason -- and, for a TLS-verification skip, the set of hosts that client can reach.",
+    "scripts/check_security_footguns.py fails on any finding not listed here, and equally on any",
+    "entry here whose site has gone away or been FIXED: a closed gap left recorded goes on",
+    "excusing the file, and would silently re-cover the shape if it came back.",
+    "",
+    "WHY A LEDGER AND NOT A BAN. fabric-emulator is deliberately insecure in documented ways --",
+    "SECURITY.md says so and calls the seeded secrets, the self-signed TLS and the unauthenticated",
+    "admin API design rather than findings. A checker that reported those would be argued with",
+    "rather than fixed. So the rule set is SECURITY.md's IN-SCOPE list, and the sites where this",
+    "emulator's local-by-design posture legitimately produces one of those shapes are written down",
+    "with their reason instead of being silently excluded. An excluded directory teaches nobody",
+    "anything; an entry naming the host set is reviewable.",
+    "",
+    "THE MEASURED BASELINE at the commit that added this: 37 findings across 551 non-test source",
+    "files, in 30 distinct (file, rule, symbol) keys -- ALL of them listed below, and one more that",
+    "is NOT, because it was fixed in the same change rather than recorded. internal/akv set",
+    "InsecureSkipVerify on the whole transport from FABRIC_ENTRA_TLS_INSECURE (docker-compose.yml",
+    "sets it true; docs/04-configuration.md documents it as being for entra-emulator's cert), on the",
+    "one client whose allowlist deliberately admits a real *.vault.azure.net -- so a secret could be",
+    "fetched from a real vault over a connection nobody authenticated, while the https requirement",
+    "checkVaultURI enforces for exactly that reason still passed. internal/server compounded it by",
+    "handing that client the transport built for the Entra JWKS fetch. The skip is now scoped to the",
+    "configured emulator vault host (akv.hostScopedTLS) and AKV builds its own transport, which is",
+    "why the akv entry below can name ONE host instead of every Azure vault domain.",
+    "",
+    "Two rules ship with a zero baseline and are pure regression guards, so they appear nowhere",
+    "below: weak-random-for-secrets (no non-test Go file imports math/rand at all) and",
+    "secret-compared-directly (this repo imports neither hmac.Equal nor subtle.ConstantTimeCompare;",
+    "internal/awssig is crypto/hmac's only user, for signing).",
+    "",
+    "`hosts` is required on every tls-verification-off entry and is the field that makes the entry",
+    "worth reading: it is precisely what was missing when akv's skip reached an Azure domain. It is",
+    "not an exemption on its own -- the `why` is."
+  ],
+  "accepted": [
+    {
+      "file": "cmd/fabric-emulator/main.go",
+      "rule": "tls-verification-off",
+      "symbol": "healthcheck",
+      "hosts": [
+        "the emulator's OWN listener: 127.0.0.1 or the -addr host:port it was started with"
+      ],
+      "why": "The `healthcheck` subcommand probes this process's own /health over the address it was told to listen on, and falls back to plain HTTP when TLS is off. The cert it must accept is the one this binary generated for itself (internal/tlscert), so there is no third party to authenticate and no credential on the request -- it sends no Authorization header at all."
+    },
+    {
+      "file": "internal/auth/auth.go",
+      "rule": "tls-verification-off",
+      "symbol": "New",
+      "hosts": [
+        "cfg.EntraJWKSURL -- entra-emulator on the compose network, or a real Entra tenant when -entra-jwks-url names one"
+      ],
+      "why": "Fetches the JWKS to VERIFY tokens; it sends no credential. The flag is FABRIC_ENTRA_TLS_INSECURE, documented for entra-emulator's self-signed cert. Worth knowing the limit: a substituted JWKS would let an attacker mint tokens this emulator accepts, which is a local-trust decision the operator makes by setting the flag, and is why it defaults to false."
+    },
+    {
+      "file": "internal/entra/client.go",
+      "rule": "tls-verification-off",
+      "symbol": "New",
+      "hosts": [
+        "the origin derived from cfg.EntraIssuer (entra.OriginFromIssuer) -- entra-emulator's admin API"
+      ],
+      "why": "Workspace-identity provisioning drives entra-emulator's admin API at the issuer's origin. Same host and same flag as the JWKS fetch above, which is why it shares that trust decision rather than making a second one."
+    },
+    {
+      "file": "internal/api/armcapacities.go",
+      "rule": "tls-verification-off",
+      "symbol": "NewARMCapacities",
+      "hosts": [
+        "cfg.ARMURL -- arm-emulator, a compose sibling; the feed is off unless it is set"
+      ],
+      "why": "Reads the ARM capacities feed from arm-emulator's self-signed endpoint. The client is constructed only when FABRIC_ARM_URL names a host, so an unconfigured emulator has no such client at all."
+    },
+    {
+      "file": "internal/server/server.go",
+      "rule": "tls-verification-off",
+      "symbol": "New",
+      "hosts": [
+        "cfg.DatabricksURL -- databricks-emulator, a compose sibling"
+      ],
+      "why": "Its OWN flag, FABRIC_DATABRICKS_TLS_INSECURE, rather than the Entra one: the Databricks relay is a different host with a different cert, and the two decisions are taken separately on purpose. Carries cfg.DatabricksToken, so the host set matters -- it is one configured URL and never a vendor domain this code composes itself."
+    },
+    {
+      "file": "internal/akv/akv.go",
+      "rule": "tls-verification-off",
+      "symbol": "New",
+      "hosts": [
+        "cfg.AKVVaultHost ALONE -- the family's keyvault-emulator. Every AzureVaultSuffixes domain verifies whatever the flag says."
+      ],
+      "why": "Scoped, and the reason this rule requires a host set. akv.hostScopedTLS routes per request host, so the skip reaches only the one configured emulator vault and a real *.vault.azure.net is always verified -- which is what makes the flag safe to leave set in a compose file that also resolves real AKV references. Before that it was transport-wide; see this file's _comment."
+    },
+    {
+      "file": "scripts/govern_ingest.py",
+      "rule": "tls-verification-off",
+      "symbol": "entra_token",
+      "hosts": [
+        "$ENTRA -- entra-emulator's token endpoint"
+      ],
+      "why": "Mints a client-credentials token against entra-emulator over its self-signed cert. The client secret it sends is the SEEDED one this repo publishes on purpose (SECURITY.md: seeded secrets are design, not a finding), and the endpoint is a compose sibling."
+    },
+    {
+      "file": "e2e/adls-sdk/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "$FABRIC -- the emulator's own OneLake endpoint on localhost"
+      ],
+      "why": "Microsoft's real azure-storage-blob SDK is pointed at the emulator's OneLake surface; connection_verify=False is how the SDK is told to accept the local dev cert. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
+      "file": "e2e/fabric-cicd/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "get_token",
+      "hosts": [
+        "the entra-emulator token endpoint this harness starts"
+      ],
+      "why": "The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
+      "file": "e2e/governance/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "token",
+      "hosts": [
+        "the entra-emulator token endpoint this harness starts"
+      ],
+      "why": "The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
+      "file": "e2e/governance/sso.py",
+      "rule": "tls-verification-off",
+      "symbol": "forge",
+      "hosts": [
+        "the entra-emulator token endpoint this harness starts"
+      ],
+      "why": "The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
+      "file": "e2e/mcp-core/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "drive",
+      "hosts": [
+        "the emulator's own /v1/mcp/core endpoint on localhost"
+      ],
+      "why": "The official mcp SDK drives POST /v1/mcp/core. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
+      "file": "python/spark_agent/codeexec.py",
+      "rule": "python-shell-injection",
+      "symbol": "run_code",
+      "why": "RUNNING SUBMITTED CODE IS WHAT THIS COMPONENT IS FOR. SECURITY.md scopes the in-scope case precisely -- escape 'beyond the documented execution surface' -- and a notebook cell reaching the interpreter IS that surface: real Fabric runs the cell too. Recorded rather than excluded so the SET of places this repo executes arbitrary code stays enumerated, and a new exec anywhere else fails the build."
+    },
+    {
+      "file": "python/spark_agent/run_magic.py",
+      "rule": "python-shell-injection",
+      "symbol": "run_notebook",
+      "why": "RUNNING SUBMITTED CODE IS WHAT THIS COMPONENT IS FOR. SECURITY.md scopes the in-scope case precisely -- escape 'beyond the documented execution surface' -- and a notebook cell reaching the interpreter IS that surface: real Fabric runs the cell too. Recorded rather than excluded so the SET of places this repo executes arbitrary code stays enumerated, and a new exec anywhere else fails the build."
+    },
+    {
+      "file": "python/notebookutils/udf.py",
+      "rule": "python-shell-injection",
+      "symbol": "_run_script",
+      "why": "RUNNING SUBMITTED CODE IS WHAT THIS COMPONENT IS FOR. SECURITY.md scopes the in-scope case precisely -- escape 'beyond the documented execution surface' -- and a notebook cell reaching the interpreter IS that surface: real Fabric runs the cell too. Recorded rather than excluded so the SET of places this repo executes arbitrary code stays enumerated, and a new exec anywhere else fails the build."
+    },
+    {
+      "file": "e2e/notebook-run/runner.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "e2e/spark-jvm/job.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "examples/medallion-pyspark/engine.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "examples/medallion-dbt-fabricspark/engine.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "examples/medallion-advanced-pyspark/engine.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "examples/medallion-advanced-dbt-fabricspark/engine.py",
+      "rule": "python-shell-injection",
+      "symbol": "<module>",
+      "why": "Harness/example code that executes notebook cells to prove the emulator's notebook contract, running in a container this repo starts against source this repo wrote. Same reasoning as the spark agent's own executor; recorded so the set stays enumerated."
+    },
+    {
+      "file": "e2e/conformance/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "ensure_out_writable",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/engine-matrix/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "ensure_out_writable",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/data-science-loop/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "<module>",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/databricks-chain/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "<module>",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/eventstream/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "<module>",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/livy/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "<module>",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/sail/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "<module>",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "e2e/medallion/run.py",
+      "rule": "world-writable-mode",
+      "symbol": "run",
+      "why": "A recording or coverage directory widened so the emulator container can write a bind mount. The published image is distroless NONROOT (uid 65532) and a bind mount keeps the HOST's ownership, so a directory created by the checkout user is not writable by the container -- and Go's coverage runtime says nothing about that, leaving an empty directory that reads as 'the e2e exercised nothing' rather than 'the e2e could not say'. Docker Desktop on macOS ignores the uid mismatch, so this passes on a laptop and fails only on Linux CI; see scripts/coverage_prepare.sh and e2e/engine-matrix/run.py's ensure_out_writable for the same fix with the same comment. Harness code that ships in no artifact, on a directory holding recorded HTTP responses and coverage counters."
+    },
+    {
+      "file": "cmd/fabric-emulator/main.go",
+      "rule": "credential-in-message",
+      "symbol": "run",
+      "why": "DELIBERATE, and the line above it says so: the terminal pane's token is printed to this process's stdout for the operator to copy into the pane, the way Jupyter prints its own. The portal is unauthenticated, so an ENDPOINT handing the token out would be equivalent to having no token -- stdout on the operator's own terminal is the narrowest channel that still works. The value is generated per run by this process, is not a cloud credential, and reaches no log file, event or error body."
+    }
+  ]
+}
