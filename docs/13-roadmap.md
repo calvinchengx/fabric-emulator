@@ -428,6 +428,10 @@ phase letter; they extend surfaces the earlier phases already named.
       Spark agent; `FABRIC_CUSTOM_ACTIVITY=off` restores the refusal.
 - [x] **Fabric Core MCP** — `POST /v1/mcp/core`, unmodified Python `mcp` SDK
       in CI.
+- [x] **Fabric IQ MCP** — `POST /v1/mcp/fabriciq`, the six read-only report
+      and semantic-model tools, delegated tokens only; the unmodified `mcp` SDK
+      drives it in CI as two users. Verified answers, AI instructions and
+      workspace apps are not modelled.
 - [x] **Optional `msmdsrv` DAX oracle** — `FABRIC_DAX_URL` relays
       `executeQueries` to a pump in front of Desktop's engine on a machine
       you own. Not a compose default. [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).

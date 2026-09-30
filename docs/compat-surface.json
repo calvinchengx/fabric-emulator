@@ -23,7 +23,7 @@
     "subcommands": 2,
     "cliFlags": 28,
     "envVars": 38,
-    "routes": 1056
+    "routes": 1059
   },
   "subcommands": [
     "healthcheck",
@@ -110,6 +110,7 @@
     "DELETE /v1/deploymentPipelines/{}",
     "DELETE /v1/deploymentPipelines/{}/roleAssignments/{}",
     "DELETE /v1/mcp/core",
+    "DELETE /v1/mcp/fabriciq",
     "DELETE /v1/workspaces/{}",
     "DELETE /v1/workspaces/{}/AnomalyDetectors/{}",
     "DELETE /v1/workspaces/{}/ApacheAirflowJobs/{}",
@@ -260,6 +261,7 @@
     "GET /v1/eventstreams/{}/sources/{}",
     "GET /v1/eventstreams/{}/sources/{}/events",
     "GET /v1/mcp/core",
+    "GET /v1/mcp/fabriciq",
     "GET /v1/operations/{}",
     "GET /v1/operations/{}/result",
     "GET /v1/workspaces",
@@ -722,6 +724,7 @@
     "POST /v1/deploymentPipelines/{}/stages/{}/assignWorkspace",
     "POST /v1/deploymentPipelines/{}/stages/{}/unassignWorkspace",
     "POST /v1/mcp/core",
+    "POST /v1/mcp/fabriciq",
     "POST /v1/workspaces",
     "POST /v1/workspaces/{}/AnomalyDetectors",
     "POST /v1/workspaces/{}/AnomalyDetectors/{}/getDefinition",

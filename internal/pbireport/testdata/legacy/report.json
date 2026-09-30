@@ -1,0 +1,22 @@
+{
+  "config": "{\"version\": \"5.43\", \"modelExtensions\": [{\"name\": \"extension\", \"entities\": [{\"name\": \"Sales\", \"measures\": [{\"name\": \"Double Units\", \"dataType\": 3, \"expression\": \"[TotalUnits] * 2\"}]}]}]}",
+  "filters": "[]",
+  "sections": [
+    {
+      "name": "ReportSection1",
+      "displayName": "Detail",
+      "ordinal": 0,
+      "filters": "[{\"name\": \"west\", \"expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Entity\": \"Store\"}}, \"Property\": \"Territory\"}}, \"filter\": {\"Version\": 2, \"From\": [{\"Name\": \"s\", \"Entity\": \"Store\", \"Type\": 0}], \"Where\": [{\"Condition\": {\"In\": {\"Expressions\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s\"}}, \"Property\": \"Territory\"}}], \"Values\": [[{\"Literal\": {\"Value\": \"'West'\"}}]]}}}]}, \"type\": \"Categorical\"}]",
+      "visualContainers": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 400,
+          "height": 300,
+          "config": "{\"name\": \"lv1\", \"singleVisual\": {\"visualType\": \"tableEx\", \"projections\": {\"Values\": [{\"queryRef\": \"s.Territory\"}, {\"queryRef\": \"Sum(f.Units)\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"s\", \"Entity\": \"Store\", \"Type\": 0}, {\"Name\": \"f\", \"Entity\": \"Sales\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"s\"}}, \"Property\": \"Territory\"}, \"Name\": \"s.Territory\"}, {\"Aggregation\": {\"Expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"f\"}}, \"Property\": \"Units\"}}, \"Function\": 0}, \"Name\": \"Sum(f.Units)\"}]}, \"vcObjects\": {\"title\": [{\"properties\": {\"text\": {\"expr\": {\"Literal\": {\"Value\": \"'Units table'\"}}}}}]}}}",
+          "filters": "[]"
+        }
+      ]
+    }
+  ]
+}

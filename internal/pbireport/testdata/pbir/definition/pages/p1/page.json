@@ -1,0 +1,24 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+  "name": "p1",
+  "displayName": "Territories",
+  "displayOption": "FitToPage",
+  "height": 720, "width": 1280,
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "notEast",
+        "field": {"Column": {"Expression": {"SourceRef": {"Entity": "Store"}}, "Property": "Territory"}},
+        "type": "Categorical",
+        "filter": {
+          "Version": 2,
+          "From": [{"Name": "s", "Entity": "Store", "Type": 0}],
+          "Where": [{"Condition": {"Not": {"Expression": {"In": {
+            "Expressions": [{"Column": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Territory"}}],
+            "Values": [[{"Literal": {"Value": "'East'"}}]]
+          }}}}}]
+        }
+      }
+    ]
+  }
+}

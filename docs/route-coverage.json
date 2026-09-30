@@ -15,6 +15,7 @@
   "notYetExercised": [
     "DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}",
     "DELETE /v1/mcp/core",
+    "DELETE /v1/mcp/fabriciq",
     "DELETE /v1/workspaces/{wid}/apacheAirflowJobs/{iid}/files/{path...}",
     "DELETE /v1/workspaces/{wid}/items/{iid}/_emulator/access/{principalId}",
     "DELETE /v1/workspaces/{wid}/items/{iid}/shortcuts/{path}/{name}",
@@ -31,6 +32,7 @@
     "GET /v1/deploymentPipelines/{pid}/stages/{sid}/items",
     "GET /v1/eventstreams/{iid}/sources/{did}",
     "GET /v1/mcp/core",
+    "GET /v1/mcp/fabriciq",
     "GET /v1/workspaces/{wid}/apacheAirflowJobs/{iid}/files",
     "GET /v1/workspaces/{wid}/apacheAirflowJobs/{iid}/files/{path...}",
     "GET /v1/workspaces/{wid}/eventstreams/{iid}/destinations",
@@ -58,6 +60,7 @@
     "POST /v1/deploymentPipelines/{pid}/roleAssignments",
     "POST /v1/deploymentPipelines/{pid}/stages/{sid}/unassignWorkspace",
     "POST /v1/mcp/core",
+    "POST /v1/mcp/fabriciq",
     "POST /v1/workspaces/{wid}/eventstreams/{iid}/operators",
     "POST /v1/workspaces/{wid}/folders/{fid}/move",
     "POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRunResult",

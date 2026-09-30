@@ -19,6 +19,7 @@ func (a *API) registerMCP(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/mcp/core", a.withAuth(a.handleMCPPost))
 	mux.HandleFunc("GET /v1/mcp/core", a.withAuth(a.handleMCPGet))
 	mux.HandleFunc("DELETE /v1/mcp/core", a.withAuth(a.handleMCPDelete))
+	a.registerFabricIQ(mux)
 }
 
 type rpcRequest struct {
@@ -40,18 +41,70 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-func (a *API) handleMCPGet(w http.ResponseWriter, _ *http.Request, _ *auth.Principal) {
-	// No server-initiated messages. A host that opens GET SSE is told to
-	// stick to request/response POSTs, which is enough for the published tools.
-	w.Header().Set("Allow", "POST, DELETE")
-	w.WriteHeader(http.StatusMethodNotAllowed)
+// mcpServer is one MCP endpoint: its identity, its tools, and who it admits.
+// Fabric serves more than one MCP server (Core, Fabric IQ, …); they share this
+// transport and differ only in what is declared here.
+type mcpServer struct {
+	name         string
+	version      string
+	instructions string
+	tools        []mcpToolSpec
+	dispatch     map[string]func(*API, *auth.Principal, map[string]any) mcpToolResult
+	// admit, when set, runs before every request and writes the refusal
+	// itself; false means the request was refused.
+	admit func(w http.ResponseWriter, r *http.Request, p *auth.Principal) bool
 }
 
-func (a *API) handleMCPDelete(w http.ResponseWriter, _ *http.Request, _ *auth.Principal) {
-	w.WriteHeader(http.StatusNoContent)
+// coreMCP is the Fabric Core MCP server; its tool tables are built in mcp_tools.go.
+var coreMCP = &mcpServer{
+	name:         "fabric-core",
+	version:      "preview",
+	instructions: "Microsoft Fabric Core MCP Server. Tools map to Fabric REST. This endpoint does not execute notebooks or write lakehouse tables.",
+}
+
+func (a *API) handleMCPGet(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	a.mcpGet(coreMCP)(w, r, p)
+}
+
+func (a *API) handleMCPDelete(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	a.mcpDelete(coreMCP)(w, r, p)
 }
 
 func (a *API) handleMCPPost(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	a.mcpPost(coreMCP)(w, r, p)
+}
+
+func (a *API) mcpGet(srv *mcpServer) handler {
+	return func(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+		if srv.admit != nil && !srv.admit(w, r, p) {
+			return
+		}
+		// No server-initiated messages. A host that opens GET SSE is told to
+		// stick to request/response POSTs, which is enough for the published tools.
+		w.Header().Set("Allow", "POST, DELETE")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *API) mcpDelete(srv *mcpServer) handler {
+	return func(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+		if srv.admit != nil && !srv.admit(w, r, p) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (a *API) mcpPost(srv *mcpServer) handler {
+	return func(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+		if srv.admit != nil && !srv.admit(w, r, p) {
+			return
+		}
+		a.serveMCP(srv, w, r, p)
+	}
+}
+
+func (a *API) serveMCP(srv *mcpServer, w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	var req rpcRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeRPC(w, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
@@ -72,21 +125,21 @@ func (a *API) handleMCPPost(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
-		resp.Result = a.mcpInitialize(req.Params)
+		resp.Result = srv.initialize(req.Params)
 		w.Header().Set("Mcp-Session-Id", store.NewID())
 	case "ping":
 		resp.Result = map[string]any{}
 	case "tools/list":
-		resp.Result = map[string]any{"tools": mcpTools}
+		resp.Result = map[string]any{"tools": srv.tools}
 	case "tools/call":
-		resp.Result = a.mcpCall(req.Params, p)
+		resp.Result = a.mcpCall(srv, req.Params, p)
 	default:
 		resp.Error = &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 	}
 	writeRPC(w, resp)
 }
 
-func (a *API) mcpInitialize(params json.RawMessage) map[string]any {
+func (srv *mcpServer) initialize(params json.RawMessage) map[string]any {
 	version := "2025-03-26"
 	var in struct {
 		ProtocolVersion string `json:"protocolVersion"`
@@ -99,8 +152,8 @@ func (a *API) mcpInitialize(params json.RawMessage) map[string]any {
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "fabric-core", "version": "preview"},
-		"instructions":    "Microsoft Fabric Core MCP Server. Tools map to Fabric REST. This endpoint does not execute notebooks or write lakehouse tables.",
+		"serverInfo":      map[string]any{"name": srv.name, "version": srv.version},
+		"instructions":    srv.instructions,
 	}
 }
 
@@ -119,7 +172,7 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
-func (a *API) mcpCall(params json.RawMessage, p *auth.Principal) mcpToolResult {
+func (a *API) mcpCall(srv *mcpServer, params json.RawMessage, p *auth.Principal) mcpToolResult {
 	var call mcpCallParams
 	if err := json.Unmarshal(params, &call); err != nil {
 		return mcpErr("invalid tools/call params")
@@ -127,7 +180,7 @@ func (a *API) mcpCall(params json.RawMessage, p *auth.Principal) mcpToolResult {
 	if call.Arguments == nil {
 		call.Arguments = map[string]any{}
 	}
-	fn, ok := mcpDispatch[call.Name]
+	fn, ok := srv.dispatch[call.Name]
 	if !ok {
 		return mcpErr("unknown tool: " + call.Name)
 	}

@@ -154,6 +154,12 @@ NATIVE = {
         "JSON-RPC over MCP Streamable HTTP, so no swagger can describe it and "
         "none does. Witnessed by e2e/mcp-core with Microsoft's own `mcp` "
         "client.",
+    r"^(GET|POST|DELETE) /v1/mcp/fabriciq$":
+        "Fabric IQ MCP, which Microsoft serves at /v1/mcp/fabriciq on "
+        "fabriciq.svc.cloud.microsoft and api.fabric.microsoft.com. Real, and "
+        "not a REST operation: \"an MCP server, not a traditional REST API\", "
+        "JSON-RPC over MCP Streamable HTTP. Witnessed by e2e/mcp-fabriciq with "
+        "Microsoft's own `mcp` client, as signed-in users.",
     r"^(GET|PUT|DELETE) /v1/workspaces/\{wid\}/items/\{iid\}/_emulator/access":
         "Emulator-native by its own name: the `_emulator/` segment is this "
         "repository's reserved prefix for levers real Fabric has no API for. "

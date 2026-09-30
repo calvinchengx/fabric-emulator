@@ -22,6 +22,7 @@ type mcpToolSpec struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 var mcpTools []mcpToolSpec
@@ -144,6 +145,7 @@ func init() {
 		"get_operation_result":   toolGetOpResult,
 		"get_knowledge":          toolGetKnowledge,
 	}
+	coreMCP.tools, coreMCP.dispatch = mcpTools, mcpDispatch
 }
 
 func toolSearchCatalog(a *API, p *auth.Principal, args map[string]any) mcpToolResult {
