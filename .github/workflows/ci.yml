@@ -805,6 +805,33 @@ jobs:
       # python/tests/test_make_check_runs_in_ci.py requires of anything in
       # that target.
       - run: uv run --frozen --no-sync python scripts/check_perf_regressions.py --strict
+      # AND THE SHAPE OF THIS SOURCE ITSELF. The gate above measures cost;
+      # this one asks whether the code here is written in a way that leaks a
+      # credential or drops a trust check -- and nothing in this repository
+      # asked that before it landed. Measured: .golangci.yml enables
+      # [errcheck, govet, ineffassign, staticcheck, unused] and no gosec;
+      # ruff's flake8-bandit family is absent from pyproject.toml's `select`,
+      # while fifteen `# noqa: S###` directives sit in the tree suppressing it
+      # anyway. security.yml runs govulncheck and gitleaks, which answer two
+      # different questions -- a vulnerable DEPENDENCY this code can reach, and
+      # a secret STRING that was committed. Code shape was nobody's.
+      #
+      # The rules are SECURITY.md's in-scope list rather than a scanner's
+      # defaults, because this emulator's insecurity is largely DESIGN and
+      # SECURITY.md says so: reporting the seeded secrets or the self-signed
+      # TLS would train people to skim the output. The emulator-only sites are
+      # recorded in docs/security-footguns.json with the HOST SET each client
+      # can reach, which is the fact that makes one reviewable -- it is exactly
+      # what was missing when internal/akv turned certificate verification off
+      # transport-wide from a flag documented for entra-emulator's certificate,
+      # on the one client whose allowlist admits a real *.vault.azure.net. That
+      # is the one real finding of the first run and it was fixed rather than
+      # recorded. The ledger is checked in BOTH directions, so a site that gets
+      # fixed cannot leave an entry behind still excusing the file.
+      #
+      # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
+      # requires of anything in that target.
+      - run: uv run --frozen --no-sync python scripts/check_security_footguns.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the

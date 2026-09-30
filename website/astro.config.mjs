@@ -94,6 +94,7 @@ export default defineConfig({
             { slug: '12-e2e-matrix' },
             { slug: '60-test-flakiness' },
             { slug: '62-performance-regressions' },
+            { slug: '63-security-footguns' },
           ],
         },
         {
