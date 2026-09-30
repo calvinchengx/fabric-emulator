@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "v1",
+  "position": {"x": 0, "y": 0, "z": 0, "width": 600, "height": 400},
+  "visual": {
+    "visualType": "clusteredBarChart",
+    "query": {
+      "queryState": {
+        "Category": {"projections": [{"field": {"Column": {"Expression": {"SourceRef": {"Entity": "Store"}}, "Property": "Territory"}}, "queryRef": "Store.Territory"}]},
+        "Y": {"projections": [
+          {"field": {"Measure": {"Expression": {"SourceRef": {"Entity": "Sales"}}, "Property": "TotalUnits"}}, "queryRef": "Sales.TotalUnits"},
+          {"field": {"Aggregation": {"Expression": {"Column": {"Expression": {"SourceRef": {"Entity": "Sales"}}, "Property": "Units"}}, "Function": 4}}, "queryRef": "Max(Sales.Units)"}
+        ]}
+      }
+    },
+    "visualContainerObjects": {"title": [{"properties": {"text": {"expr": {"Literal": {"Value": "'Units by territory'"}}}}}]}
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "bigSales",
+        "field": {"Measure": {"Expression": {"SourceRef": {"Entity": "Sales"}}, "Property": "TotalUnits"}},
+        "type": "Advanced",
+        "filter": {
+          "Version": 2,
+          "From": [{"Name": "s", "Entity": "Sales", "Type": 0}],
+          "Where": [{"Condition": {"Comparison": {
+            "ComparisonKind": 2,
+            "Left": {"Measure": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "TotalUnits"}},
+            "Right": {"Literal": {"Value": "1000L"}}
+          }}}]
+        }
+      }
+    ]
+  }
+}

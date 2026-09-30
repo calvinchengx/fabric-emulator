@@ -1,0 +1,9 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.12.0/schema.json",
+  "name": "v2",
+  "position": {"x": 0, "y": 0, "z": 0, "width": 300, "height": 200},
+  "visual": {
+    "visualType": "card",
+    "query": {"queryState": {"Values": {"projections": [{"field": {"Measure": {"Expression": {"SourceRef": {"Entity": "Sales"}}, "Property": "TotalUnits"}}, "queryRef": "Sales.TotalUnits"}]}}}
+  }
+}

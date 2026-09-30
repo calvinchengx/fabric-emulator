@@ -12,7 +12,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, `ROW`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `SWITCH`, `DISTINCTCOUNT`, `MAX`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SQRT`, `MOD`, `FLOOR`, `CEILING`, `LN`, `EXP`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `WEEKNUM`, `EOMONTH`, `EDATE`, `TRUNC`, `QUOTIENT`, `BLANK`, `ISBLANK`, the infix operators
+// references, `ORDER BY` over result columns, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `SWITCH`, `DISTINCTCOUNT`, `MAX`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SQRT`, `MOD`, `FLOOR`, `CEILING`, `LN`, `EXP`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `WEEKNUM`, `EOMONTH`, `EDATE`, `TRUNC`, `QUOTIENT`, `BLANK`, `ISBLANK`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -34,12 +34,16 @@ func Evaluate(m *Model, d Data, query string) (*Result, error) {
 		return nil, err
 	}
 	p := &daxParser{toks: toks}
-	te, err := p.parseQuery()
+	te, order, err := p.parseQuery()
 	if err != nil {
 		return nil, err
 	}
 	e := &evalr{model: m, data: d, ctx: filterCtx{}}
-	return e.table(te)
+	res, err := e.table(te)
+	if err != nil {
+		return nil, err
+	}
+	return res, sortResult(res, order)
 }
 
 // --- tokens ------------------------------------------------------------------
@@ -184,19 +188,157 @@ func (p *daxParser) peek() *dtok {
 }
 func (p *daxParser) next() *dtok { t := p.peek(); p.pos++; return t }
 
-func (p *daxParser) parseQuery() (tableExpr, error) {
+func (p *daxParser) parseQuery() (tableExpr, []orderKey, error) {
 	t := p.next()
 	if t == nil || t.kind != tIdent || !strings.EqualFold(t.text, "EVALUATE") {
-		return nil, fmt.Errorf("DAX query must start with EVALUATE")
+		return nil, nil, fmt.Errorf("DAX query must start with EVALUATE")
 	}
 	te, err := p.parseTableExpr()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	order, err := p.parseOrderBy()
+	if err != nil {
+		return nil, nil, err
 	}
 	if p.pos != len(p.toks) {
-		return nil, fmt.Errorf("trailing tokens after DAX table expression")
+		return nil, nil, fmt.Errorf("trailing tokens after DAX table expression")
 	}
-	return te, nil
+	return te, order, nil
+}
+
+// orderKey is one ORDER BY key: a column of the query's own result, which is
+// all this subset sorts by. DAX allows any expression there; one that is not a
+// result column is refused rather than evaluated per row.
+type orderKey struct {
+	key  string // the Result column key, "Table[Col]" or "[Name]"
+	desc bool
+}
+
+// parseOrderBy reads an optional `ORDER BY <ref> [ASC|DESC] {, …}` after the
+// table expression. A lone ORDER that is not followed by BY is left for the
+// trailing-token check, which is what it is.
+func (p *daxParser) parseOrderBy() ([]orderKey, error) {
+	t := p.peek()
+	if t == nil || t.kind != tIdent || !strings.EqualFold(t.text, "ORDER") ||
+		p.pos+1 >= len(p.toks) || !strings.EqualFold(p.toks[p.pos+1].text, "BY") {
+		return nil, nil
+	}
+	p.pos += 2
+	var keys []orderKey
+	for {
+		t := p.peek()
+		var k orderKey
+		switch {
+		case t != nil && t.kind == tBracket:
+			p.next()
+			k.key = "[" + t.text + "]"
+		case t != nil && (t.kind == tqTable || t.kind == tIdent):
+			cr, err := p.parseColumnRef()
+			if err != nil {
+				return nil, fmt.Errorf("ORDER BY expects a column of the query result: %w", err)
+			}
+			k.key = colKey(strings.Trim(cr.table, "'"), cr.col)
+		default:
+			return nil, fmt.Errorf("ORDER BY expects a column of the query result")
+		}
+		if d := p.peek(); d != nil && d.kind == tIdent {
+			switch strings.ToUpper(d.text) {
+			case "ASC":
+				p.next()
+			case "DESC":
+				p.next()
+				k.desc = true
+			}
+		}
+		keys = append(keys, k)
+		if c := p.peek(); c == nil || c.text != "," {
+			return keys, nil
+		}
+		p.next()
+	}
+}
+
+// sortResult orders res by keys, stably, so rows equal on every key keep the
+// order the table expression produced.
+func sortResult(res *Result, keys []orderKey) error {
+	for _, k := range keys {
+		if !slices.Contains(res.Columns, k.key) {
+			return fmt.Errorf("ORDER BY %s is not a column of the query result", k.key)
+		}
+	}
+	slices.SortStableFunc(res.Rows, func(a, b map[string]any) int {
+		for _, k := range keys {
+			c := compareOrderValues(a[k.key], b[k.key])
+			if k.desc {
+				c = -c
+			}
+			if c != 0 {
+				return c
+			}
+		}
+		return 0
+	})
+	return nil
+}
+
+// compareOrderValues orders two result cells the way DAX sorts them: BLANK
+// before any value, numbers and dates by value, text without regard to case.
+// Across kinds (which one column of a result does not mix) numbers precede
+// text, so the order is total.
+func compareOrderValues(a, b any) int {
+	rank := func(v any) int {
+		switch v.(type) {
+		case nil:
+			return 0
+		case float64, int, int64, bool, time.Time:
+			return 1
+		}
+		return 2
+	}
+	if ra, rb := rank(a), rank(b); ra != rb {
+		return ra - rb
+	}
+	switch x := a.(type) {
+	case nil:
+		return 0
+	case string:
+		return strings.Compare(strings.ToLower(x), strings.ToLower(fmt.Sprint(b)))
+	case time.Time:
+		if y, ok := b.(time.Time); ok {
+			return x.Compare(y)
+		}
+	case bool:
+		y, _ := b.(bool)
+		switch {
+		case x == y:
+			return 0
+		case !x:
+			return -1
+		}
+		return 1
+	}
+	fa, _ := toOrderNumber(a)
+	fb, _ := toOrderNumber(b)
+	switch {
+	case fa < fb:
+		return -1
+	case fa > fb:
+		return 1
+	}
+	return 0
+}
+
+func toOrderNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
 }
 
 func (p *daxParser) parseTableExpr() (tableExpr, error) {

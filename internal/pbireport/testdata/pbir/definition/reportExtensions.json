@@ -1,0 +1,7 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/reportExtension/1.0.0/schema.json",
+  "name": "extension",
+  "entities": [
+    {"name": "Sales", "measures": [{"name": "Units per Store", "dataType": "Double", "expression": "DIVIDE([TotalUnits], DISTINCTCOUNT('Store'[StoreKey]))"}]}
+  ]
+}

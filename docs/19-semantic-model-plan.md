@@ -86,6 +86,12 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
       so only a query that names the measure is evidence it works.
 - [x] Unit-tested against `fixtures/golden_queries.json` (the DAX oracle),
       order-insensitive.
+- [x] `ORDER BY` over the result's own columns (`[Name]` or `'Table'[Col]`,
+      `ASC`/`DESC`, several keys), for Fabric IQ MCP, whose skill tells agents
+      to sort every multi-row query. BLANK sorts first and text ignores case;
+      rows equal on every key keep their order. Unit-tested
+      (`dax_orderby_test.go`), not yet checked against Desktop; any other sort
+      expression is refused.
 
 ### D — executeQueries REST endpoint
 - [x] Routes per the vendored swagger: `POST /v1.0/myorg/datasets/{datasetId}/

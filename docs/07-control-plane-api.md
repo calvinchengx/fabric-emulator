@@ -443,6 +443,55 @@ Does not execute notebooks or write lakehouse tables (Microsoft's published
 limitation). Distinct from the local `Fabric.Mcp.Server` VS Code package and
 from pbix-mcp.
 
+## Fabric IQ MCP
+
+Microsoft's read-only MCP server over Power BI reports and semantic models
+(learn.microsoft.com/fabric/iq/connectors/fabric-iq-mcp). Microsoft serves it
+at `https://fabriciq.svc.cloud.microsoft/v1/mcp/fabriciq`, or
+`https://api.fabric.microsoft.com/v1/mcp/fabriciq` behind private links; the
+emulator serves the same path, on the same Streamable HTTP transport as Core
+MCP.
+
+| Method + path | Notes |
+|---|---|
+| `POST /mcp/fabriciq` | Streamable HTTP JSON-RPC (initialize, ping, tools/list, tools/call). **Delegated tokens only**: a service principal is refused with 403 `ServicePrincipalNotSupported`, as Microsoft documents. A Fabric or a Power BI audience token is accepted. `X-Variants: Fabric.Routing.FabricIQ.V1` is served; no header is served V1, and any other variant is refused with 400 `UnsupportedVariant` (code and text ours) |
+| `GET  /mcp/fabriciq` | 405 — no SSE stream |
+| `DELETE /mcp/fabriciq` | end session → 204 |
+
+| Tool | Arguments | What it returns |
+|---|---|---|
+| `DiscoverArtifacts` | `searchQuery`, `artifactTypes?`, `maxResults?` (≤ 50) | Reports and semantic models the caller can read — through a workspace role or shared with them directly — matched by name. An exact name ranks first, then a name containing the query, then every word across name, description and workspace; reports before models. A report carries `SemanticModelId` |
+| `ResolveFabricItem` | `fabricItemId` | A GUID or a browser URL (`…/groups/<ws>/reports/<id>`, `…/datasets/<id>`, `…/semanticmodels/<id>`, `groups/me`) resolved to `fabricItemId`, `itemType`, `workspaceId` and next-step `instructions`. Workspace-app URLs and share links are refused by name |
+| `GetReportMetadata` | `reportObjectId`, `queries?` | `ReportMetadata` (pages, visuals with their fields and title, filters at report, page and visual level, report measures) and `semanticModel`, the bound model's id — from `definition.pbir`'s `byConnection` `semanticmodelid`, or its `byPath` name in the report's workspace, or `null` with a warning |
+| `GetSemanticModelSchema` | `artifactId`, `queries?` | `schema.Tables[].{Columns, Measures}`, `schema.ActiveRelationships[].{PK, FK}`, and `CustomInstructions` / `VerifiedAnswers`, which are not modelled and so are present and empty. Object-level security applies |
+| `ValueSearch` | `artifactId`, `searchTerms`, `scope?` | For each term, up to 10 stored text values that equal it (first) or contain it, ignoring case, with the column. Reads only the rows the caller's roles admit |
+| `ExecuteQuery` | `artifactId`, `daxQueries` (1–4), `maxRows?` (default 250, ≤ 1000) | Per query, `Rows`, `RowCount` and `Truncated`, or `Error`. MDX, DMV and `INFO` functions are refused. The call is an error only when every query failed |
+
+Every tool needs **Read** on the item, not Build: Microsoft's page says "you
+don't need a workspace role or Build permission on the semantic model", which is
+where this differs from `executeQueries`. The rows are the caller's own, through
+the loader `executeQueries` uses, so row- and object-level security apply the
+same way. The DAX is the emulator's bounded subset
+([19](19-semantic-model-plan.md)), including `ORDER BY`, or the attached
+`FABRIC_DAX_URL` engine ([52](52-msmdsrv-hosts.md)).
+
+`queries` takes JMESPath expressions over the full response document, each
+returned with its result under `Results`. `regex_match(subject, pattern)` is
+added, because the Fabric IQ skill's example queries use it; it is not standard
+JMESPath, and here it ignores case.
+
+**What is inferred.** Microsoft publishes the tool names and tells clients to
+"call `tools/list` at runtime" rather than publishing schemas. The argument
+names above come from Microsoft's Fabric IQ skill
+(`microsoft/skills-for-fabric`, `skills/fabriciq/SKILL.md`), and the response
+documents follow the paths that skill queries (`ReportMetadata.Pages[].Visuals`,
+`schema.Tables[].Measures`, `schema.ActiveRelationships[].{PK,FK}`). The ranking,
+the per-query error shape and the 10-match cap are ours.
+
+**Not modelled.** Verified answers and AI instructions (Power BI's "prep data for
+AI" objects), workspace apps, the embedded CSV resource the real server returns
+for large results, and OAuth discovery: a client sends the bearer itself.
+
 ## Livy / Spark data plane
 
 Fabric exposes Spark through the Apache Livy REST API at a **lakehouse-scoped**

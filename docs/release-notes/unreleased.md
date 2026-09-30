@@ -4,6 +4,19 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 `v0.41.0.md` (or whichever minor) when tagging. Open pull requests are not
 here.
 
+
+## Fabric IQ MCP
+
+The emulator now serves Microsoft's Fabric IQ MCP server at
+`POST /v1/mcp/fabriciq`: the six read-only tools an agent uses to find a Power BI
+report or semantic model, read its pages, visuals, filters and schema, look up an
+exact stored value, and run DAX. Each tool runs as the signed-in user and needs
+only Read on the item, and the model's row- and object-level security decide what
+they see. Service-principal tokens are refused, as Microsoft documents. Report
+definitions in PBIR and PBIR-Legacy form are now read for this, and the DAX
+evaluator gained `ORDER BY`. Microsoft does not publish the tools' schemas; the
+argument names and response shapes follow its own Fabric IQ skill.
+[docs/07](../07-control-plane-api.md#fabric-iq-mcp)
 ## Test cases can be kept as data
 
 A suite whose cases are a table can now keep them in `cases/<suite>.json`, read

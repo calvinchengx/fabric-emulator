@@ -408,6 +408,24 @@
       "go:TestMCPCreateItemAndFolder"
     ]
   },
+  "fabric-iq-mcp-post-v1-mcp-fabriciq": {
+    "section": "Platform / fundamentals",
+    "claim": "**Fabric IQ MCP** (`POST /v1/mcp/fabriciq`)",
+    "witnesses": [
+      "ci:mcp-fabriciq",
+      "go:TestFabricIQServesExactlyTheSixDocumentedToolsReadOnly",
+      "go:TestFabricIQRefusesServicePrincipalsAndUnknownVariants",
+      "go:TestDiscoverArtifactsFindsWhatTheCallerCanReadReportsFirst",
+      "go:TestResolveFabricItemReadsGUIDsAndBrowserURLs",
+      "go:TestGetReportMetadataDescribesPagesVisualsFiltersAndTheModel",
+      "go:TestGetSemanticModelSchemaIsTheModelAsTheCallerMaySeeIt",
+      "go:TestValueSearchReturnsTheModelsOwnSpellingWithinTheCallersRows",
+      "go:TestExecuteQueryRunsDAXAsTheCallerWithReadAlone",
+      "go:TestPBIRPagesFollowPageOrderAndCarryTheirVisuals",
+      "go:TestLegacyReportJSONParsesItsEmbeddedStrings",
+      "go:TestOrderBySortsByAResultColumnInEitherDirection"
+    ]
+  },
   "fabric-sql-database-database-oltp-onelake-mirror": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",

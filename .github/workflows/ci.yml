@@ -1545,6 +1545,31 @@ jobs:
       # Core MCP row may be graded green.
       - run: uv run --frozen --group mcp python e2e/mcp-core/run.py
 
+  mcp-fabriciq:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Python mcp SDK witnesses Fabric IQ MCP, as users
+    # Single OS for the same reason as mcp-core: a wire contract driven by a
+    # pure-python client.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+      # Fabric IQ MCP is delegated-only, so the conversation runs on USER
+      # tokens (entra-emulator's seeded Alice and Bob, password grant); the
+      # daemon app's token is used only to show it is refused. Bob's row-level
+      # security role is what makes two users' answers differ.
+      - run: uv run --frozen --group mcp python e2e/mcp-fabriciq/run.py
+
   azcopy:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
