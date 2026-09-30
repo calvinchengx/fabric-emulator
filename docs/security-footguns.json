@@ -145,6 +145,15 @@
       "why": "The official mcp SDK drives POST /v1/mcp/core. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
     },
     {
+      "file": "e2e/mcp-fabriciq/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "session_for",
+      "hosts": [
+        "the emulator's own /v1/mcp/fabriciq endpoint on localhost"
+      ],
+      "why": "The official mcp SDK drives POST /v1/mcp/fabriciq, same as e2e/mcp-core/driver.py above for the sibling endpoint. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts."
+    },
+    {
       "file": "python/spark_agent/codeexec.py",
       "rule": "python-shell-injection",
       "symbol": "run_code",
