@@ -71,7 +71,7 @@ def fabric_token():
 
 def wrap_body(result):
     """MCP tools return the REST envelope as text: {status, body}."""
-    if getattr(result, "isError", False):
+    if result.is_error:
         raise RuntimeError(f"tool error: {result}")
     text = result.content[0].text
     env = json.loads(text)
@@ -216,7 +216,7 @@ async def drive(token):
 
             knowledge = await session.call_tool("get_knowledge", {"item_type": "Lakehouse"})
             ktext = knowledge.content[0].text
-            check(not getattr(knowledge, "isError", False) and "Lakehouse" in ktext,
+            check(not knowledge.is_error and "Lakehouse" in ktext,
                   "get_knowledge returns plain text for Lakehouse")
 
             wrap_body(await session.call_tool(
