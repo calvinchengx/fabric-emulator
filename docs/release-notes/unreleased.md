@@ -5,6 +5,17 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 here.
 
 
+
+## Direct Lake applies OneLake row filters
+
+A Direct Lake on OneLake query over a table a OneLake security role filters by
+rows used to be refused, because nothing evaluated the predicate. It is now
+applied: the caller gets the rows the filter admits. The filter is parsed by the
+same code the SQL analytics endpoint renders into SQL Server predicates, and a
+witness against a real SQL Server requires the two to return the same rows —
+text compared case-insensitively, NULL comparisons admitting nothing. A filter
+the emulator cannot apply blocks the table by name rather than serving it
+unfiltered. [docs/54](../54-onelake-security.md)
 ## Fabric IQ MCP
 
 The emulator now serves Microsoft's Fabric IQ MCP server at

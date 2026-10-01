@@ -1521,7 +1521,8 @@
     "go:TestARowLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAColumnLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestInvalidRLSSyntaxStillNarrowsRatherThanFailingTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeAndTheEndpointAdmitTheSameRows": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1728,6 +1729,24 @@
       "go:TestExternalDeltaCommitsSurfacesAListingFailure",
       "go:TestExternalReadFileReadsThroughAndWrapsAFailure",
       "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync"
+    ]
+  },
+  "power-bi-direct-lake-row-filters": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Direct Lake **row filters**",
+    "witnesses": [
+      "go:TestDirectLakeAndTheEndpointAdmitTheSameRows",
+      "go:TestDirectLakeAppliesARowFilter",
+      "go:TestDirectLakeRowFilterCanAdmitNothing",
+      "go:TestDirectLakeRowFiltersUnionAcrossRoles",
+      "go:TestDirectLakeRowFilterOnAColumnTheRoleDoesNotGrant",
+      "go:TestDirectLakeBlocksAFilterItCannotApply",
+      "go:TestFilterDirectLakeRowsOverDeltaTypes",
+      "go:TestRowFilterAdmits",
+      "go:TestRowFilterThreeValuedLogic",
+      "go:TestRowFilterRefusesWhatItCannotCompare",
+      "go:TestParseRowFilterRefusals",
+      "go:TestParseRowFilters"
     ]
   }
 }
