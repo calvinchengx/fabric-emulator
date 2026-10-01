@@ -183,20 +183,20 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 	finalised := false
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("notebook drive job=%s item=%s PANIC: %v", jid, iid, rec)
+			log.Printf("notebook-drive: job=%s item=%s PANIC: %v", jid, iid, rec)
 			if !finalised {
 				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("the notebook driver panicked: %v", rec))
 			}
 			return
 		}
 		if !finalised {
-			log.Printf("notebook drive job=%s item=%s ended without finalising the run", jid, iid)
+			log.Printf("notebook-drive: job=%s item=%s ended without finalising the run", jid, iid)
 			a.failNotebookRun(wid, iid, jid, run,
 				"the notebook driver exited without reporting a result")
 		}
 	}()
 	defer func() { _, _ = a.agentPost("/close", map[string]any{"session": session}) }()
-	log.Printf("notebook drive job=%s item=%s cells=%d start", jid, iid, len(run.Cells))
+	log.Printf("notebook-drive: job=%s item=%s cells=%d start", jid, iid, len(run.Cells))
 
 	// The default lakehouse, as a notebook attached to one would see it: on
 	// Fabric a Lakehouse's Tables/ ARE catalog tables, so `spark.table("x")`
@@ -366,7 +366,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 	}
 
 	finalised = true
-	log.Printf("notebook drive job=%s item=%s status=%s cells=%d done",
+	log.Printf("notebook-drive: job=%s item=%s status=%s cells=%d done",
 		jid, iid, body.Status, len(body.Cells))
 	a.finalizeNotebookRun(wid, iid, jid, run, body)
 }

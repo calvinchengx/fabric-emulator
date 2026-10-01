@@ -35,7 +35,7 @@ func (a *API) driveSparkJobRun(wid, iid, jid string, run sparkJobRun) {
 	finalised := false
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("spark job drive job=%s item=%s PANIC: %v", jid, iid, rec)
+			log.Printf("spark-job-drive: job=%s item=%s PANIC: %v", jid, iid, rec)
 			if !finalised {
 				a.finishSparkJobRun(wid, iid, jid, run, "Failed", "",
 					fmt.Sprintf("the Spark job driver panicked: %v", rec))
@@ -43,13 +43,13 @@ func (a *API) driveSparkJobRun(wid, iid, jid string, run sparkJobRun) {
 			return
 		}
 		if !finalised {
-			log.Printf("spark job drive job=%s item=%s ended without finalising the run", jid, iid)
+			log.Printf("spark-job-drive: job=%s item=%s ended without finalising the run", jid, iid)
 			a.finishSparkJobRun(wid, iid, jid, run, "Failed", "",
 				"the Spark job driver exited without reporting a result")
 		}
 	}()
 	defer func() { _, _ = a.agentPost("/close", map[string]any{"session": session}) }()
-	log.Printf("spark job drive job=%s item=%s main=%s start", jid, iid, run.Job.MainFile)
+	log.Printf("spark-job-drive: job=%s item=%s main=%s start", jid, iid, run.Job.MainFile)
 
 	// A JAR-bearing Environment is an explicit JVM requirement, and a Connect
 	// session's classpath is fixed at engine start. Refusing here — before any
@@ -117,7 +117,7 @@ func (a *API) driveSparkJobRun(wid, iid, jid string, run sparkJobRun) {
 		status, errMsg = "Failed", r.Error
 	}
 	finalised = true
-	log.Printf("spark job drive job=%s item=%s status=%s done", jid, iid, status)
+	log.Printf("spark-job-drive: job=%s item=%s status=%s done", jid, iid, status)
 	a.finishSparkJobRun(wid, iid, jid, run, status, output, errMsg)
 }
 

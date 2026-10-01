@@ -22,7 +22,7 @@
   "counts": {
     "subcommands": 2,
     "cliFlags": 28,
-    "envVars": 38,
+    "envVars": 39,
     "routes": 1059
   },
   "subcommands": [
@@ -86,6 +86,7 @@
     "FABRIC_MAX_REQUEST_BYTES",
     "FABRIC_MLFLOW_URL",
     "FABRIC_NAME_RESERVATION",
+    "FABRIC_ONELAKE_TRACE",
     "FABRIC_RECORD_RESPONSES",
     "FABRIC_S3_REGION",
     "FABRIC_SPARK_AGENT_URL",
@@ -100,6 +101,7 @@
     "FABRIC_WEB_ACTIVITY"
   ],
   "docsUndocumented": {
+    "FABRIC_ONELAKE_TRACE": "A debug trace: logs every OneLake request the DFS and Blob surfaces serve to stderr, tagged `onelake-dfs:` and `onelake-blob:` (internal/onelake). Diagnostic output, not configuration -- it changes what is printed and nothing about what the emulator accepts, so it does not belong in the configuration table, exactly as FABRIC_TDS_TRACE below does not. It is in this list at all because of what its OLD name proved: spelled ONELAKE_TRACE, it did not match the FABRIC_* literal this checker scans for, so it carried no row here, no reason here, and no mention in docs/ -- a knob released binaries honour that every gate in this repository was blind to. The legacy spelling is still read and is recorded in docs/logging-subsystems.json; docs/64-logging-quality.md has the finding.",
     "FABRIC_RECORD_RESPONSES": "Not a knob a user of the emulator sets: it is the CONFORMANCE RECORDER, written for scripts/check_openapi_conformance.py and set by ci.yml and the e2e harnesses. check_route_coverage.py's own failure message is where a developer is told to set it. Documenting it in the configuration table would advertise a test-harness lever as a runtime option.",
     "FABRIC_S3_REGION": "An override on the SigV4 region the OneLake shortcut signer signs for, default us-east-1 (internal/onelake/onelake.go). It is a property of the BUCKET a shortcut names rather than of this process, and the shortcut surface is documented where shortcuts are; a row in the binary's configuration table would imply a stack-wide setting it is not.",
     "FABRIC_TDS_TRACE": "A debug trace: logs every client-to-server TDS message to stderr, so a reader can see which message type carries a statement (docs/29-tsql-parity.md, T6a). Diagnostic output, not configuration -- it changes what is printed and nothing about what the emulator accepts."

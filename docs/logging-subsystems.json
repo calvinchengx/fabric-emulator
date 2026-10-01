@@ -1,0 +1,76 @@
+{
+  "_comment": [
+    "The subsystem tags this emulator's operational log lines are allowed to carry, the",
+    "call sites recorded as exempt from carrying one, and the pre-FABRIC_* names of log",
+    "knobs that are still read. `subsystems` is DERIVED and written by",
+    "scripts/check_logging_quality.py --update; `exemptions` and `legacyEnvNames` are",
+    "HAND-WRITTEN and are preserved across --update.",
+    "",
+    "THE MEASURED BASELINE when this landed: 30 `log.*` call sites across 12 non-test Go",
+    "files, in a tree of 212 non-test Go sources. Exactly ONE test in the whole tree",
+    "asserted a log line (internal/api/livy_catalog_test.go, via log.SetOutput). Four",
+    "delimiter conventions for the subsystem tag coexisted -- bracketed",
+    "(`[onelake-dfs]`), colon (`livy:`), space-delimited (`notebook drive job=`) and no",
+    "tag at all -- so no single grep could select one subsystem's lines out of a compose",
+    "log. docs/64-logging-quality.md carries the findings table with file:line evidence.",
+    "",
+    "THE FAILURE SHAPE is the one this repository has written down twice already, in",
+    "python/tests/test_make_check_runs_in_ci.py's words: a check that passes is",
+    "indistinguishable from a check that is running. A log line is the same thing turned",
+    "inside out. These lines are the only account the emulator gives of its own failure",
+    "paths -- a Livy session whose lakehouse did not mount, a notebook driver that",
+    "panicked, a recording file that could not be opened -- and nothing registered which",
+    "subsystems log at all. A handler that stops logging its failure path is then",
+    "indistinguishable from a handler that has no failures: silence where the signal",
+    "would be, with no diff to notice.",
+    "",
+    "The gate is asymmetric in the same direction as docs/compat-surface.json. A tag in",
+    "the tree and not here is a STALE LEDGER: run --update and let the diff be the review",
+    "of what vocabulary the log now speaks. An entry here and not in the tree fails until",
+    "someone deletes it -- a tag nobody emits goes on blessing a spelling, and an",
+    "exemption whose call site is gone goes on excusing a file.",
+    "",
+    "IT SAYS NOTHING ABOUT WHETHER A LINE IS TRUE, or about whether the right things are",
+    "logged at all. It holds the shape: a tag a reader can grep for, no library that",
+    "exits the process out from under its caller, and a log knob the surface ledger can",
+    "see."
+  ],
+  "counts": {
+    "subsystems": 13,
+    "exemptions": 1,
+    "legacyEnvNames": 1
+  },
+  "subsystems": [
+    "arm-capacities",
+    "eventstream",
+    "lineage",
+    "livy",
+    "notebook",
+    "notebook-drive",
+    "onelake-blob",
+    "onelake-dfs",
+    "record",
+    "spark-job-drive",
+    "store",
+    "tds",
+    "warehouse"
+  ],
+  "exemptions": [
+    {
+      "file": "cmd/fabric-emulator/main.go",
+      "call": "log.Fatal(err)",
+      "reason": "The whole message IS the error, and there is no subsystem to attribute it to: this is main() refusing to start, before any subsystem exists to have failed. run() has already composed the context into the error -- a bad flag, an unopenable data directory, a port already in use -- and prefixing that with a tag would name the process rather than a component of it. It is also the one site where log.Fatal is correct, which R2 permits here and nowhere else: cmd/ IS the process, so exiting is its decision to make."
+    }
+  ],
+  "legacyEnvNames": [
+    {
+      "name": "ONELAKE_TRACE",
+      "replacedBy": "FABRIC_ONELAKE_TRACE",
+      "stillReadIn": [
+        "internal/onelake/onelake.go",
+        "internal/onelake/blob.go"
+      ],
+      "reason": "The pre-FABRIC_* spelling of the OneLake request trace, shipped in released binaries and still honoured so an existing shell export or compose override keeps working. It is also the reason this audit found anything at all: because it is not named FABRIC_*, check_backward_compat.py's env literal pattern matches only FABRIC_[A-Z0-9_]+ and could not see it, so it appeared in no docs/, in no envVars list, and in no docsUndocumented reason -- unlike its sibling FABRIC_TDS_TRACE, which carries both. A knob outside the surface ledger can be renamed or deleted with every gate in this repository staying green. To be retired in a release whose notes say so; until then this entry is what keeps the guard from reporting a knob somebody is deliberately still honouring."
+    }
+  ]
+}

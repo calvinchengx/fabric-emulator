@@ -229,7 +229,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		src := api.NewARMCapacities(st, cfg.ARMURL, cfg.EntraTLSInsecure, jwksClient,
 			time.Duration(cfg.ARMPollSeconds)*time.Second)
 		if err := src.Refresh(); err != nil {
-			log.Printf("arm capacities feed: initial refresh: %v", err)
+			log.Printf("arm-capacities: initial refresh: %v", err)
 		}
 		s.armStop = make(chan struct{})
 		go src.Run(s.armStop)
@@ -344,7 +344,7 @@ func (s *Server) Close() error {
 		s.armStop = nil
 	}
 	if err := s.rec.Close(); err != nil {
-		log.Printf("closing the response recording: %v", err)
+		log.Printf("record: closing the response recording: %v", err)
 	}
 	return s.Store.Close()
 }

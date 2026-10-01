@@ -473,11 +473,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	noSniff(w)
 	// Env-gated request tracing (diagnostics only; off in prod). Read per
 	// request so it can be toggled without a restart (and in tests).
-	if os.Getenv("ONELAKE_TRACE") != "" {
+	if traceEnabled() {
 		tw := &traceWriter{ResponseWriter: w, status: 200}
 		w = tw
 		defer func() {
-			log.Printf("[onelake-dfs] %s %s?%s range=%q x-ms-range=%q rename=%q -> %d (%dB)",
+			log.Printf("onelake-dfs: %s %s?%s range=%q x-ms-range=%q rename=%q -> %d (%dB)",
 				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Range"),
 				r.Header.Get("x-ms-range"), r.Header.Get("x-ms-rename-source"), tw.status, tw.n)
 		}()
@@ -942,6 +942,28 @@ func (s *Service) resolveItem(workspaceID, seg string) (*store.Item, *dfsError) 
 		}
 	}
 	return nil, &dfsError{"PathNotFound", http.StatusNotFound, "No item matches " + seg + " (use name.ItemType or GUIDs)."}
+}
+
+// traceEnabled reports whether the OneLake request trace is on, for both the
+// DFS and Blob surfaces.
+//
+// FABRIC_ONELAKE_TRACE IS THE NAME; ONELAKE_TRACE is the spelling released
+// binaries shipped with and is still honoured. The rename is not tidying. Every
+// other environment knob this emulator reads is FABRIC_*, and
+// scripts/check_backward_compat.py finds them by scanning the source for that
+// literal -- so this one, alone among them, was invisible to the surface
+// ledger: no row in docs/compat-surface.json's `envVars`, no
+// `docsUndocumented` reason, and no mention anywhere in docs/. Its sibling
+// FABRIC_TDS_TRACE, which does the same job one package over, carries both. A
+// knob outside that ledger can be renamed or deleted with every gate in this
+// repository staying green, which is the one thing the ledger exists to stop.
+// scripts/check_logging_quality.py now enforces the convention, and
+// docs/logging-subsystems.json records the legacy name with this reasoning.
+//
+// The legacy read goes away in the release whose notes say so; until then an
+// existing shell export or compose override keeps working.
+func traceEnabled() bool {
+	return os.Getenv("FABRIC_ONELAKE_TRACE") != "" || os.Getenv("ONELAKE_TRACE") != ""
 }
 
 // traceWriter captures the status and byte count for the trace log.

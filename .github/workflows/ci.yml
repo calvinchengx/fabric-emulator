@@ -832,6 +832,56 @@ jobs:
       # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_security_footguns.py --strict
+      # ...AND WHETHER THIS EMULATOR SAYS ANYTHING WHEN IT FAILS. The gate
+      # above measures cost and the one before it measures code shape; neither
+      # can see the only account this process gives of its own failure paths.
+      # Measured when this landed: 30 `log.*` call sites across 12 non-test Go
+      # files, in a tree of 212 non-test sources, and they are the entire
+      # account -- a Livy session whose lakehouse did not mount, a notebook
+      # driver that panicked, a response recorder that could not open the file
+      # THIS WORKFLOW is about to upload as an artifact. No metrics endpoint,
+      # no structured sink. Exactly ONE test in the tree read a log line back
+      # (internal/api/livy_catalog_test.go), so 29 of 30 were asserted by
+      # nothing.
+      #
+      # The failure shape is this repository's own sentence turned inside out.
+      # python/tests/test_make_check_runs_in_ci.py: a check that passes is
+      # indistinguishable from a check that is running. A handler that stops
+      # logging its failure path is indistinguishable from a handler that has
+      # no failures -- and what is missing is a line that is not there, so
+      # unlike a deleted check there is no diff to notice.
+      #
+      # It is not hypothetical in this very file. internal/server/record.go
+      # logs that FABRIC_RECORD_RESPONSES could not be opened, and that line is
+      # the whole fix for a real incident: the medallion stack ran the emulator
+      # as a non-root user against a runner-owned bind mount, the open failed,
+      # the suite went GREEN having recorded nothing, and the openapi-conformance
+      # job at the end of this file failed a job later naming SEVEN ROUTES
+      # missing traffic -- pointing at the routes instead of at the suite that
+      # had stopped recording. That line is now asserted.
+      #
+      # THE KNOB IS THE OTHER HALF, and it is a surface-ledger hole rather than
+      # a logging one. ONELAKE_TRACE was the single log-gating environment knob
+      # not named FABRIC_*, and check_backward_compat.py (two gates up) finds
+      # knobs by scanning the source for that literal -- so it carried no
+      # envVars row, no docsUndocumented reason, and no mention in docs/ at
+      # all. Its sibling FABRIC_TDS_TRACE, doing the same job one package over,
+      # carried both. A knob outside that ledger can be renamed or deleted with
+      # every check in this workflow reporting green, which is the one thing
+      # the ledger exists to prevent. Renamed FABRIC_ONELAKE_TRACE, which put
+      # it in; the legacy spelling is still read and recorded, with a Go test
+      # on both names because a compatibility read nothing exercises has
+      # already stopped working.
+      #
+      # Three rules ship at ZERO as regression guards -- no log.Fatal outside
+      # cmd/, no untagged line, no unprefixed knob -- so the ledger holds one
+      # exemption and one legacy name rather than thirty entries. A ledger of
+      # thirty accepted entries documents a problem instead of closing one.
+      # Severity and a log/slog migration are named as DEFERRED in
+      # docs/64-logging-quality.md rather than smuggled into an audit. In
+      # `make check` too, which python/tests/test_make_check_runs_in_ci.py
+      # requires of anything in that target.
+      - run: uv run --frozen --no-sync python scripts/check_logging_quality.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the
