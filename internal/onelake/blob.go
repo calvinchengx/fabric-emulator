@@ -18,7 +18,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -172,11 +171,11 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	noSniff(w)
 	// Same env-gated tracing as the DFS surface (ServeHTTP): the Blob dialect
 	// is what delta-rs speaks, so a Delta commit is only visible here.
-	if os.Getenv("ONELAKE_TRACE") != "" {
+	if traceEnabled() {
 		tw := &traceWriter{ResponseWriter: w, status: 200}
 		w = tw
 		defer func() {
-			log.Printf("[onelake-blob] %s %s?%s inm=%q copy=%q -> %d (%dB)",
+			log.Printf("onelake-blob: %s %s?%s inm=%q copy=%q -> %d (%dB)",
 				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("If-None-Match"),
 				r.Header.Get("x-ms-copy-source"), tw.status, tw.n)
 		}()

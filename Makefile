@@ -313,6 +313,35 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# could come from a real vault over a connection nobody authenticated
 	@# while the https check that exists for that reason still passed.
 	@$(PY) scripts/check_security_footguns.py --strict
+	@# ...and the dimension the three above cannot see either: whether this
+	@# emulator says anything at all when it fails. Measured when this landed:
+	@# 30 `log.*` call sites across 12 non-test Go files carry the WHOLE of its
+	@# account of its own failure paths -- a Livy session whose lakehouse did
+	@# not mount, a notebook driver that panicked, a recording file CI is about
+	@# to upload that could not be opened -- and nothing registered them. There
+	@# is no metrics endpoint and no structured sink; in a compose stack this is
+	@# the evidence.
+	@#
+	@# The failure shape is this repo's own, turned inside out. A check that
+	@# passes is indistinguishable from a check that is running
+	@# (test_make_check_runs_in_ci.py); a handler that stops logging its failure
+	@# path is indistinguishable from a handler that has no failures. What is
+	@# missing is a line that is not there, so there is no diff to notice.
+	@#
+	@# Four conventions for the subsystem tag coexisted -- bracketed
+	@# `[onelake-dfs]`, colon `livy:`, space-delimited `notebook drive job=`,
+	@# and three lines with no tag at all -- so NO single grep selected one
+	@# subsystem out of a compose log. All 30 now carry one of 13 ledgered tags.
+	@#
+	@# And the finding that started it: ONELAKE_TRACE was the only log-gating
+	@# knob not named FABRIC_*, which is how it escaped the surface ledger
+	@# entirely. check_backward_compat.py above finds knobs by scanning for that
+	@# literal, so this one had no envVars row, no docsUndocumented reason and
+	@# no mention in docs/ -- a knob released binaries honour that every gate
+	@# here was blind to, while its sibling FABRIC_TDS_TRACE carried both. It is
+	@# FABRIC_ONELAKE_TRACE now, the legacy spelling is still read and recorded,
+	@# and R3 is what stops the next one landing outside.
+	@$(PY) scripts/check_logging_quality.py --strict
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

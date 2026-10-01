@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -499,7 +500,7 @@ func TestABFSPutAppendFlush(t *testing.T) {
 }
 
 func TestRequestTrace(t *testing.T) {
-	t.Setenv("ONELAKE_TRACE", "1")
+	t.Setenv("FABRIC_ONELAKE_TRACE", "1")
 	f := newFixture(t)
 	// A HEAD at the account level exercises the traced path end to end.
 	if w := f.do("HEAD", "/", f.token, nil); w.Code != http.StatusOK {
@@ -510,6 +511,95 @@ func TestRequestTrace(t *testing.T) {
 	if w := f.do("GET", path, f.token, nil); w.Body.String() != "hi" {
 		t.Fatalf("traced GET = %q", w.Body.String())
 	}
+}
+
+// TestBothTraceKnobNamesEnableTheTrace, and the line they produce carries the
+// subsystem tag.
+//
+// THE RENAME IS WHY THIS EXISTS. The knob was `ONELAKE_TRACE`, the one
+// log-gating variable in this tree not named FABRIC_*, and that is not a
+// cosmetic difference: scripts/check_backward_compat.py finds environment knobs
+// by scanning the source for the FABRIC_* literal, so this one appeared in no
+// `envVars` list, carried no `docsUndocumented` reason, and was named nowhere in
+// docs/ -- while its sibling FABRIC_TDS_TRACE had both. It could have been
+// renamed or deleted with every gate in this repository reporting green.
+//
+// BOTH NAMES, because a compatibility read nothing exercises is a compatibility
+// read that has already stopped working. `t.Setenv` on the legacy spelling is
+// the only thing standing between a developer's existing shell export and a
+// trace that silently does nothing.
+//
+// It also asserts the TAG, which is the other half of this audit: before it, one
+// test in the whole tree read a log line back (internal/api/livy_catalog_test.go),
+// so the `onelake-dfs: ` prefix a reader greps for was asserted by nothing. The
+// bracketed `[onelake-dfs]` spelling this replaced would pass every other test
+// in this file.
+func TestBothTraceKnobNamesEnableTheTrace(t *testing.T) {
+	for _, knob := range []string{"FABRIC_ONELAKE_TRACE", "ONELAKE_TRACE"} {
+		t.Run(knob, func(t *testing.T) {
+			// Unset the other one, so each subtest proves its OWN name works
+			// rather than inheriting the sibling's value from the environment.
+			for _, other := range []string{"FABRIC_ONELAKE_TRACE", "ONELAKE_TRACE"} {
+				t.Setenv(other, "")
+			}
+			t.Setenv(knob, "1")
+			buf := captureOneLakeLog(t)
+			f := newFixture(t)
+
+			path := "/" + f.ws.ID + "/" + f.it.ID + "/Files/traced.txt"
+			if w := f.do("PUT", path+"?resource=file", f.token, []byte("hi")); w.Code != http.StatusCreated {
+				t.Fatalf("seed = %d", w.Code)
+			}
+			if w := f.do("GET", path, f.token, nil); w.Body.String() != "hi" {
+				t.Fatalf("traced GET = %q", w.Body.String())
+			}
+			if w := f.doBlob("GET", path, f.token, nil, nil); w.Body.String() != "hi" {
+				t.Fatalf("traced blob GET = %q", w.Body.String())
+			}
+
+			out := buf.String()
+			for _, want := range []string{"onelake-dfs: GET", "onelake-blob: GET"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s=1 produced no %q line; the trace is off, or the "+
+						"subsystem tag changed.\ngot:\n%s", knob, want, out)
+				}
+			}
+			// The bracketed spelling is gone for good: it is why no single grep
+			// could select one subsystem out of a compose log.
+			if strings.Contains(out, "[onelake-") {
+				t.Errorf("the bracketed tag is back:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestTheTraceIsOffWithNeitherKnob. The negative half: without it, a trace that
+// had become unconditional would pass the test above and nothing would say so.
+func TestTheTraceIsOffWithNeitherKnob(t *testing.T) {
+	for _, knob := range []string{"FABRIC_ONELAKE_TRACE", "ONELAKE_TRACE"} {
+		t.Setenv(knob, "")
+	}
+	buf := captureOneLakeLog(t)
+	f := newFixture(t)
+	path := "/" + f.ws.ID + "/" + f.it.ID + "/Files/quiet.txt"
+	f.do("PUT", path+"?resource=file", f.token, []byte("hi"))
+	f.do("GET", path, f.token, nil)
+	if strings.Contains(buf.String(), "onelake-dfs:") {
+		t.Errorf("the trace logged with no knob set:\n%s", buf.String())
+	}
+}
+
+// captureOneLakeLog redirects the standard logger for the duration of a test.
+// These paths report ONLY to the log, so the log is the observable -- the same
+// device, and the same reason, as captureLog in internal/api/livy_catalog_test.go.
+func captureOneLakeLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	return buf
 }
 
 // TestShortcutResolution: a read through a shortcut resolves into the target

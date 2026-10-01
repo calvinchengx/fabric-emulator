@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,6 +75,57 @@ func TestAnUnwritableRecordingPathIsNotFatal(t *testing.T) {
 	t.Setenv("FABRIC_RECORD_RESPONSES", filepath.Join(t.TempDir(), "no-such-dir", "r.jsonl"))
 	if newRecorder() != nil {
 		t.Fatal("an unopenable path should disable recording, not panic or succeed")
+	}
+}
+
+// TestAnUnwritableRecordingPathSaysSo, which is the half the test above cannot
+// make: it asserts that recording is DISABLED, and a branch that disabled it
+// silently would satisfy it exactly.
+//
+// WHY THAT MATTERS HERE MORE THAN MOST PLACES. newRecorder's own comment records
+// what the silence cost: on a Linux runner the medallion stack runs the emulator
+// as a non-root user, the bind-mounted directory belongs to the runner, the open
+// failed, the suite went GREEN having recorded nothing, and the failure
+// surfaced a job later in the aggregate conformance gate as seven routes
+// missing traffic -- pointing at the routes rather than at the suite that had
+// stopped recording. The log line is the entire fix for that, and until this
+// test it was asserted by nothing: 29 of the 30 log call sites in this tree had
+// no test at all, and this was one of them.
+//
+// So the LINE is the observable, not the nil return. It must name its subsystem
+// (`record: `, the tag scripts/check_logging_quality.py now enforces, so a grep
+// for one subsystem in a compose log selects it) and it must name the variable,
+// because "could not be opened" with no path is a sentence that cannot be acted
+// on.
+func TestAnUnwritableRecordingPathSaysSo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "no-such-dir", "r.jsonl")
+	t.Setenv("FABRIC_RECORD_RESPONSES", path)
+
+	buf := &bytes.Buffer{}
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+
+	if newRecorder() != nil {
+		t.Fatal("an unopenable path should disable recording")
+	}
+
+	out := buf.String()
+	if out == "" {
+		t.Fatal("recording was disabled SILENTLY. A suite then passes having " +
+			"recorded nothing, and the conformance gate fails a job later " +
+			"naming the routes instead of the cause.")
+	}
+	if !strings.HasPrefix(out, "record: ") {
+		t.Errorf("the line does not name its subsystem, so no grep selects it "+
+			"out of a compose log: %q", out)
+	}
+	for _, want := range []string{"FABRIC_RECORD_RESPONSES", path} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the line does not name %q, so a reader cannot act on it: %q",
+				want, out)
+		}
 	}
 }
 

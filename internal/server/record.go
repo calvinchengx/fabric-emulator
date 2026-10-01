@@ -77,8 +77,8 @@ func newRecorder() *recorder {
 		// and the suite passed having recorded nothing. The aggregate
 		// conformance job noticed -- seven routes it had covered went
 		// missing -- but that is a long way from the cause.
-		log.Printf("FABRIC_RECORD_RESPONSES=%s could not be opened, so nothing "+
-			"will be recorded: %v", path, err)
+		log.Printf("record: FABRIC_RECORD_RESPONSES=%s could not be opened, so "+
+			"nothing will be recorded: %v", path, err)
 		return nil
 	}
 	return &recorder{file: f}
