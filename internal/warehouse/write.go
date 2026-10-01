@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
@@ -72,7 +71,7 @@ func WriteDeltaTableAs(attr store.Attribution, st *store.Store, wsID, itemID, na
 	return st.CreateOneLakePathAs(attr, &store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID,
 		RelPath: path.Join(root, "_delta_log", commitFileName(version)),
-		Content: commitJSON(tbl.Columns, kinds, dataFile, len(pq), len(tbl.Rows), removes, version, time.Now().UnixMilli()),
+		Content: commitJSON(tbl.Columns, kinds, dataFile, len(pq), len(tbl.Rows), removes, version, st.Now()*1000),
 	}, false)
 }
 
@@ -126,6 +125,7 @@ func commitFileName(version int) string { return fmt.Sprintf("%020d.json", versi
 func commitJSON(cols []string, kinds []colType, dataFile string, size, rows int, removes []string, version int, nowMillis int64) []byte {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
+	_ = enc.Encode(commitInfoAction(nowMillis))
 
 	if version == 0 || len(removes) > 0 {
 		fields := make([]map[string]any, len(cols))
@@ -164,4 +164,15 @@ func commitJSON(cols []string, kinds []colType, dataFile string, size, rows int,
 		"stats":            string(stats),
 	}})
 	return buf.Bytes()
+}
+
+// commitInfoAction is the commitInfo action that opens every commit this
+// package writes. Delta records WHEN a commit happened nowhere else, so a log
+// without it cannot be replayed to a point in time at all -- and the timestamp
+// has to be the emulator clock's, since a commit stamped from the wall clock is
+// unreachable on a frozen or offset one (docs/35).
+func commitInfoAction(nowMillis int64) map[string]any {
+	return map[string]any{"commitInfo": map[string]any{
+		"timestamp": nowMillis, "operation": "WRITE",
+	}}
 }

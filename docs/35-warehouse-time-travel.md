@@ -87,28 +87,36 @@ That is the whole reason this feature is cheap on the Lakehouse side and
 expensive on the warehouse side: one has a version history and the other does
 not.
 
-## The blocking prerequisite, and it is a bug today
+## The blocking prerequisite (fixed — Phase 0 is done)
 
-[`write.go`](../internal/warehouse/write.go) stamps every Delta commit with:
-
-```go
-time.Now().UnixMilli()
-```
+[`write.go`](../internal/warehouse/write.go) used to stamp every Delta commit
+with `time.Now().UnixMilli()`.
 
 **Wall clock.** Every other time-derived value in the emulator comes from the
 controllable clock (`store.Now()` → `Clock.Now()`, [db.go](../internal/store/db.go)),
 which is the property the whole project is built on: LRO completion, job status,
 schedule firing. A commit timestamped from the host clock cannot be moved, so:
 
-- a test cannot write v1, advance an hour, write v2 and query the midpoint —
+- a test could not write v1, advance an hour, write v2 and query the midpoint —
   it would have to *wait* an hour;
 - `-clock-offset` and `POST /_emulator/clock` would silently not apply to the
   one feature whose entire subject is time;
 - the emulator would disagree with itself about what time it is, in a file whose
   timestamps are the index for a user-facing query.
 
-This is worth fixing whether or not time travel is ever built, and nothing here
-should be started before it is. It is also the cheapest item in the plan.
+Both writers now stamp from `st.Now()*1000`: `WriteDeltaTableAs` in
+[`write.go`](../internal/warehouse/write.go) and `writeDeltaSnapshot` in
+[`mirror.go`](../internal/warehouse/mirror.go), covering `metaData.createdTime`,
+`add.modificationTime` and `remove.deletionTimestamp`.
+
+Every commit also opens with a `commitInfo` action —
+`{"commitInfo":{"timestamp":…,"operation":"WRITE"}}` — which is what Phase 1
+reads. Delta records a commit's own time nowhere else: `add.modificationTime`
+belongs to the file, not the commit, and an append that adds no file would
+carry no time at all. `TestDeltaCommitsStampedFromEmulatorClock`
+([commit_clock_test.go](../internal/warehouse/commit_clock_test.go)) pins all of
+it against a frozen clock advanced 400 days, so a wall-clock stamp cannot pass
+by coincidence.
 
 ## Two surfaces, and they are not equally hard
 
@@ -233,20 +241,37 @@ rather than an assumption.
 
 ## Phases
 
-**Phase 0 — the clock.** Stamp Delta commits from `store.Now()`. One line, plus a
-test that a commit written under an offset clock lands at the offset time. **Do
-this regardless of whether any later phase happens**, because a wall-clock
-timestamp in a commit log is wrong on its own terms.
+**Phase 0 — the clock. Done.** Delta commits are stamped from `store.Now()`, and
+each one opens with a `commitInfo` action carrying that timestamp. Worth doing
+regardless of whether any later phase happens, because a wall-clock timestamp in
+a commit log is wrong on its own terms.
 
-**Phase 1 — read a version.** `ReadDeltaTableAsOf(st, itemID, name, ts)`:
-`activeFiles` with a stopping condition, plus the schema as of that commit. Pure
-Go, no SQL, no protocol — unit-testable against a fixture log with three commits
-and no server at all. This is the phase that proves the premise.
+**Phase 1 — read a version. Done.**
+[`ReadDeltaTableAsOf(st, itemID, name, asOf)`](../internal/warehouse/delta.go)
+is `activeFiles` with a stopping condition (`commitStop`, consulted before each
+commit is applied), plus the schema as of that commit. A commit's time is its
+`commitInfo.timestamp`, or else the newest `add.modificationTime` it carries for
+a log written by someone else; an undated commit and a timestamp before the
+table's first commit are both errors rather than a plausible answer. Pure Go, no
+SQL, no protocol — `TestReadDeltaTableAsOf` covers three commits an emulator
+hour apart, and their midpoints, with no server at all. This is the phase that
+proves the premise.
 
-**Phase 2 — parse the hint.** Recognition, extraction, and every Class B refusal
-in the table above, in `internal/tsql`. Also pure, also unit-testable, and
-independently useful: even with no execution behind it, a consumer gets
-Fabric's error instead of a syntax error.
+**Phase 2 — parse the hint. Done.**
+[`ParseTimeTravelHint`](../internal/tsql/timetravel.go) reads
+`OPTION (FOR TIMESTAMP AS OF '<ts>')` from tokens — case-insensitive, whitespace
+and comments allowed, and not a hint at all when the same words sit in a string
+literal or a comment — and returns the instant in UTC plus the statement with the
+hint cut out. Every Class B row in the table above that a lexer can see is
+refused with a `*TimeTravelError{Rule, Detail}`: `timestamp-format` (more than
+three fractional digits, or malformed, quoting Fabric's Msg 22440),
+`timestamp-timezone`, `hint-once`, `select-only`, `view-definition` and
+`non-deterministic`. `TestParseTimeTravelHint`
+([timetravel_test.go](../internal/tsql/timetravel_test.go)) pins each one.
+
+It is deliberately not wired into `Adapt` or `CheckStrict` yet: stripping the
+hint without resolving the versions behind it would answer a question about the
+past with today's data. That wiring is Phase 3.
 
 **Phase 3 — the SQL analytics endpoint.** Wire 1 and 2 into the reflect path.
 This is the first phase with a user-visible feature, it is the faithful surface,

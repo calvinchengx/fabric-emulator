@@ -229,8 +229,8 @@ func kindOf(v any) colKind {
 }
 
 // writeDeltaSnapshot writes a table as a single-commit Delta table under
-// Tables/<name>/: one Parquet data file plus a _delta_log commit (protocol +
-// metaData + add) that delta-rs / Spark / DuckDB — and this package's own
+// Tables/<name>/: one Parquet data file plus a _delta_log commit (commitInfo +
+// protocol + metaData + add) that delta-rs / Spark / DuckDB — and this package's own
 // reader — accept.
 func writeDeltaSnapshot(st *store.Store, wsID, itemID, name string, tbl *Table, kinds []colType) error {
 	pq, err := encodeParquet(tbl, kinds)
@@ -238,7 +238,7 @@ func writeDeltaSnapshot(st *store.Store, wsID, itemID, name string, tbl *Table, 
 		return err
 	}
 	root := path.Join("Tables", name)
-	now := time.Now().UnixMilli()
+	now := st.Now() * 1000
 	if err := st.CreateOneLakePath(&store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID, RelPath: path.Join(root, "part-0.parquet"), Content: pq,
 	}, false); err != nil {
@@ -564,8 +564,8 @@ func deltaTypeName(t colType) string {
 	}
 }
 
-// deltaCommit builds the _delta_log/0.json NDJSON commit (protocol, metaData,
-// add) for a fresh single-file Delta table.
+// deltaCommit builds the _delta_log/0.json NDJSON commit (commitInfo, protocol,
+// metaData, add) for a fresh single-file Delta table.
 func deltaCommit(cols []string, kinds []colType, size int, nowMillis int64) []byte {
 	fields := make([]map[string]any, len(cols))
 	for i, c := range cols {
@@ -592,6 +592,7 @@ func deltaCommit(cols []string, kinds []colType, size int, nowMillis int64) []by
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
+	_ = enc.Encode(commitInfoAction(nowMillis))
 	_ = enc.Encode(protocol)
 	_ = enc.Encode(metaData)
 	_ = enc.Encode(add)

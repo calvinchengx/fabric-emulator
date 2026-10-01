@@ -88,8 +88,23 @@ func (d Decimal) String() string {
 
 // deltaAction is one line of a _delta_log commit (only the parts we use).
 type deltaAction struct {
-	Add    *struct{ Path string } `json:"add"`
-	Remove *struct{ Path string } `json:"remove"`
+	// ModificationTime is the fallback commit time: a log written by another
+	// writer may carry no commitInfo at all, and then the newest file the
+	// commit adds is the only record of when it happened.
+	Add *struct {
+		Path             string `json:"path"`
+		ModificationTime int64  `json:"modificationTime"`
+	} `json:"add"`
+	Remove *struct {
+		Path string `json:"path"`
+	} `json:"remove"`
+	// CommitInfo is where a commit states its own time, and the authoritative
+	// answer when present — our writer emits it first in every commit
+	// (commitInfoAction, write.go) precisely so a replay can be cut at an
+	// instant.
+	CommitInfo *struct {
+		Timestamp int64 `json:"timestamp"`
+	} `json:"commitInfo"`
 	// MetaData carries the table's logical schema. Delta matches data files to
 	// it BY NAME, so the Parquet files' physical field order is an
 	// implementation detail — the schema is what a reader must present.
@@ -202,6 +217,14 @@ func assembleTable(name string, active []string, schema deltaSchema, read func(s
 // activeFiles replays the _delta_log commits (added minus removed) and returns
 // the active Parquet file paths (relative to the table root), in commit order.
 func activeFiles(st *store.Store, itemID, root string) ([]string, deltaSchema, error) {
+	return activeFilesStop(st, itemID, root, nil)
+}
+
+// activeFilesStop is activeFiles with a stopping condition: stop is consulted
+// before each commit is applied, so a caller can replay a PREFIX of the log —
+// which is all time travel is. A nil stop replays everything, which is why
+// activeFiles is one line.
+func activeFilesStop(st *store.Store, itemID, root string, stop commitStop) ([]string, deltaSchema, error) {
 	logDir := path.Join(root, "_delta_log")
 	entries, err := st.ListOneLakePaths(itemID, logDir, false)
 	if err != nil {
@@ -226,7 +249,7 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, deltaSchema, e
 		}
 		blobs[i] = p.Content
 	}
-	return replayCommits(names, blobs)
+	return replayCommits(names, blobs, stop)
 }
 
 // activeFilesExternal is activeFiles for an external shortcut's target: the
@@ -248,7 +271,7 @@ func activeFilesExternal(external ExternalDelta, sc *store.Shortcut) ([]string, 
 		}
 		blobs[i] = b
 	}
-	return replayCommits(names, blobs)
+	return replayCommits(names, blobs, nil)
 }
 
 // replayCommits is activeFiles' and activeFilesExternal's shared core: turn a
@@ -257,20 +280,29 @@ func activeFilesExternal(external ExternalDelta, sc *store.Shortcut) ([]string, 
 // fetched differs between a OneLake table and a shortcut's external target;
 // the replay — later metaData supersedes earlier, add/remove — is one rule
 // either way.
-func replayCommits(names []string, blobs [][]byte) ([]string, deltaSchema, error) {
+func replayCommits(names []string, blobs [][]byte, stop commitStop) ([]string, deltaSchema, error) {
 	var order []string
 	var schema deltaSchema
 	active := map[string]bool{}
 	for i, content := range blobs {
-		for _, line := range bytes.Split(content, []byte("\n")) {
-			line = bytes.TrimSpace(line)
-			if len(line) == 0 {
-				continue
+		actions, err := parseCommit(names[i], content)
+		if err != nil {
+			return nil, deltaSchema{}, err
+		}
+		// Asked BEFORE anything is applied: a commit is either wholly in the
+		// replay or wholly out of it. Delta's atomicity is per commit, and a
+		// half-applied one is a file set that never existed.
+		if stop != nil {
+			ts, dated := commitTimestamp(actions)
+			done, err := stop(names[i], ts, dated)
+			if err != nil {
+				return nil, deltaSchema{}, err
 			}
-			var a deltaAction
-			if err := json.Unmarshal(line, &a); err != nil {
-				return nil, deltaSchema{}, fmt.Errorf("bad _delta_log line in %q: %w", names[i], err)
+			if done {
+				break
 			}
+		}
+		for _, a := range actions {
 			// A later metaData supersedes an earlier one (schema evolution).
 			if a.MetaData != nil {
 				if sc := schemaColumns(a.MetaData.SchemaString); len(sc.Cols) > 0 {
@@ -295,6 +327,103 @@ func replayCommits(names []string, blobs [][]byte) ([]string, deltaSchema, error
 		}
 	}
 	return out, schema, nil
+}
+
+// commitStop decides, for one _delta_log commit, whether the replay should end
+// BEFORE that commit is applied. It is handed the commit's file name (for
+// errors), its timestamp in epoch millis, and whether the commit recorded one
+// at all — an undated commit cannot be placed in time, and only the caller
+// knows whether that is fatal.
+type commitStop func(name string, ts int64, dated bool) (bool, error)
+
+// parseCommit decodes one commit's NDJSON into its actions, in order.
+func parseCommit(name string, content []byte) ([]deltaAction, error) {
+	var out []deltaAction
+	for _, line := range bytes.Split(content, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var a deltaAction
+		if err := json.Unmarshal(line, &a); err != nil {
+			return nil, fmt.Errorf("bad _delta_log line in %q: %w", name, err)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// commitTimestamp is when a commit happened, in epoch millis: its commitInfo
+// timestamp, or else the largest modificationTime among the files it adds.
+//
+// The fallback is not a guess — Delta writers that omit commitInfo still stamp
+// every add, and the newest of them is when the commit landed. Zero counts as
+// absent in both: in a log this emulator stamps from its own clock it means
+// "not recorded" far more often than it means 1970.
+func commitTimestamp(actions []deltaAction) (int64, bool) {
+	for _, a := range actions {
+		if a.CommitInfo != nil && a.CommitInfo.Timestamp > 0 {
+			return a.CommitInfo.Timestamp, true
+		}
+	}
+	var newest int64
+	for _, a := range actions {
+		if a.Add != nil && a.Add.ModificationTime > newest {
+			newest = a.Add.ModificationTime
+		}
+	}
+	return newest, newest > 0
+}
+
+// ReadDeltaTableAsOf is ReadDeltaTable at a point in time: the rows of
+// Tables/<name> as they stood at the last commit made at or before asOf
+// (docs/35 Phase 1 — what `OPTION (FOR TIMESTAMP AS OF …)` needs underneath).
+//
+// Nothing is reconstructed. A commit that supersedes a file only marks it
+// removed, so replaying a PREFIX of the log yields exactly the file set that
+// was live then, with the schema of that prefix's newest metaData — both still
+// on disk. That is why time travel is cheap for a Delta table and impossible
+// for a warehouse table, which keeps no version history at all.
+//
+// A timestamp before the table existed is an error rather than an empty table:
+// Fabric refuses it, and answering "no rows" for a table that had not been
+// created yet is the kind of plausible wrong answer time travel exists to
+// avoid.
+func ReadDeltaTableAsOf(st *store.Store, itemID, name string, asOf time.Time) (*Table, error) {
+	root := path.Join("Tables", name)
+	asOfMillis := asOf.UnixMilli()
+
+	var applied, first int64
+	var haveFirst bool
+	stop := func(commit string, ts int64, dated bool) (bool, error) {
+		if !dated {
+			return false, fmt.Errorf("delta table %q: commit %q records no timestamp, so it cannot be read as of a point in time", name, commit)
+		}
+		if !haveFirst {
+			first, haveFirst = ts, true
+		}
+		if ts > asOfMillis {
+			return true, nil
+		}
+		applied++
+		return false, nil
+	}
+
+	active, schema, err := activeFilesStop(st, itemID, root, stop)
+	if err != nil {
+		return nil, err
+	}
+	if applied == 0 {
+		return nil, fmt.Errorf("delta table %q did not exist at %s: its first commit is at %s",
+			name, asOf.UTC().Format(time.RFC3339), time.UnixMilli(first).UTC().Format(time.RFC3339))
+	}
+	return assembleTable(name, active, schema, func(f string) ([]byte, error) {
+		p, err := st.GetOneLakePath(itemID, path.Join(root, f))
+		if err != nil {
+			return nil, fmt.Errorf("delta table %q: missing data file %q", name, f)
+		}
+		return p.Content, nil
+	})
 }
 
 // deltaSchema is the logical schema from a metaData action: every field in
