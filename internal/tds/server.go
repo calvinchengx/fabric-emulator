@@ -153,6 +153,7 @@ func (s *Server) handle(conn net.Conn) error {
 	principal := ""
 	dbRole := RoleReader
 	var grants []Grant
+	var timeTravel tsql.TimeTravelResolver
 	if s.OnConnect != nil {
 		// An empty database is REJECTED, not waved through. OnConnect is the only
 		// place a TDS connection's workspace role and read-only-ness are decided,
@@ -174,6 +175,7 @@ func (s *Server) handle(conn net.Conn) error {
 		targetDB, readOnly, principal, dbRole = got.TargetDB, got.ReadOnly, got.Principal, got.Role
 		analyticsEndpoint = got.AnalyticsEndpoint
 		grants = got.Grants
+		timeTravel = got.TimeTravel
 	}
 	if targetDB != "" {
 		defer s.track(targetDB, conn)()
@@ -219,7 +221,7 @@ func (s *Server) handle(conn net.Conn) error {
 		if err := WriteMessage(conn, PktTabular, spliceLoginResponse(backendLogin)); err != nil {
 			return err
 		}
-		return spliceSession(conn, backendConn, refuse, s.Strict, s.Observe, targetDB)
+		return spliceSession(conn, backendConn, refuse, s.Strict, s.Observe, targetDB, timeTravel)
 	}
 
 	// Fallback re-encode relay: fake test backends and the no-engine stub. Each
@@ -264,7 +266,7 @@ func (s *Server) handle(conn net.Conn) error {
 		}
 		// Same dialect adaptation as the splice path, so the re-encode relay and
 		// the byte-forwarding relay agree on what they accept.
-		fixed, reject := dialectFix(typ, data, s.Strict)
+		fixed, reject := dialectFix(typ, data, s.Strict, timeTravel)
 		if reject != "" {
 			if err := WriteMessage(conn, PktTabular, dialectReject(reject)); err != nil {
 				return err

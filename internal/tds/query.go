@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"net"
+
+	"github.com/calvinchengx/fabric-emulator/internal/tsql"
 )
 
 // Backend runs a T-SQL query and returns its result. It is injected so the TDS
@@ -53,6 +55,15 @@ type Connection struct {
 	// Empty means "just TargetDB", which is what a backend with no store
 	// behind it (the fakes) can say.
 	Grants []Grant
+	// TimeTravel resolves a table reference under an `OPTION (FOR TIMESTAMP
+	// AS OF …)` hint to its historical version
+	// (docs/35-warehouse-time-travel.md, Phase 3). Set it only for a
+	// lakehouse's SQL analytics endpoint, whose tables are Delta-backed and
+	// therefore have real history to resolve against; nil elsewhere (a
+	// warehouse connection) so the hint reaches the sidecar unrecognised and
+	// fails there, as it always has — the warehouse write path keeps no
+	// version history to travel in (Phase 4, not this one).
+	TimeTravel tsql.TimeTravelResolver
 }
 
 // Grant is one database this caller may reach, and the rung they get there.

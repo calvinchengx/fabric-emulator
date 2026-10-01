@@ -76,7 +76,7 @@ func TestSpliceObservesAcceptedWrite(t *testing.T) {
 					seen <- db + "|" + f.Kind + "|" + strings.Join(f.Target, ".") +
 						"<-" + strings.Join(f.Sources[0], ".")
 				}
-			}, "wh-guid")
+			}, "wh-guid", nil)
 	}()
 
 	// Client sends a CTAS; the fake backend accepts it.

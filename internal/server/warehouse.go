@@ -76,6 +76,13 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			return tds.Connection{
 				TargetDB: it.ID, ReadOnly: readOnly, AnalyticsEndpoint: true, Principal: principal, Role: dbRole,
 				Grants: grants,
+				// Time travel resolves against THIS item's own Delta history
+				// (docs/35-warehouse-time-travel.md, Phase 3). Bound here, not
+				// deeper in internal/tds, because only this router knows which
+				// store and item id a connection belongs to; a warehouse
+				// connection below gets no resolver at all, since it has no
+				// Delta history to resolve against (Phase 4).
+				TimeTravel: warehouse.TimeTravelResolver(st, it.ID),
 			}, nil
 		case "Warehouse", "SQLDatabase":
 			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over

@@ -31,12 +31,19 @@ import (
 //
 // A nil error path is deliberate: only a statement this package fully
 // understands is altered.
-func dialectFix(typ byte, data []byte, strict bool) (out []byte, reject string) {
+//
+// timeTravel resolves a table reference under an `OPTION (FOR TIMESTAMP AS OF
+// …)` hint to its historical version (docs/35-warehouse-time-travel.md, Phase
+// 3). It is nil on every connection except a lakehouse SQL analytics
+// endpoint's — the only surface with real Delta history to resolve against —
+// so a warehouse connection sees exactly today's behaviour: the hint reaches
+// the sidecar unrecognised and fails there, as it always has.
+func dialectFix(typ byte, data []byte, strict bool, timeTravel tsql.TimeTravelResolver) (out []byte, reject string) {
 	switch typ {
 	case PktSQLBatch:
-		return fixBatch(data, strict)
+		return fixBatch(data, strict, timeTravel)
 	case PktRPC:
-		return fixRPC(data, strict)
+		return fixRPC(data, strict, timeTravel)
 	}
 	return data, ""
 }
@@ -57,7 +64,7 @@ func strictReject(sql string, strict bool) string {
 // fixRPC rewrites a nested CTE carried inside a procedure parameter
 // (sp_prepexec and friends). Every failure path forwards the original: a
 // mis-parsed parameter list must cost us the rewrite, never the request.
-func fixRPC(data []byte, strict bool) (out []byte, reject string) {
+func fixRPC(data []byte, strict bool, timeTravel tsql.TimeTravelResolver) (out []byte, reject string) {
 	proc, _ := rpcProc(data)
 	if !procsCarryingSQL[proc] {
 		return data, ""
@@ -78,11 +85,12 @@ func fixRPC(data []byte, strict bool) (out []byte, reject string) {
 		if msg := strictReject(p.text, strict); msg != "" {
 			return data, msg
 		}
-		rewritten, changed, ferr := tsql.Adapt(p.text)
+		rewritten, changed, ferr := tsql.AdaptWithTimeTravel(p.text, timeTravel)
 		if ferr != nil {
 			var restriction *tsql.RestrictionError
 			var shadowed *tsql.ShadowedNameError
-			if errors.As(ferr, &restriction) || errors.As(ferr, &shadowed) {
+			var timeTravelErr *tsql.TimeTravelError
+			if errors.As(ferr, &restriction) || errors.As(ferr, &shadowed) || errors.As(ferr, &timeTravelErr) {
 				return data, ferr.Error()
 			}
 			continue // unparseable parameter: not ours to judge
@@ -143,19 +151,20 @@ func rewriteIsFaithful(orig *rpcRequest, encoded []byte, idx int, want string) b
 	return true
 }
 
-func fixBatch(data []byte, strict bool) (out []byte, reject string) {
+func fixBatch(data []byte, strict bool, timeTravel tsql.TimeTravelResolver) (out []byte, reject string) {
 	raw := sqlBatchQuery(data)
 	if msg := strictReject(raw, strict); msg != "" {
 		return data, msg
 	}
-	sql, changed, err := tsql.Adapt(raw)
+	sql, changed, err := tsql.AdaptWithTimeTravel(raw, timeTravel)
 	switch {
 	case err != nil:
 		// A statement Fabric itself refuses, or one that cannot be flattened
 		// without changing its meaning: say so, by name.
 		var restriction *tsql.RestrictionError
 		var shadowed *tsql.ShadowedNameError
-		if errors.As(err, &restriction) || errors.As(err, &shadowed) {
+		var timeTravelErr *tsql.TimeTravelError
+		if errors.As(err, &restriction) || errors.As(err, &shadowed) || errors.As(err, &timeTravelErr) {
 			return data, err.Error()
 		}
 		// Anything else is a parse failure — forward untouched and let the
