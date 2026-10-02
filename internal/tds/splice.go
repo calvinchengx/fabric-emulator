@@ -1,6 +1,10 @@
 package tds
 
-import "net"
+import (
+	"net"
+
+	"github.com/calvinchengx/fabric-emulator/internal/tsql"
+)
 
 // spliceSession byte-forwards a client's post-login TDS session to an
 // already-authenticated backend connection, one request/response at a time. TDS
@@ -16,7 +20,7 @@ import "net"
 // observe, when set, is told about each write the backend accepted, so the
 // warehouse half of a data flow is recorded (see observe.go). It is called
 // after the client already has its response, so watching cannot slow a query.
-func spliceSession(client, backend net.Conn, refuse func(string) bool, strict bool, obs Observer, database string) error {
+func spliceSession(client, backend net.Conn, refuse func(string) bool, strict bool, obs Observer, database string, timeTravel tsql.TimeTravelResolver) error {
 	for {
 		typ, data, err := ReadMessage(client)
 		if err != nil {
@@ -32,7 +36,7 @@ func spliceSession(client, backend net.Conn, refuse func(string) bool, strict bo
 		// Adapt the statement's dialect where Fabric and the sidecar disagree:
 		// a nested CTE is flattened, anything Fabric itself refuses is rejected
 		// here rather than executed (docs/29-tsql-parity.md).
-		fixed, reject := dialectFix(typ, data, strict)
+		fixed, reject := dialectFix(typ, data, strict, timeTravel)
 		if reject != "" {
 			if err := WriteMessage(client, PktTabular, dialectReject(reject)); err != nil {
 				return err

@@ -1,13 +1,13 @@
 # 35 — Warehouse time travel: the history is already on disk
 
-**Status: not implemented, and NOT blocked on the hard part.** The hard part of
-time travel is retaining versions, and the emulator already retains them —
-`_delta_log` keeps every commit and Delta's `remove` is a tombstone, not a
-delete. What is missing is the ability to *ask* for one: the T-SQL surface
-(`OPTION (FOR TIMESTAMP AS OF …)`), and a decision about the warehouse tables
-that live in the sidecar rather than in Delta.
-
-This document is the design. Nothing here is built.
+**Status: shipped for the SQL analytics endpoint (Phases 0–3); the warehouse
+write path is still a gap (Phase 4), and so is retention (Phase 5).** The hard
+part of time travel is retaining versions, and the emulator already retained
+them before any of this phase list started — `_delta_log` keeps every commit
+and Delta's `remove` is a tombstone, not a delete. What this plan closes is the
+ability to *ask* for one: the T-SQL surface (`OPTION (FOR TIMESTAMP AS OF
+…)`), now wired into the Lakehouse's SQL analytics endpoint. The warehouse
+tables that live in the sidecar rather than in Delta are still untravelled.
 
 [29-tsql-parity.md](29-tsql-parity.md) supplies the Class A/B/C vocabulary this
 plan is written in and is the doc that must be updated when it ships.
@@ -232,7 +232,24 @@ exist by returning `NULL`s. That is a Class B failure of the worst kind: a
 plausible answer to a question Fabric would have refused. Enforcing it needs the
 schema as of the timestamp (recoverable from the `metaData` actions
 `activeFiles` already reads for schema evolution) compared against the columns
-the statement references.
+the statement references. **Implemented in Phase 3** —
+`checkColumnsExistedAsOf` in
+[`timetravel_adapt.go`](../internal/tsql/timetravel_adapt.go) — see the Phase 3
+note below.
+
+None of this table's rows ended up gated behind `-tsql-strict`, despite this
+section's opening sentence — worth correcting rather than leaving to look like
+a decision nobody noticed. Every other Class B entry in the codebase exists
+because the sidecar genuinely CAN run something Fabric refuses (a recursive
+CTE, say), and strict mode is the operator's choice to additionally forbid it.
+None of that applies here: there is no permissive backend behaviour to
+preserve by leaving these off, because the emulator itself is the only thing
+that understands the hint at all. A malformed timestamp, the hint used twice,
+a reference to a column that did not exist yet — none of these are things the
+sidecar would otherwise accept; they are things *this feature's own code*
+would otherwise get wrong. Phase 2's five lexical rules were already
+unconditional (`ParseTimeTravelHint` takes no strict flag), and Phase 3's
+schema check follows the same precedent rather than inventing a different one.
 
 The `#temp` rule is the one place the emulator is likely to agree for free:
 session temporaries are not Delta-backed, so a rewrite that only touches
@@ -273,9 +290,59 @@ It is deliberately not wired into `Adapt` or `CheckStrict` yet: stripping the
 hint without resolving the versions behind it would answer a question about the
 past with today's data. That wiring is Phase 3.
 
-**Phase 3 — the SQL analytics endpoint.** Wire 1 and 2 into the reflect path.
-This is the first phase with a user-visible feature, it is the faithful surface,
-and it needs nothing from the warehouse write path. **Ship-able alone.**
+**Phase 3 — the SQL analytics endpoint. Done.**
+[`AdaptWithTimeTravel`](../internal/tsql/timetravel_adapt.go) wires Phases 1
+and 2 into `Adapt`: it strips the hint (Phase 2), finds every table the
+statement references — `findTableRefs`, the tokenizer work the risk below
+named as the likely slip — resolves each one once (a self-join resolves its
+table a single time and both aliases point at the same snapshot), and
+rewrites the reference to a session `#temp` table materialised from
+[`ReadDeltaTableAsOf`](../internal/warehouse/delta.go) (Phase 1). A reference
+with no explicit alias gets one spliced in (`#tt0 AS Customer`) rather than
+becoming a bare temp-table name, so a later qualifier written against the
+table's own name — legal SQL when no alias was given — keeps resolving; this
+was caught by a test before it shipped, not after. `checkColumnsExistedAsOf`
+is the Class B schema check: it compares the resolver's `Columns` (as of the
+timestamp) against `CurrentColumns` (today) and refuses — rather than
+silently materialising `NULL`s — a reference to a column in that gap,
+including the `SELECT *` case the design note calls out explicitly, by
+telling a wildcard select-list star apart from multiplication on the single
+token that precedes it rather than tracking parenthesis depth.
+
+The resolver itself —
+[`warehouse.TimeTravelResolver`](../internal/warehouse/timetravel.go) — is the
+one place that knows both halves: it calls `ReadDeltaTableAsOf` and
+`ReadDeltaTable` (today's schema) for one item, resolves a table name
+case-insensitively against the item's own `Tables/` folders (SQL Server's
+default collation is `CI_AS`; a resolver that matched by exact case would fail
+to time-travel `dbo.customer` against a folder named `Customer`), and renders
+each row as literal SQL text — there being no other channel available to hand
+a materialised snapshot to the engine, since `Adapt` runs at the wire layer on
+a statement's text, before the client's session is spliced straight to the
+real backend (see "a materialised snapshot is not a Fabric MPP snapshot" in
+Risks below). It is bound to one item only when that item is a Lakehouse's
+analytics endpoint ([`internal/server/warehouse.go`](../internal/server/warehouse.go)):
+a Warehouse connection's `Connection.TimeTravel` is left nil, so the hint
+reaches the sidecar unrecognised and fails exactly as it always has — Phase 4
+is still the only way to give a Warehouse table a history to travel in.
+
+`#temp` tables are left alone by construction — `findTableRefs` never offers
+one to the resolver — and `TestAdaptWithTimeTravelLeavesTempTablesAlone` pins
+it as an assertion, per the design note's own instruction, rather than an
+assumption. Read-only enforcement needed no new code: a `#temp` table
+populated from a historical snapshot has nothing to write back to, and Phase
+2's `select-only` rule already refuses `INSERT`/`UPDATE`/`DELETE` under the
+hint before this phase's rewrite ever runs.
+
+Deliberately not handled: `CROSS APPLY`/`OUTER APPLY` targets are never
+scanned for table references (their right-hand side is overwhelmingly a
+correlated subquery or a table-valued function, not a plain table, in real
+queries), and a table reached only through a OneLake or external shortcut is
+left unresolved (`ok=false`) rather than taught a second reading path —
+`ReadDeltaTableAsOf` only knows `Tables/<name>`, and the SQL analytics
+endpoint's own tables are where the real multi-commit Delta history lives
+either way. Both are named in `timetravel_adapt.go` and `timetravel.go` rather
+than discovered later.
 
 **Phase 4 — warehouse write versioning.** Give warehouse tables a history by
 committing to Delta on each data-changing statement. The TDS front already
@@ -288,29 +355,43 @@ on.
 **Phase 5 — retention.** Configurable 1–120 days, default 30, and expiry of
 files past it. Cheap once versions are addressable, and meaningless before.
 
-Phases 0–3 are the bulk of the value. A reader should be able to stop after 3
-and have a real, honest feature covering the SQL analytics endpoint, with the
-warehouse recorded as 🟠 rather than claimed.
+Phases 0–3 are done: a real, honest feature covering the SQL analytics
+endpoint, with the warehouse recorded as 🟠 rather than claimed.
 
 ## Risks, stated rather than discovered later
 
 - **Statement-wide scope is a parser change, not a string substitution.** The
   hint applies to every joined table, so `Adapt` needs the statement's table
-  references — something the current lexer does not extract. Underestimating
-  this is the most likely way Phase 2 slips.
+  references — something the lexer did not extract before Phase 3.
+  **Materialised in Phase 3** as `findTableRefs`
+  ([`timetravel_adapt.go`](../internal/tsql/timetravel_adapt.go)), and the risk
+  was real rather than theoretical: two correctness bugs were caught by tests
+  before this phase shipped, not after — a resolver call that had silently
+  lower-cased a mixed-case table name (breaking a case-sensitive OneLake
+  lookup for `Customer` asked about as `customer`), and a rewrite that
+  replaced a table reference with a bare temp-table name, which left a WHERE
+  clause written against the table's own implicit name (`FROM dbo.A, dbo.B
+  WHERE A.id = B.id`, no alias at all) referring to nothing.
 - **Phase 4 touches the path that builds gold.** `e2e/dbt-fabric` and the
   medallion examples are the regression surface, and a mistake there is
   expensive in a way Phases 0–3 are not.
-- **A materialised snapshot is not a Fabric MPP snapshot.** The emulator would
-  answer from a temporary populated at query time; Fabric answers from
+- **A materialised snapshot is not a Fabric MPP snapshot.** The emulator
+  answers from a `#temp` table populated at query time from literal SQL text —
+  not even the bulk-copy path `reflectTable` uses for an ordinary reflect,
+  because `Adapt` runs on a statement's TEXT at the wire layer, before the
+  client's session is spliced straight to the real backend, and that text is
+  the only channel available to hand the engine a historical snapshot
+  ([`timetravel.go`](../internal/warehouse/timetravel.go)). Fabric answers from
   versioned storage directly. Behaviour matches; performance characteristics do
-  not, and nothing here should claim otherwise.
+  not, and nothing here should claim otherwise — a time-travel query's own
+  result set is usually far smaller than a full reflect, which is the
+  mitigating fact, not a reason to call the trade-off free.
 - **Retention that silently deletes is worse than none.** Phase 5 removes files
   a user could previously query. Until expiry is implemented, the emulator
   retains everything — which is *more* permissive than Fabric and therefore a
   Class B entry of its own: a query that works locally and fails in production
-  because the window had passed. It belongs in the table above the day Phase 3
-  ships, not the day Phase 5 does.
+  because the window had passed. Now that Phase 3 ships, this is recorded in
+  [29-tsql-parity.md](29-tsql-parity.md) rather than waiting for Phase 5.
 
 ## Non-goals
 

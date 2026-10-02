@@ -12,10 +12,19 @@ builds on (T1–T5).
   the sidecar would otherwise run. Off by default.
 - **T8 ✅** — CTAS becomes `SELECT … INTO`, including inside the `EXEC('…')`
   dynamic SQL dbt actually ships.
+- **Warehouse time travel ✅** — `OPTION (FOR TIMESTAMP AS OF …)` is recognised,
+  resolved per referenced table and materialised as session `#temp` tables, for
+  the SQL analytics endpoint over a Lakehouse. The Warehouse write path has no
+  version history to travel in yet — still a gap; see
+  [35-warehouse-time-travel.md](35-warehouse-time-travel.md).
 
-**Class A is empty**: both real gaps are closed, and the one remaining entry was
-found on measurement to have been misclassified. Class B is 10-of-15 refusable
-behind `-tsql-strict`, each exception carrying its reason.
+**Class A is one row from empty**: `OPTION (FOR TIMESTAMP AS OF …)` is closed
+for the SQL analytics endpoint and still open for the Warehouse, priced
+separately as Phase 4; every other real gap is closed, and one entry that
+looked like a gap was found on measurement to have been misclassified. Class B
+is 14-of-17 refusable behind `-tsql-strict`; the newest entry (time-travel
+retention) cannot be refused at all yet — there is nothing to check a query
+against until Phase 5 gives retention a window.
 
 ## Why this doc exists
 
@@ -78,6 +87,7 @@ Primary sources: [T-SQL surface area in Fabric Data Warehouse][sa],
 |---|---|---|---|---|
 | **Nested CTE** (`WITH` inside a CTE body) | supported | rejected, `Msg 156` | doc + **obs** | ✅ **closed (T6)** — flattened to sequential form on the wire, in batches and RPC parameters. Unblocked dbt's `accepted_values` + `relationships` |
 | **CTAS** (`CREATE TABLE AS SELECT`) | supported | not a SQL Server construct (`SELECT … INTO` instead) | doc + **obs** | ✅ **closed (T8)** — rewritten to `SELECT … INTO`, including inside the `EXEC('…')` dbt actually ships. Unblocked `+materialized: table` |
+| `OPTION (FOR TIMESTAMP AS OF …)` (warehouse time travel) | supported (SQL analytics endpoint + Warehouse) | not a recognised query hint, `Msg` unrecognised-hint syntax error | doc | 🟡 **partially closed** — the SQL analytics endpoint half is ✅ **closed**: the hint is stripped, resolved to a Delta version per referenced table, and materialised as session `#temp` tables ([35-warehouse-time-travel.md](35-warehouse-time-travel.md)). The Warehouse half is still open and genuinely a Class A gap: a Warehouse table keeps no version history to resolve against, and that is Phase 4's work, scoped and priced separately |
 
 ### Class B — Fabric rejects, the sidecar accepts (silent divergence)
 
@@ -102,6 +112,7 @@ because refusing them removes capability that works today.
 | `FOR JSON` in a subquery | Low | ✅ `for-json-subquery` — the legal form is the one that is not nested, and nesting is parentheses; checked against sqlglot-go's parse tree |
 | `/` or `\` in a schema or table name | Low | ✅ `object-name-character` — a `CREATE` or `ALTER` of a table, view or schema, or a `SELECT … INTO` |
 | Queries against system/user tables | Low | ⬜ not attempted |
+| Time travel past the retention window | Medium — a query works locally forever and fails in production once Fabric's 1–120 day window (default 30) has passed | ⬜ no retention is enforced yet, so there is no window to check a query against — this is *more* permissive than Fabric, not less, and is tracked rather than hidden until [Phase 5](35-warehouse-time-travel.md) gives it one |
 | Vector data type | Low | n/a — **obs**: SQL Server 2022 rejects `vector(3)` with `Msg 2715, Cannot find data type vector`, so both engines lack it and it is not a divergence |
 
 Every row's *Fabric* side is **doc** — stated in Microsoft's published surface
@@ -113,14 +124,18 @@ What none of these rows had before T7 was a *witness* for the emulator's own
 behaviour. `TestCheckStrictCorpus` now pins both what is refused and what must
 be left alone, so the ✅ column is asserted rather than described.
 
-**Class A is now empty.** Both entries are closed, and the third — `ALTER TABLE`
-inside an explicit transaction — turned out not to belong here at all; see
-Class C.
+**Class A was briefly empty.** Both T6/T8 entries were closed, and a third —
+`ALTER TABLE` inside an explicit transaction — turned out not to belong here at
+all; see Class C. Warehouse time travel later added a row back (above): closed
+for the SQL analytics endpoint, open for the Warehouse until Phase 4.
 
 ### Class C — agree (no action)
 
 `MERGE` (GA in Fabric), session-scoped `#temp` tables, standard and sequential
-CTEs, views, ordinary DML, `INFORMATION_SCHEMA` / `sys` catalog views.
+CTEs, views, ordinary DML, `INFORMATION_SCHEMA` / `sys` catalog views. Power BI
+Desktop DirectQuery and `OPTION (FOR TIMESTAMP AS OF …)`: real Fabric does not
+support the hint there either, so the emulator agrees for free — recorded here
+rather than left to look like a gap ([35-warehouse-time-travel.md](35-warehouse-time-travel.md)).
 
 **`ALTER TABLE` inside an explicit transaction — reclassified from Class A on
 evidence.** The row claimed Fabric supported it while SQL Server was "more

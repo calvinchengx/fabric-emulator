@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/calvinchengx/fabric-emulator/internal/tsql"
 )
 
 const nestedSQL = "with o as (with i as (select 1 x) select * from i) select * from o"
@@ -52,7 +55,7 @@ func TestRewriteBatchHandlesOversizedStatement(t *testing.T) {
 }
 
 func TestDialectFixFlattensNestedBatch(t *testing.T) {
-	out, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(nestedSQL)), false)
+	out, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(nestedSQL)), false, nil)
 	if reject != "" {
 		t.Fatalf("unexpected reject: %s", reject)
 	}
@@ -74,7 +77,7 @@ func TestDialectFixForwardsUnaffectedBatchesByteIdentical(t *testing.T) {
 		"select 'with o as (with i as (select 1) select 1)' as literal",
 	} {
 		in := withHeaders(ucs2Bytes(sql))
-		out, reject := dialectFix(PktSQLBatch, in, false)
+		out, reject := dialectFix(PktSQLBatch, in, false, nil)
 		if reject != "" {
 			t.Fatalf("%q rejected: %s", sql, reject)
 		}
@@ -87,7 +90,7 @@ func TestDialectFixForwardsUnaffectedBatchesByteIdentical(t *testing.T) {
 // A statement Fabric itself refuses is rejected here, naming the rule.
 func TestDialectFixRejectsFabricRestriction(t *testing.T) {
 	sql := "with o as (with i as (select 1 x) select * from i) insert into t select * from o"
-	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false)
+	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false, nil)
 	if !strings.Contains(reject, "select-only") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -95,7 +98,7 @@ func TestDialectFixRejectsFabricRestriction(t *testing.T) {
 
 func TestDialectFixRejectsShadowedNames(t *testing.T) {
 	sql := "with c as (with c as (select 1 x) select * from c) select * from c"
-	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false)
+	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false, nil)
 	if !strings.Contains(reject, "nesting level") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -106,7 +109,7 @@ func TestDialectFixRejectsShadowedNames(t *testing.T) {
 func TestDialectFixForwardsUnparseableStatements(t *testing.T) {
 	sql := "with a as (select 'unterminated"
 	in := withHeaders(ucs2Bytes(sql))
-	out, reject := dialectFix(PktSQLBatch, in, false)
+	out, reject := dialectFix(PktSQLBatch, in, false, nil)
 	if reject != "" {
 		t.Fatalf("unparseable statement rejected: %s", reject)
 	}
@@ -118,7 +121,7 @@ func TestDialectFixForwardsUnparseableStatements(t *testing.T) {
 // T6a: a parameterized nested CTE arrives as RPC sp_prepexec, which T6e cannot
 // rewrite — reject by name rather than let it surface as a bare Msg 156.
 func TestDialectFixRejectsNestedCTEInRPC(t *testing.T) {
-	_, reject := dialectFix(PktRPC, rpcByProcID(13, nestedSQL), false) // 13 = sp_prepexec
+	_, reject := dialectFix(PktRPC, rpcByProcID(13, nestedSQL), false, nil) // 13 = sp_prepexec
 	if !strings.Contains(reject, "sp_prepexec") || !strings.Contains(reject, "nested CTE") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -129,7 +132,7 @@ func TestDialectFixLeavesOrdinaryRPCsAlone(t *testing.T) {
 		rpcByProcID(13, "select @P1 as x"),      // parameterized, no nesting
 		rpcByProcID(10, "with a as (select 1)"), // sequential CTE only
 	} {
-		if _, reject := dialectFix(PktRPC, data, false); reject != "" {
+		if _, reject := dialectFix(PktRPC, data, false, nil); reject != "" {
 			t.Fatalf("ordinary RPC rejected: %s", reject)
 		}
 	}
@@ -140,7 +143,7 @@ func TestDialectFixIgnoresMetadataRPC(t *testing.T) {
 	name := "sp_datatype_info_100"
 	body := ucs2Bytes(name)
 	msg := withHeaders(append(lenPrefix(len(name)), body...))
-	if _, reject := dialectFix(PktRPC, msg, false); reject != "" {
+	if _, reject := dialectFix(PktRPC, msg, false, nil); reject != "" {
 		t.Fatalf("metadata RPC rejected: %s", reject)
 	}
 }
@@ -169,7 +172,7 @@ func lenPrefix(n int) []byte {
 func TestDialectFixIgnoresNonStatementMessages(t *testing.T) {
 	for _, typ := range []byte{PktAttention, PktBulkLoad, PktLogin7, PktPreLogin} {
 		in := []byte{1, 2, 3}
-		out, reject := dialectFix(typ, in, false)
+		out, reject := dialectFix(typ, in, false, nil)
 		if reject != "" || string(out) != string(in) {
 			t.Fatalf("type %#x: reject=%q altered=%v", typ, reject, string(out) != string(in))
 		}
@@ -181,7 +184,7 @@ func TestRPCProcHandlesTruncatedProcID(t *testing.T) {
 	if proc, _ := rpcProc(withHeaders([]byte{0xFF, 0xFF})); proc != "?" {
 		t.Fatalf("proc = %q, want ?", proc)
 	}
-	if _, reject := dialectFix(PktRPC, withHeaders([]byte{0xFF, 0xFF}), false); reject != "" {
+	if _, reject := dialectFix(PktRPC, withHeaders([]byte{0xFF, 0xFF}), false, nil); reject != "" {
 		t.Fatalf("truncated RPC rejected: %s", reject)
 	}
 }
@@ -192,7 +195,7 @@ func TestStrictModeGatesClassBConstructs(t *testing.T) {
 	recursive := "with r as (select 1 n union all select n+1 from r where n < 5) select * from r"
 	in := withHeaders(ucs2Bytes(recursive))
 
-	out, reject := dialectFix(PktSQLBatch, in, false)
+	out, reject := dialectFix(PktSQLBatch, in, false, nil)
 	if reject != "" {
 		t.Fatalf("refused with strict mode OFF: %s", reject)
 	}
@@ -200,7 +203,7 @@ func TestStrictModeGatesClassBConstructs(t *testing.T) {
 		t.Fatal("statement altered with strict mode off")
 	}
 
-	out, reject = dialectFix(PktSQLBatch, in, true)
+	out, reject = dialectFix(PktSQLBatch, in, true, nil)
 	if !strings.Contains(reject, "recursive-cte") {
 		t.Fatalf("not refused with strict mode ON: %q", reject)
 	}
@@ -214,10 +217,10 @@ func TestStrictModeGatesClassBInRPCParameter(t *testing.T) {
 	recursive := "with r as (select 1 n union all select n+1 from r) select * from r"
 	in := spPrepexec(recursive)
 
-	if _, reject := dialectFix(PktRPC, in, false); reject != "" {
+	if _, reject := dialectFix(PktRPC, in, false, nil); reject != "" {
 		t.Fatalf("refused with strict mode OFF: %s", reject)
 	}
-	if _, reject := dialectFix(PktRPC, in, true); !strings.Contains(reject, "recursive-cte") {
+	if _, reject := dialectFix(PktRPC, in, true, nil); !strings.Contains(reject, "recursive-cte") {
 		t.Fatalf("not refused with strict mode ON: %q", reject)
 	}
 }
@@ -226,7 +229,7 @@ func TestStrictModeGatesClassBInRPCParameter(t *testing.T) {
 // rewritten, because Fabric runs it.
 func TestStrictModeStillRewritesNestedCTEs(t *testing.T) {
 	in := withHeaders(ucs2Bytes(nestedSQL))
-	out, reject := dialectFix(PktSQLBatch, in, true)
+	out, reject := dialectFix(PktSQLBatch, in, true, nil)
 	if reject != "" {
 		t.Fatalf("nested CTE refused in strict mode: %s", reject)
 	}
@@ -247,7 +250,7 @@ func TestStrictRejectIsInertWhenDisabled(t *testing.T) {
 // T8: a CTAS must reach the sidecar as SELECT … INTO.
 func TestDialectFixRewritesCTAS(t *testing.T) {
 	in := withHeaders(ucs2Bytes("create table dst as select a, b from src where x = 1"))
-	out, reject := dialectFix(PktSQLBatch, in, false)
+	out, reject := dialectFix(PktSQLBatch, in, false, nil)
 	if reject != "" {
 		t.Fatalf("reject: %s", reject)
 	}
@@ -259,7 +262,7 @@ func TestDialectFixRewritesCTAS(t *testing.T) {
 // CTAS carried as a parameterized statement is rewritten too.
 func TestDialectFixRewritesCTASInRPC(t *testing.T) {
 	in := spPrepexec("create table dst as select a from src where k = @P1")
-	out, reject := dialectFix(PktRPC, in, false)
+	out, reject := dialectFix(PktRPC, in, false, nil)
 	if reject != "" {
 		t.Fatalf("reject: %s", reject)
 	}
@@ -271,3 +274,67 @@ func TestDialectFixRewritesCTASInRPC(t *testing.T) {
 		t.Fatalf("got %q", req.params[2].text)
 	}
 }
+
+// --- docs/35-warehouse-time-travel.md, Phase 3: wiring the hint into dialectFix ---
+
+// A nil resolver (every connection except a lakehouse analytics endpoint's)
+// must leave a time-travel hint completely alone: it reaches the backend
+// unrecognised and fails there, exactly as it always has.
+func TestDialectFixLeavesHintAloneWithoutAResolver(t *testing.T) {
+	sql := "select 1 from t option (for timestamp as of '2024-03-13T19:39:35.280')"
+	in := withHeaders(ucs2Bytes(sql))
+	out, reject := dialectFix(PktSQLBatch, in, false, nil)
+	if reject != "" {
+		t.Fatalf("unexpected reject: %s", reject)
+	}
+	if string(out) != string(in) {
+		t.Fatalf("hint should reach the backend unrecognised: got %q", sqlBatchQuery(out))
+	}
+}
+
+// With a resolver wired up, a hinted statement is materialised: the hint is
+// gone and the table reference points at a new #temp table.
+func TestDialectFixMaterializesWithResolver(t *testing.T) {
+	resolve := func(table string, asOf time.Time) (*tsql.TimeTravelSnapshot, bool, error) {
+		if !strings.EqualFold(table, "t") {
+			return nil, false, nil
+		}
+		return &tsql.TimeTravelSnapshot{
+			Columns: []string{"id"}, SQLTypes: []string{"INT"},
+			RowLiterals: [][]string{{"1"}}, CurrentColumns: []string{"id"},
+		}, true, nil
+	}
+	sql := "select id from t option (for timestamp as of '2024-03-13T19:39:35.280')"
+	out, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false, resolve)
+	if reject != "" {
+		t.Fatalf("unexpected reject: %s", reject)
+	}
+	got := sqlBatchQuery(out)
+	if strings.Contains(got, "option") {
+		t.Fatalf("hint not stripped: %q", got)
+	}
+	if !strings.Contains(got, "CREATE TABLE #tt0") || !strings.Contains(got, "from #tt0 AS t") {
+		t.Fatalf("not materialised: %q", got)
+	}
+}
+
+// A Class B time-travel refusal (an unresolvable instant, a column that did
+// not exist yet) must be surfaced as a named rejection, not silently
+// forwarded — forwarding would run the statement against today's data, which
+// is the exact silent-wrong-answer docs/35 exists to prevent.
+func TestDialectFixSurfacesTimeTravelResolverError(t *testing.T) {
+	resolve := func(table string, asOf time.Time) (*tsql.TimeTravelSnapshot, bool, error) {
+		return nil, false, errTimeTravelTest
+	}
+	sql := "select 1 from t option (for timestamp as of '2024-03-13T19:39:35.280')"
+	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false, resolve)
+	if !strings.Contains(reject, "unavailable") {
+		t.Fatalf("reject = %q, want it to name the unavailable rule", reject)
+	}
+}
+
+type timeTravelTestErr string
+
+func (e timeTravelTestErr) Error() string { return string(e) }
+
+const errTimeTravelTest = timeTravelTestErr("boom")
