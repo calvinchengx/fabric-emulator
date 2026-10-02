@@ -17,6 +17,31 @@ definitions in PBIR and PBIR-Legacy form are now read for this, and the DAX
 evaluator gained `ORDER BY`. Microsoft does not publish the tools' schemas; the
 argument names and response shapes follow its own Fabric IQ skill.
 [docs/07](../07-control-plane-api.md#fabric-iq-mcp)
+
+## The REST surface ledgers are explained
+
+Three evidence files CI rewrites on every run — `docs/surface-ledger.json`,
+`docs/route-coverage.json` and `docs/undocumented-routes.json` — were named by
+no prose page, so their numbers were reviewable only by reading the checker that
+wrote them. A new chapter states what each one counts, what its denominator is,
+how it ratchets, the exact command that regenerates it, and which gates need a
+recording and so cannot answer before a push. It also reconciles the two
+operation denominators in the tree: the parity map's ~880 from Fabric's
+published reference against the ledger's 1002 from the vendored swagger, which
+differ because the ledger also counts Power BI's surface and can only count
+specs committed here.
+
+Writing it found two ledgers publishing counts no gate compares.
+`docs/undocumented-routes.json` records 613 registered routes where the tree now
+has 1059 — one honest snapshot that aged, and its six-route invariant still
+holds. `docs/route-coverage.json` is the sharper case: its `exercised`,
+`registered` and `notYetExercised` cannot all be true, since its own writer
+defines `exercised` as `registered` minus the listed routes, which is 113 and
+not the 116 recorded. The gate reads only the route names, so the file has been
+internally inconsistent and green at once. Both are documented rather than
+repaired — regenerating a reviewed artifact belongs in a change that can show
+the diff. [docs/65](../65-api-surface-coverage.md)
+
 ## Test cases can be kept as data
 
 A suite whose cases are a table can now keep them in `cases/<suite>.json`, read

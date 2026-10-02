@@ -65,6 +65,15 @@ Every package covers itself (90% floor cross-package, currently ~90%), on
 Linux, macOS, and Windows. The full matrix of what CI verifies — including
 the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
 
+The REST surface has four contract gates of its own, each asking a question the
+other three structurally cannot: whether a documented operation is served,
+refused or silent; whether a served route has ever seen recorded traffic;
+whether a route this emulator answers is documented by Microsoft at all; and
+whether the body it returned matches the schema. Three of them write a ledger
+under `docs/`, and what each one counts — with the denominators, the `--update`
+commands, and what each explicitly does not say — is
+[65-api-surface-coverage.md](65-api-surface-coverage.md).
+
 ## Test cases as data
 
 When a suite's cases are a table — many rows, one procedure — the rows live in
