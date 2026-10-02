@@ -5,6 +5,26 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 here.
 
 
+
+## Direct Lake applies OneLake row filters
+
+A Direct Lake on OneLake query over a table a OneLake security role filters by
+rows used to be refused, because nothing evaluated the predicate. It is now
+applied: the caller gets the rows the filter admits. The filter is parsed by the
+same code the SQL analytics endpoint renders into SQL Server predicates, and a
+witness against a real SQL Server requires the two to return the same rows —
+text compared case-insensitively, NULL comparisons admitting nothing. A filter
+the emulator cannot apply blocks the table by name rather than serving it
+unfiltered. [docs/54](../54-onelake-security.md)
+
+## Row and column security from different roles no longer grants everything
+
+A principal in one OneLake role that filters a table's rows and another that
+narrows its columns read the whole table: consolidating the roles by union
+opened both restrictions. Fabric does not support that combination and gives a
+query error. Direct Lake and direct OneLake reads now give that error, by name;
+`principalAccess` gives an engine both restrictions; the SQL analytics endpoint
+shows such a reader no rows. [docs/54](../54-onelake-security.md)
 ## Fabric IQ MCP
 
 The emulator now serves Microsoft's Fabric IQ MCP server at
@@ -17,6 +37,30 @@ definitions in PBIR and PBIR-Legacy form are now read for this, and the DAX
 evaluator gained `ORDER BY`. Microsoft does not publish the tools' schemas; the
 argument names and response shapes follow its own Fabric IQ skill.
 [docs/07](../07-control-plane-api.md#fabric-iq-mcp)
+
+## The REST surface ledgers are explained
+
+Three evidence files CI rewrites on every run — `docs/surface-ledger.json`,
+`docs/route-coverage.json` and `docs/undocumented-routes.json` — were named by
+no prose page, so their numbers were reviewable only by reading the checker that
+wrote them. A new chapter states what each one counts, what its denominator is,
+how it ratchets, the exact command that regenerates it, and which gates need a
+recording and so cannot answer before a push. It also reconciles the two
+operation denominators in the tree: the parity map's ~880 from Fabric's
+published reference against the ledger's 1002 from the vendored swagger, which
+differ because the ledger also counts Power BI's surface and can only count
+specs committed here.
+
+Writing it found two ledgers publishing counts no gate compares.
+`docs/undocumented-routes.json` records 613 registered routes where the tree now
+has 1059 — one honest snapshot that aged, and its six-route invariant still
+holds. `docs/route-coverage.json` is the sharper case: its `exercised`,
+`registered` and `notYetExercised` cannot all be true, since its own writer
+defines `exercised` as `registered` minus the listed routes, which is 113 and
+not the 116 recorded. The gate reads only the route names, so the file has been
+internally inconsistent and green at once. Both are documented rather than
+repaired — regenerating a reviewed artifact belongs in a change that can show
+the diff. [docs/65](../65-api-surface-coverage.md)
 
 ## Test cases can be kept as data
 

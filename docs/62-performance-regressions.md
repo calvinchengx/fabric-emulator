@@ -5,8 +5,8 @@ measurement, and that is a finding rather than a gap in this document.
 `func Benchmark` returns 0 hits across 552 `*_test.go` files and no stored
 timing baseline exists anywhere in the tree. What was gateable instead — per-request
 work whose size the caller chooses and nothing bounds — was measured, repaired,
-and is now held by `scripts/check_perf_regressions.py` with a ledger that ships
-empty.**
+and is now held by `scripts/check_perf_regressions.py` with a ledger,
+[`docs/perf-regressions.json`](perf-regressions.json), that ships empty.**
 
 **The headline number: 70 sites consumed an inbound request body against 0 uses
 of `http.MaxBytesReader` in the entire repository.** The tree was not unguarded,

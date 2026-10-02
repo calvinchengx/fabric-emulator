@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
@@ -192,41 +193,123 @@ func TestDirectLakeServesAProjectionThatCoversTheModel(t *testing.T) {
 	}
 }
 
-// A row filter is REFUSED rather than applied, and this test pins that as the
-// divergence it is. Real Fabric filters: "Semantic models using Direct Lake on
-// OneLake mode — RLS/CLS filtering: Yes — GA", and an empty result is
-// documented as the expected outcome when a filter excludes every row. We have
-// no engine on this path to evaluate a predicate with, so the choice is between
-// wrong rows and no rows. When a bounded predicate evaluator lands, this test
-// fails, and that failure is the instruction to assert filtered rows instead.
-func TestDirectLakeRefusesARowFilterItCannotApply(t *testing.T) {
-	a, st := newAPI(t)
-	_, lake, model := securedLakehouse(t, st)
-
-	putRole(t, st, lake.ID, "us-only", fmt.Sprintf(`{"name":"us-only","decisionRules":[{"effect":"Permit",
+// rowRole is a OneLake role granting sales to its members, filtered by rows and
+// optionally narrowed to columns.
+func rowRole(name, filter string, columns []string, members ...string) string {
+	var ms []string
+	for _, m := range members {
+		ms = append(ms, fmt.Sprintf(`{"objectId":%q}`, m))
+	}
+	cols := ""
+	if columns != nil {
+		cols = fmt.Sprintf(`,"columns":[{"tablePath":"/Tables/sales","columnNames":["%s"],"columnEffect":"Permit","columnAction":["Read"]}]`,
+			strings.Join(columns, `","`))
+	}
+	return fmt.Sprintf(`{"name":%q,"decisionRules":[{"effect":"Permit",
 	  "permission":[
 	    {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
 	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"SELECT * FROM sales WHERE region = 'us'"}]}}],
-	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))
+	  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":%q}]%s}}],
+	  "members":{"microsoftEntraMembers":[%s]}}`, name, filter, cols, strings.Join(ms, ","))
+}
+
+// A row filter is APPLIED: the narrowed Viewer gets the rows it admits —
+// compared case-insensitively, as OneLake's collation does — while the owner,
+// whom OneLake security does not restrict, reads every row in the same run.
+func TestDirectLakeAppliesARowFilter(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	putRole(t, st, lake.ID, "us-only", rowRole("us-only", "SELECT * FROM sales WHERE region = 'US'", nil, viewer.ID))
 	assertPolicyNarrows(t, st, lake.ID, viewer.ID, true)
 
 	code, body := query(t, a, viewer, model)
-	if code != 400 {
-		t.Fatalf("FILTER APPLIED? viewer = %d %s — if rows are now filtered, assert the filtered "+
-			"rows here and regrade the parity row", code, body)
+	if code != 200 || !strings.Contains(body, `"Sales[Region]":"us"`) || strings.Contains(body, `"eu"`) {
+		t.Fatalf("viewer = %d %s, want only the us row", code, body)
 	}
-	// The refusal must say what it could not do, so an author is not left
-	// guessing whether their filter was wrong or merely unsupported.
-	for _, want := range []string{"row-level security", "cannot apply"} {
-		if !bytes.Contains([]byte(body), []byte(want)) {
-			t.Errorf("viewer = %s, missing %q", body, want)
-		}
-	}
-	// And the unrestricted caller is untouched by somebody else's filter.
 	if code, body := query(t, a, admin, model); code != 200 ||
-		!bytes.Contains([]byte(body), []byte(`"Sales[Region]":"eu"`)) {
+		!strings.Contains(body, `"Sales[Region]":"eu"`) || !strings.Contains(body, `"Sales[Region]":"us"`) {
 		t.Errorf("owner = %d %s, want every row", code, body)
+	}
+}
+
+// A filter that excludes every row returns none — "No rows returned due to RLS
+// filtering … is expected" — rather than an error.
+func TestDirectLakeRowFilterCanAdmitNothing(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	putRole(t, st, lake.ID, "none", rowRole("none", "SELECT * FROM sales WHERE amount > 1000", nil, viewer.ID))
+	if code, body := query(t, a, viewer, model); code != 200 || strings.Contains(body, "Sales[Region]") {
+		t.Fatalf("viewer = %d %s, want no rows", code, body)
+	}
+}
+
+// Two roles filtering the same table admit the union of their rows. Each role
+// admits a row the other refuses, so a union that counted either half alone
+// would lose one.
+func TestDirectLakeRowFiltersUnionAcrossRoles(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{
+		{ItemID: lake.ID, Name: "us", Body: []byte(rowRole("us", "SELECT * FROM sales WHERE region = 'us'", nil, viewer.ID))},
+		{ItemID: lake.ID, Name: "small", Body: []byte(rowRole("small", "SELECT * FROM sales WHERE amount < 65", nil, viewer.ID, stranger.ID))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, viewer, model); code != 200 || !strings.Contains(body, `"us"`) || !strings.Contains(body, `"eu"`) {
+		t.Errorf("viewer in both = %d %s, want us (from one role) and eu (from the other)", code, body)
+	}
+	// The stranger is in "small" only: eu, not us.
+	grantBuild(t, st, model, stranger.ID)
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: lake.ID, PrincipalID: stranger.ID, PrincipalType: "User",
+		Permissions: []string{store.PermRead}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, stranger, model); code != 200 || !strings.Contains(body, `"eu"`) || strings.Contains(body, `"us"`) {
+		t.Errorf("stranger in small = %d %s, want eu only", code, body)
+	}
+}
+
+// Row and column security in ONE role combine: the filter reads a column the
+// role does not grant, and the rows are filtered before the column is dropped.
+func TestDirectLakeRowFilterOnAColumnTheRoleDoesNotGrant(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	putRole(t, st, lake.ID, "both", rowRole("both", "SELECT * FROM sales WHERE amount > 70", []string{"region"}, viewer.ID))
+	regions := `{"queries":[{"query":"EVALUATE SUMMARIZECOLUMNS(Sales[Region])"}]}`
+	w := do(a.executeQueries, viewer, "POST", regions, map[string]string{"datasetId": model.ID})
+	// The model reads amount too, which the role does not grant, so the
+	// projection refuses it by name; the filter itself applied without error.
+	if w.Code != 400 || !strings.Contains(w.Body.String(), `\"Amount\" can't be found`) || strings.Contains(w.Body.String(), "row-level security") {
+		t.Fatalf("viewer = %d %s, want the column refusal, not a filter refusal", w.Code, w.Body)
+	}
+	putRole(t, st, lake.ID, "both", rowRole("both", "SELECT * FROM sales WHERE amount > 70", []string{"region", "amount"}, viewer.ID))
+	if code, body := query(t, a, viewer, model); code != 200 || !strings.Contains(body, `"us"`) || strings.Contains(body, `"eu"`) {
+		t.Fatalf("viewer with both columns = %d %s, want only us", code, body)
+	}
+}
+
+// A filter that cannot be applied BLOCKS the table, naming why — never serves
+// it unfiltered, and never silently empty, since an author must be able to tell
+// a broken filter from one that admits nothing.
+func TestDirectLakeBlocksAFilterItCannotApply(t *testing.T) {
+	for name, filter := range map[string]string{
+		"outside the grammar":     "SELECT * FROM sales WHERE region = USER_NAME()",
+		"another table":           "SELECT * FROM hr WHERE region = 'us'",
+		"a column it lacks":       "SELECT * FROM sales WHERE country = 'us'",
+		"a value it cannot match": "SELECT * FROM sales WHERE amount = 'lots'",
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, st := newAPI(t)
+			_, lake, model := securedLakehouse(t, st)
+			putRole(t, st, lake.ID, "broken", rowRole("broken", filter, nil, viewer.ID))
+			code, body := query(t, a, viewer, model)
+			if code != 400 || !strings.Contains(body, "row-level security filter cannot be applied") {
+				t.Errorf("viewer = %d %s, want the table blocked", code, body)
+			}
+			if code, _ := query(t, a, admin, model); code != 200 {
+				t.Errorf("owner = %d: someone else's broken filter blocked the owner", code)
+			}
+		})
 	}
 }
 
@@ -382,5 +465,36 @@ func TestDirectLakeFailsWhenThePolicyCannotBeRead(t *testing.T) {
 	// stop them: the gate is skipped before the read, not after it.
 	if code, body := query(t, a, admin, model); code != 200 {
 		t.Errorf("owner = %d %s, want 200", code, body)
+	}
+}
+
+// Row security from one role and column security from another: "Users that try
+// to access tables that are part of an unsupported role combination receive
+// query errors." Each role alone is served as usual, in the same run.
+func TestDirectLakeRefusesRowAndColumnSecurityFromDifferentRoles(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{
+		{ItemID: lake.ID, Name: "us", Body: []byte(rowRole("us", "SELECT * FROM sales WHERE region = 'us'", nil, viewer.ID, stranger.ID))},
+		{ItemID: lake.ID, Name: "cols", Body: []byte(fmt.Sprintf(`{"name":"cols","decisionRules":[{"effect":"Permit",
+		  "permission":[{"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},{"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region","amount"],"columnEffect":"Permit","columnAction":["Read"]}]}}],
+		  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, viewer, model); code != 400 || !strings.Contains(body, "a combination OneLake security does not support") {
+		t.Fatalf("viewer in both = %d %s, want the combination refused", code, body)
+	}
+	grantBuild(t, st, model, stranger.ID)
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: lake.ID, PrincipalID: stranger.ID, PrincipalType: "User",
+		Permissions: []string{store.PermRead}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, stranger, model); code != 200 || !strings.Contains(body, `"us"`) || strings.Contains(body, `"eu"`) {
+		t.Errorf("stranger in the row role only = %d %s, want us", code, body)
+	}
+	if code, _ := query(t, a, admin, model); code != 200 {
+		t.Errorf("owner = %d", code)
 	}
 }
