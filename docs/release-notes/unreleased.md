@@ -17,6 +17,7 @@ definitions in PBIR and PBIR-Legacy form are now read for this, and the DAX
 evaluator gained `ORDER BY`. Microsoft does not publish the tools' schemas; the
 argument names and response shapes follow its own Fabric IQ skill.
 [docs/07](../07-control-plane-api.md#fabric-iq-mcp)
+
 ## Test cases can be kept as data
 
 A suite whose cases are a table can now keep them in `cases/<suite>.json`, read
@@ -25,7 +26,12 @@ parametrized over the file, and an e2e runner reads it through the
 standard-library `scripts/casefiles.py`. `make check` refuses a case without a
 unique kebab-case `id` or a `why`. The spark agent's consumer contract is the
 first suite: the unit test and `e2e/agent-contract` now read the same twelve
-cases, where the e2e runner used to retype the statements it executed.
+cases, where the e2e runner used to retype the statements it executed. Fabric
+IQ MCP is the second: its Go test and its e2e driver, which calls the tools
+through the unmodified `mcp` SDK as entra-emulator's seeded users, now run the
+same nineteen tool calls from `cases/fabric-iq-tool-calls.json`. Each case's
+expected answer is a short list of paths into the tool's JSON reply, read the
+same way in Go and Python.
 [docs/10](../10-testing.md#test-cases-as-data)
 
 ## SQL analytics endpoint access modes can be switched

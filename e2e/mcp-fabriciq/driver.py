@@ -10,10 +10,13 @@ and six read-only tools. This driver:
   2. as Alice, creates a workspace, the golden retail semantic model with a
      row-level security role admitting Bob to the West territory, and a PBIR
      report bound to the model by id, and makes Bob a workspace Viewer;
-  3. as Alice (Admin, so unrestricted) drives all six tools the way Microsoft's
-     Fabric IQ skill does: discover, resolve a browser URL, read the report and
-     the schema, look up a value, run DAX;
-  4. as Bob, runs the same DAX and value search and gets only the West rows;
+  3. runs every case in cases/fabric-iq-tool-calls.json that names this file:
+     one tool call each, as Alice (owner: Admin, unrestricted) or Bob (viewer:
+     Read, no Build, the West role). internal/api/fabriciq_cases_test.go runs
+     the same file in-process, so a call and its answer are written once;
+  4. checks what only this fixture can: the tool list, the read-only
+     annotations, the server's name, and that Alice's model, named exactly
+     "Retail", outranks the report for the query "retail";
   5. shows the daemon app's app-only token refused, and an unknown X-Variants
      refused, before any tool runs.
 """
@@ -21,6 +24,7 @@ import asyncio
 import base64
 import json
 import os
+import pathlib
 import ssl
 import sys
 import time
@@ -31,6 +35,13 @@ import urllib.request
 import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import casefiles  # noqa: E402
+
+SUITE = "fabric-iq-tool-calls"
+RUNNER = "e2e/mcp-fabriciq/driver.py"
 
 FABRIC = os.environ["FABRIC_BASE"]
 ENTRA = os.environ["ENTRA_BASE"]
@@ -51,9 +62,6 @@ FIX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 TOOLS = {"DiscoverArtifacts", "ResolveFabricItem", "GetReportMetadata",
          "GetSemanticModelSchema", "ValueSearch", "ExecuteQuery"}
-
-UNITS_BY_TERRITORY = ("EVALUATE SUMMARIZECOLUMNS('Store'[Territory], \"Units\", [TotalUnits]) "
-                      "ORDER BY [Units] DESC")
 
 _CTX = ssl.create_default_context()
 _CTX.check_hostname = False
@@ -153,10 +161,23 @@ def report_parts(model_id):
     pbir = {"version": "4.0", "datasetReference": {"byConnection": {"connectionString":
             f"Data Source=powerbi://api.powerbi.com/v1.0/myorg/iq;Initial Catalog=Retail;semanticmodelid={model_id}"}}}
     part = lambda path, doc: {"path": path, "payloadType": "InlineBase64", "payload": b64(json.dumps(doc))}  # noqa: E731
+    territory = field("Column", "Store", "Territory")
+    not_east = {"name": "notEast", "type": "Categorical", "field": territory, "filter": {
+        "Version": 2, "From": [{"Name": "s", "Entity": "Store", "Type": 0}],
+        "Where": [{"Condition": {"Not": {"Expression": {"In": {
+            "Expressions": [{"Column": {"Expression": {"SourceRef": {"Source": "s"}}, "Property": "Territory"}}],
+            "Values": [[{"Literal": {"Value": "'East'"}}]]}}}}}]}}
+    measures = {"name": "extension", "entities": [{"name": "Sales", "measures": [
+        {"name": "Double Units", "expression": "[TotalUnits] * 2"}]}]}
+    # The same report internal/api/fabriciq_test.go builds, so the shared cases
+    # hold against both: one page filtered to exclude East, one bar chart, one
+    # report measure.
     return [part("definition.pbir", pbir),
             part("definition/report.json", {"filterConfig": {"filters": []}}),
+            part("definition/reportExtensions.json", measures),
             part("definition/pages/pages.json", {"pageOrder": ["p1"]}),
-            part("definition/pages/p1/page.json", {"name": "p1", "displayName": "Territories"}),
+            part("definition/pages/p1/page.json", {"name": "p1", "displayName": "Territories",
+                                                   "filterConfig": {"filters": [not_east]}}),
             part("definition/pages/p1/visuals/v1/visual.json", visual)]
 
 
@@ -181,67 +202,42 @@ async def session_for(tok, fn):
         return init, await fn(session)
 
 
-async def as_alice(session, ws, model, report):
+async def run_cases(session, caller, ids):
+    """Every case naming this runner whose caller is `caller`; how many ran."""
+    ran = 0
+    for case in casefiles.load(SUITE):
+        if case["as"] != caller or RUNNER not in case.get("executed_by", []):
+            continue
+        ran += 1
+        result = await session.call_tool(case["tool"], casefiles.substitute(case["args"], ids))
+        what = f"[{caller}] {case['id']}"
+        if "refused" in case:
+            check(result.is_error and case["refused"] in text_of(result), what, text_of(result)[:200])
+            continue
+        if result.is_error:
+            check(False, what, f"tool error {text_of(result)[:200]}")
+            continue
+        doc = json.loads(text_of(result))
+        unmet = [u for e in case["expect"] if (u := casefiles.unmet(doc, casefiles.substitute(e, ids)))]
+        check(not unmet, what, "; ".join(unmet))
+    return ran
+
+
+async def as_alice(session, ids):
     tools = await session.list_tools()
     names = {t.name for t in tools.tools}
     check(names == TOOLS, "tools/list is exactly Microsoft's six Fabric IQ tools", f"got {sorted(names)}")
     check(all(t.annotations and t.annotations.read_only_hint for t in tools.tools),
           "every tool is annotated read-only")
-
     found = doc_of(await session.call_tool("DiscoverArtifacts", {"searchQuery": "retail"}), "DiscoverArtifacts")
-    arts = {a["ArtifactId"]: a for a in found["Artifacts"]}
-    check(set(arts) == {report, model}, "DiscoverArtifacts finds the report and the model", json.dumps(found)[:200])
     # "retail" is the model's whole name and only part of the report's, so the
     # model ranks first: an exact name outranks a partial one.
-    check(found["Artifacts"][0]["ArtifactId"] == model, "an exact name ranks first")
-    check(arts.get(report, {}).get("SemanticModelId") == model, "the discovered report names its semantic model")
-
-    url = f"https://app.powerbi.com/groups/{ws}/reports/{report}/ReportSection?experience=power-bi"
-    resolved = doc_of(await session.call_tool("ResolveFabricItem", {"fabricItemId": url}), "ResolveFabricItem")
-    check(resolved["itemType"] == "Report" and resolved["fabricItemId"] == report,
-          "ResolveFabricItem maps a browser URL to the report", json.dumps(resolved)[:200])
-
-    meta = doc_of(await session.call_tool("GetReportMetadata", {"reportObjectId": report}), "GetReportMetadata")
-    page = meta["ReportMetadata"]["Pages"][0]
-    check(meta["semanticModel"] == model, "GetReportMetadata's semanticModel is the bound model's id")
-    check(page["Title"] == "Territories" and page["Visuals"][0]["Title"] == "Units by territory",
-          "GetReportMetadata reads the page and the visual's title")
-    fields = [f["Reference"] for f in page["Visuals"][0]["Fields"]]
-    check(fields == ["'Store'[Territory]", "'Sales'[TotalUnits]"], "the visual's bound fields", str(fields))
-
-    schema = doc_of(await session.call_tool("GetSemanticModelSchema", {"artifactId": model}), "GetSemanticModelSchema")
-    tables = {t["Name"] for t in schema["schema"]["Tables"]}
-    check({"Store", "Sales", "Time"} <= tables, "GetSemanticModelSchema lists the model's tables", str(tables))
-    rels = schema["schema"]["ActiveRelationships"]
-    check({"PK": "'Store'[StoreId]", "FK": "'Sales'[StoreId]"} in rels, "relationships as PK/FK", json.dumps(rels))
-
-    queried = doc_of(await session.call_tool("GetSemanticModelSchema", {"artifactId": model, "queries": [
-        "schema.Tables[].Measures[?regex_match(to_string(@), 'units delta')].Name | []"]}), "schema queries")
-    # to_string(@) includes each measure's expression, so a measure that USES
-    # [Units Delta] matches too, as it would in the skill's own example.
-    check("Units Delta" in queried["Results"][0]["Result"], "a JMESPath query with regex_match, as the skill writes it",
-          json.dumps(queried))
-
-    values = doc_of(await session.call_tool("ValueSearch", {"artifactId": model, "searchTerms": ["west"]}), "ValueSearch")
-    m = values["Results"][0]["Matches"]
-    check(m and m[0]["Value"] == "West" and m[0]["ColumnReference"] == "'Store'[Territory]",
-          "ValueSearch returns the model's own spelling and column", json.dumps(m)[:200])
-
-    rows = doc_of(await session.call_tool("ExecuteQuery", {"artifactId": model, "daxQueries": [UNITS_BY_TERRITORY]}),
-                  "ExecuteQuery")["Results"][0]["Rows"]
-    units = [r["[Units]"] for r in rows]
-    check(len(rows) == 3 and units == sorted(units, reverse=True),
-          "ExecuteQuery runs DAX with ORDER BY: three territories, largest first", json.dumps(rows))
+    check(found["Artifacts"][0]["ArtifactId"] == ids["model"], "an exact name ranks first", json.dumps(found)[:200])
+    return await run_cases(session, "owner", ids)
 
 
-async def as_bob(session, model):
-    rows = doc_of(await session.call_tool("ExecuteQuery", {"artifactId": model, "daxQueries": [UNITS_BY_TERRITORY]}),
-                  "ExecuteQuery as Bob")["Results"][0]["Rows"]
-    check([r["Store[Territory]"] for r in rows] == ["West"],
-          "Bob's role admits the West territory only: the same query, one row", json.dumps(rows))
-    east = doc_of(await session.call_tool("ValueSearch", {"artifactId": model, "searchTerms": ["East"]}),
-                  "ValueSearch as Bob")
-    check(east["Results"][0]["Matches"] == [], "ValueSearch cannot see the rows Bob's role hides")
+async def as_bob(session, ids):
+    return await run_cases(session, "viewer", ids)
 
 
 def main():
@@ -264,9 +260,14 @@ def main():
                                      "definition": {"parts": report_parts(model)}})
     print(f"==> workspace={ws} model={model} report={report}", flush=True)
 
-    init, _ = asyncio.run(session_for(alice, lambda s: as_alice(s, ws, model, report)))
+    ids = {"workspace": ws, "model": model, "report": report}
+    init, owned = asyncio.run(session_for(alice, lambda s: as_alice(s, ids)))
     check(init.server_info.name == "fabric-iq", "initialize names the fabric-iq server", init.server_info.name)
-    asyncio.run(session_for(bob, lambda s: as_bob(s, model)))
+    _, viewed = asyncio.run(session_for(bob, lambda s: as_bob(s, ids)))
+    named = casefiles.executed_by(casefiles.load(SUITE), RUNNER)
+    # A filter that matched nothing would pass every check it skipped.
+    check(owned + viewed == len(named) > 0, f"ran every case naming this runner ({len(named)})",
+          f"owner {owned} + viewer {viewed}")
 
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     status, _, out = http("POST", f"{FABRIC}/v1/mcp/fabriciq", ping, token=app_token())
@@ -280,7 +281,7 @@ def main():
     if failures:
         print(f"\nFAILED: {len(failures)} check(s): {failures}", flush=True)
         sys.exit(1)
-    print("\ne2e/mcp-fabriciq: all six Fabric IQ tools driven by the unmodified mcp SDK as users; "
+    print("\ne2e/mcp-fabriciq: the shared Fabric IQ cases, driven by the unmodified mcp SDK as users; "
           "row-level security applied per caller; app-only tokens and unknown variants refused", flush=True)
 
 
