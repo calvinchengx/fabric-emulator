@@ -29,6 +29,14 @@ For scale: Fabric's REST reference publishes on the order of **880 operations
 across ~57 workload groups**. A green count here says the chosen surface is
 complete and proven, never that Fabric is covered.
 
+That figure is Fabric's published reference, and it is **not** the denominator
+`docs/surface-ledger.json` counts — that one reads the swagger vendored in this
+tree and totals 1002 operations, because it also counts Power BI's
+`/v1.0/myorg` surface and, for Fabric itself, can only count what is committed
+here. The two numbers are reconciled with their sources in
+[65](65-api-surface-coverage.md), which is also where the machine-written
+surface ledgers are explained.
+
 **Fabric-era workloads this map does not grade at all** — absent rather than
 red, so probing is the only way to discover them otherwise: external data
 shares, managed private endpoints, Digital Twin Builder, Data Agent, Org Apps,

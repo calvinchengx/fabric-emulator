@@ -96,6 +96,7 @@ export default defineConfig({
             { slug: '62-performance-regressions' },
             { slug: '63-security-footguns' },
             { slug: '64-logging-quality' },
+            { slug: '65-api-surface-coverage' },
           ],
         },
         {
