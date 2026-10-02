@@ -131,6 +131,11 @@ func secureDirectLakeTable(read store.OneLakeRead, entity string, modelTable *se
 	if narrowing == nil {
 		return delta, nil
 	}
+	// "Users that try to access tables that are part of an unsupported role
+	// combination receive query errors" — before anything is read from the rows.
+	if narrowing.Unsupported != "" {
+		return nil, fmt.Errorf("can't be served: it is subject to %s", narrowing.Unsupported)
+	}
 	// ROWS FIRST, THEN COLUMNS. A role may filter on a column it does not grant
 	// — "the two policies have to be applied using a single OneLake security
 	// role" — so the filter reads the full row before the projection drops it.

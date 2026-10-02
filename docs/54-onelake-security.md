@@ -318,6 +318,18 @@ without anyone noticing.
   syntax errors". Text ordering follows the collation the syntax page names,
   not its contradictory "bitwise comparison" for `>` and `<` — inferred, and
   the same choice the endpoint makes.
+- **Row and column security from different roles** — refused, where the union
+  used to grant everything. "OneLake security doesn't support the combination
+  of two or more roles where one contains RLS rules and another contains CLS
+  rules. Users that try to access tables that are part of an unsupported role
+  combination receive query errors." Consolidating by union opened the column
+  role's rows and the row role's columns, so a principal in both read the whole
+  table. `Effective` now marks such a table `Unsupported` and keeps both
+  restrictions instead. Direct Lake and direct DFS/Blob reads raise the error by
+  name; `principalAccess` cannot express an error, so an engine is given both
+  restrictions; the SQL analytics endpoint, which syncs each role on its own,
+  shows the reader no rows (docs/60). Judged per table, an inference; both kinds
+  in ONE role stay supported.
 - **Which items may carry a role** — enforced on the write, not assumed. The
   supported-items table names `Lakehouse`, `MirroredDatabase` and
   `MirroredAzureDatabricksCatalog`; a PUT against anything else is

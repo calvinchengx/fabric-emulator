@@ -237,6 +237,9 @@ EXEC sp_executesql @revoke_%[1]d;
 				ta = &tableAccess{}
 				access[t] = ta
 			}
+			if grantCols != nil {
+				ta.narrowed = append(ta.narrowed, lit)
+			}
 			if n != nil && n.Rows != "" {
 				filter, cols, err := translateRowFilters(n.Rows, t, endpoint.columns[t])
 				if err != nil {
@@ -349,11 +352,11 @@ EXEC sp_executesql @revoke_%[1]d;
 		var own, src rowLayer
 		var used []string
 		if ta != nil {
-			own = rowLayer{ta.filtered, ta.unfiltered}
+			own = rowLayer{ta.filtered, ta.unfiltered, ta.narrowed}
 			used = append(used, ta.used...)
 		}
 		if sa != nil {
-			src = rowLayer{sa.filtered, sa.unfiltered}
+			src = rowLayer{sa.filtered, sa.unfiltered, nil}
 			for _, c := range sa.used {
 				if !containsString(used, c) {
 					used = append(used, c)
@@ -405,6 +408,7 @@ type tableAccess struct {
 	filtered   []roleFilter
 	unfiltered []string // role name literals granting the table whole
 	used       []string // columns the filters read
+	narrowed   []string // role name literals narrowing the table's columns
 }
 
 // roleFilter is one role's translated row filter on a table, with the role as a
@@ -418,6 +422,7 @@ type roleFilter struct {
 type rowLayer struct {
 	filtered   []roleFilter
 	unfiltered []string
+	narrowed   []string
 }
 
 // rowPolicy creates one table's predicate function and security policy.
@@ -462,6 +467,19 @@ func rowPolicy(table string, own, src rowLayer, used []string, columns map[strin
 		}
 		terms = append(terms, "("+strings.Join(none, " AND ")+")")
 		clauses = append(clauses, "("+strings.Join(terms, " OR ")+")")
+		// "OneLake security doesn't support the combination of two or more roles
+		// where one contains RLS rules and another contains CLS rules." Each role
+		// is synced on its own, so a reader in both would get the union — the
+		// filtering role's whole-table grant and the narrowing role's unfiltered
+		// rows. A predicate cannot raise Fabric's query error, so such a reader is
+		// shown no rows instead: nothing either combination should not see.
+		for _, f := range layer.filtered {
+			for _, c := range layer.narrowed {
+				if f.role != c {
+					clauses = append(clauses, "NOT (IS_MEMBER("+f.role+") = 1 AND IS_MEMBER("+c+") = 1)")
+				}
+			}
+		}
 	}
 	fn := fmt.Sprintf("CREATE FUNCTION [dbo].%s(%s) RETURNS TABLE AS RETURN SELECT 1 AS ok FROM (SELECT %s) AS r WHERE %s",
 		sqlIdent(fnName), strings.Join(params, ", "), strings.Join(projections, ", "), strings.Join(clauses, " AND "))

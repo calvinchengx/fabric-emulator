@@ -180,3 +180,66 @@ func TestDirectLakeAndTheEndpointAdmitTheSameRows(t *testing.T) {
 		}
 	}
 }
+
+// The endpoint syncs each OneLake role on its own, so a reader in a row role
+// and a different column role would get the union. A predicate cannot raise
+// Fabric's query error; the reader is shown no rows instead — while each role's
+// members alone read what their role grants.
+func TestTheEndpointShowsNoRowsToMixedRowAndColumnRoles(t *testing.T) {
+	f := newSecFixture(t)
+	web := httptest.NewServer(f.srv.Handler())
+	t.Cleanup(web.Close)
+	lake, endpoint := f.lakehouse(t)
+	both := "aaaa1111-0000-0000-0000-0000000b07a1"
+	rowsOnly := "bbbb2222-0000-0000-0000-0000000b07a2"
+	colsOnly := "cccc3333-0000-0000-0000-0000000b07a3"
+	for _, oid := range []string{both, rowsOnly, colsOnly} {
+		f.grantRole(t, oid, store.RoleViewer)
+	}
+	var buf bytes.Buffer
+	pw := parquet.NewGenericWriter[rlsRow](&buf)
+	if _, err := pw.Write([]rlsRow{{ptr("west"), 10, 1}, {ptr("east"), 20, 2}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	for rel, content := range map[string][]byte{
+		"Tables/sales/part-0.parquet":                       buf.Bytes(),
+		"Tables/sales/_delta_log/00000000000000000000.json": []byte(`{"add":{"path":"part-0.parquet"}}`),
+	} {
+		if err := f.srv.Store.CreateOneLakePath(&store.OneLakePath{WorkspaceID: f.ws.ID, ItemID: lake.ID, RelPath: rel, Content: content}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	role := func(name, constraints string, members ...string) store.OneLakeRole {
+		var ms []string
+		for _, m := range members {
+			ms = append(ms, fmt.Sprintf(`{"objectId":%q}`, m))
+		}
+		return store.OneLakeRole{ItemID: lake.ID, Name: name, Body: []byte(fmt.Sprintf(`{"name":%q,"decisionRules":[{"effect":"Permit","permission":[
+		  {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		  "constraints":%s}],"members":{"microsoftEntraMembers":[%s]}}`, name, constraints, strings.Join(ms, ",")))}
+	}
+	if err := f.srv.Store.PutOneLakeRoles(lake.ID, []store.OneLakeRole{
+		role("West", `{"rows":[{"tablePath":"/Tables/sales","value":"SELECT * FROM sales WHERE region = 'west'"}]}`, both, rowsOnly),
+		role("NoPrice", `{"columns":[{"tablePath":"/Tables/sales","columnNames":["region","amount"],"columnEffect":"Permit","columnAction":["Read"]}]}`, both, colsOnly),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := f.switchMode(t, web, endpoint, entra.DaemonClientID, "UserIdentity"); code != http.StatusOK {
+		t.Fatalf("switch = %d %s", code, body)
+	}
+	count := func(oid string) int {
+		t.Helper()
+		db, err := f.open(t, oid, lake.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scalar(t, db, `SELECT COUNT(*) FROM (SELECT region, amount FROM dbo.sales) AS s`)
+	}
+	for oid, want := range map[string]int{both: 0, rowsOnly: 1, colsOnly: 2} {
+		if got := count(oid); got != want {
+			t.Errorf("%s reads %d row(s), want %d", oid[:8], got, want)
+		}
+	}
+}

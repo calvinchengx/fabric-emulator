@@ -467,3 +467,34 @@ func TestDirectLakeFailsWhenThePolicyCannotBeRead(t *testing.T) {
 		t.Errorf("owner = %d %s, want 200", code, body)
 	}
 }
+
+// Row security from one role and column security from another: "Users that try
+// to access tables that are part of an unsupported role combination receive
+// query errors." Each role alone is served as usual, in the same run.
+func TestDirectLakeRefusesRowAndColumnSecurityFromDifferentRoles(t *testing.T) {
+	a, st := newAPI(t)
+	_, lake, model := securedLakehouse(t, st)
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{
+		{ItemID: lake.ID, Name: "us", Body: []byte(rowRole("us", "SELECT * FROM sales WHERE region = 'us'", nil, viewer.ID, stranger.ID))},
+		{ItemID: lake.ID, Name: "cols", Body: []byte(fmt.Sprintf(`{"name":"cols","decisionRules":[{"effect":"Permit",
+		  "permission":[{"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},{"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region","amount"],"columnEffect":"Permit","columnAction":["Read"]}]}}],
+		  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, viewer, model); code != 400 || !strings.Contains(body, "a combination OneLake security does not support") {
+		t.Fatalf("viewer in both = %d %s, want the combination refused", code, body)
+	}
+	grantBuild(t, st, model, stranger.ID)
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: lake.ID, PrincipalID: stranger.ID, PrincipalType: "User",
+		Permissions: []string{store.PermRead}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(t, a, stranger, model); code != 200 || !strings.Contains(body, `"us"`) || strings.Contains(body, `"eu"`) {
+		t.Errorf("stranger in the row role only = %d %s, want us", code, body)
+	}
+	if code, _ := query(t, a, admin, model); code != 200 {
+		t.Errorf("owner = %d", code)
+	}
+}

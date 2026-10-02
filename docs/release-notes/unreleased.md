@@ -16,6 +16,15 @@ witness against a real SQL Server requires the two to return the same rows —
 text compared case-insensitively, NULL comparisons admitting nothing. A filter
 the emulator cannot apply blocks the table by name rather than serving it
 unfiltered. [docs/54](../54-onelake-security.md)
+
+## Row and column security from different roles no longer grants everything
+
+A principal in one OneLake role that filters a table's rows and another that
+narrows its columns read the whole table: consolidating the roles by union
+opened both restrictions. Fabric does not support that combination and gives a
+query error. Direct Lake and direct OneLake reads now give that error, by name;
+`principalAccess` gives an engine both restrictions; the SQL analytics endpoint
+shows such a reader no rows. [docs/54](../54-onelake-security.md)
 ## Fabric IQ MCP
 
 The emulator now serves Microsoft's Fabric IQ MCP server at
