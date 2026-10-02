@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/big"
 	"path"
 	"strings"
 
@@ -130,22 +131,84 @@ func secureDirectLakeTable(read store.OneLakeRead, entity string, modelTable *se
 	if narrowing == nil {
 		return delta, nil
 	}
-	// ROW FILTERS ARE REFUSED, AND THAT IS A DIVERGENCE THIS NAMES RATHER THAN
-	// HIDES. Fabric filters: a narrowed identity gets the rows the predicate
-	// admits, and an empty result is documented as expected. Applying the
-	// predicate needs an engine to apply it with, and the Direct Lake read is
-	// pure Go over Delta with none — so the choice is between wrong rows and no
-	// rows, and this repo does not fake compute. A bounded predicate evaluator,
-	// on the same terms as the DAX engine (answer the pinned subset, error
-	// outside it), is what closes this.
-	if narrowing.Rows != "" {
-		return nil, fmt.Errorf("can't be served: it is subject to %s, which this emulator cannot apply "+
-			"on the Direct Lake path. Real Fabric filters the rows; serving them unfiltered would be "+
-			"the wrong answer rather than a missing one", narrowing.Why())
+	// "Users that try to access tables that are part of an unsupported role
+	// combination receive query errors" — before anything is read from the rows.
+	if narrowing.Unsupported != "" {
+		return nil, fmt.Errorf("can't be served: it is subject to %s", narrowing.Unsupported)
 	}
-	// `Narrowing` answers non-nil only for a grant that restricts rows or
-	// columns, and rows are handled above, so what is left is a projection.
+	// ROWS FIRST, THEN COLUMNS. A role may filter on a column it does not grant
+	// — "the two policies have to be applied using a single OneLake security
+	// role" — so the filter reads the full row before the projection drops it.
+	if narrowing.Rows != "" {
+		filtered, err := filterDirectLakeRows(narrowing.Rows, entity, delta)
+		if err != nil {
+			// "Access to a table might be blocked if the RLS statement contains
+			// syntax errors that prevent it from being evaluated" — blocked, by
+			// name, rather than served unfiltered or silently empty.
+			return nil, fmt.Errorf("can't be served: its OneLake row-level security filter cannot be applied: %w", err)
+		}
+		delta = filtered
+	}
+	if len(narrowing.Columns) == 0 {
+		return delta, nil
+	}
 	return projectDirectLakeColumns(modelTable, narrowing.Columns, delta)
+}
+
+// filterDirectLakeRows keeps the rows a OneLake row filter admits. The filter
+// is parsed by pkg/onelakesec, the same parser the SQL analytics endpoint's
+// security sync renders into SQL Server predicates (docs/60), so Direct Lake and
+// the endpoint admit the same rows: text case-insensitively, numbers exactly,
+// SQL's three-valued logic over NULL. Several grants filtering one table arrive
+// joined by " UNION " and a row survives if any admits it. entity is the table's
+// path under Tables/: "sales", or "<schema>/sales" in a schema-enabled lakehouse.
+func filterDirectLakeRows(rows, entity string, delta *warehouse.Table) (*warehouse.Table, error) {
+	schema, table := "dbo", entity
+	if i := strings.Index(entity, "/"); i >= 0 {
+		schema, table = entity[:i], entity[i+1:]
+	}
+	index := make(map[string]int, len(delta.Columns))
+	columns := make(map[string]onelakesec.FilterColumn, len(delta.Columns))
+	for i, c := range delta.Columns {
+		index[c] = i
+		columns[strings.ToLower(c)] = onelakesec.FilterColumn{Name: c}
+	}
+	filters, err := onelakesec.ParseRowFilters(rows, schema, table, columns)
+	if err != nil {
+		return nil, err
+	}
+	out := &warehouse.Table{Columns: delta.Columns, Skipped: delta.Skipped}
+	for _, r := range delta.Rows {
+		cell := func(c string) any { return filterValue(r[index[c]]) }
+		for _, f := range filters {
+			ok, err := f.Admits(cell)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out.Rows = append(out.Rows, r)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// filterValue converts a Delta cell to the types the row filter compares:
+// dates and timestamps as times, decimals exactly.
+func filterValue(v any) any {
+	switch x := v.(type) {
+	case warehouse.Date:
+		return x.T
+	case warehouse.Timestamp:
+		return x.T
+	case warehouse.Decimal:
+		if x.Unscaled == nil {
+			return nil
+		}
+		return new(big.Rat).SetFrac(x.Unscaled, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(x.Scale)), nil))
+	}
+	return v
 }
 
 // projectDirectLakeColumns keeps only the granted columns. A model column whose

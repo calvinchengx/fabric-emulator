@@ -32,6 +32,7 @@
 package onelakesec
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -125,6 +126,14 @@ type AccessEntry struct {
 	Rows    string
 	Columns []string
 	Effect  Effect
+	// Unsupported names an unsupported role combination on this path: "OneLake
+	// security doesn't support the combination of two or more roles where one
+	// contains RLS rules and another contains CLS rules. Users that try to access
+	// tables that are part of an unsupported role combination receive query
+	// errors." Empty when the combination is supported. Rows and Columns then
+	// carry BOTH restrictions rather than their union, so a reader that cannot
+	// raise the error still gets no more than either role grants on its own.
+	Unsupported string
 }
 
 // Effective consolidates every role the principal belongs to into one entry per
@@ -150,6 +159,7 @@ type AccessEntry struct {
 // family from disagreeing about the same policy.
 func Effective(roles []Role, p Principal, input string) []AccessEntry {
 	type grant struct {
+		role        string
 		path        string
 		actions     []string
 		constraints []Constraint
@@ -170,7 +180,7 @@ func Effective(roles []Role, p Principal, input string) []AccessEntry {
 				if !ok {
 					continue
 				}
-				g := grant{path: path, actions: rule.Actions}
+				g := grant{role: role.Name, path: path, actions: rule.Actions}
 				for _, c := range rule.Constraints {
 					table, ok := normalisePath(c.Table, input)
 					// A constraint outside this grant's scope narrows nothing it
@@ -192,6 +202,7 @@ func Effective(roles []Role, p Principal, input string) []AccessEntry {
 	for path := range paths {
 		e := AccessEntry{Path: path, Effect: EffectPermit}
 		openRows, openCols := false, false
+		var rowRoles, colRoles []string
 		for _, g := range grants {
 			if !Covers(g.path, path) {
 				continue
@@ -204,6 +215,7 @@ func Effective(roles []Role, p Principal, input string) []AccessEntry {
 				openRows = true
 			} else {
 				e.Rows = unionRows(e.Rows, c.Rows)
+				rowRoles = addOnce(rowRoles, g.role)
 			}
 			if c == nil || c.Columns == nil {
 				openCols = true
@@ -211,12 +223,14 @@ func Effective(roles []Role, p Principal, input string) []AccessEntry {
 				for _, col := range c.Columns {
 					e.Columns = addOnce(e.Columns, col)
 				}
+				colRoles = addOnce(colRoles, g.role)
 			}
 		}
-		if openRows {
+		e.Unsupported = mixedRowAndColumnRoles(rowRoles, colRoles)
+		if openRows && e.Unsupported == "" {
 			e.Rows = ""
 		}
-		if openCols {
+		if openCols && e.Unsupported == "" {
 			e.Columns = nil
 		}
 		sort.Strings(e.Access)
@@ -303,6 +317,24 @@ func unionRows(a, b string) string {
 		return a
 	}
 	return a + " UNION " + b
+}
+
+// mixedRowAndColumnRoles describes the unsupported combination — one role
+// filtering a table's rows and another narrowing its columns — or returns "".
+// Both in ONE role is supported: "the two policies have to be applied using a
+// single OneLake security role". Judged per table, which the documentation's
+// "tables that are part of an unsupported role combination" suggests but does
+// not state: an inference.
+func mixedRowAndColumnRoles(rowRoles, colRoles []string) string {
+	for _, r := range rowRoles {
+		for _, c := range colRoles {
+			if !strings.EqualFold(r, c) {
+				return fmt.Sprintf("row-level security from role %q and column-level security from role %q, "+
+					"a combination OneLake security does not support", r, c)
+			}
+		}
+	}
+	return ""
 }
 
 func addOnce(xs []string, v string) []string {
@@ -393,6 +425,8 @@ func (e *AccessEntry) Why() string {
 	switch {
 	case e == nil:
 		return ""
+	case e.Unsupported != "":
+		return e.Unsupported
 	case e.Rows != "" && len(e.Columns) > 0:
 		return "row-level and column-level security"
 	case e.Rows != "":

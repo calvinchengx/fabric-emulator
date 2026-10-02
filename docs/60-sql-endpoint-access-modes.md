@@ -185,7 +185,10 @@ asked.
   a Viewer to `db_datareader`; the guard covers permission statements, not role
   membership.
 - **RLS and CLS from different roles** for one user: OneLake refuses the
-  combination with query errors; the emulator applies both.
+  combination with query errors. Each role is synced on its own, and a predicate
+  cannot raise an error, so since 2026-10-02 the endpoint shows such a reader
+  **no rows** instead — nothing the combination should not see, but not the
+  documented error. Direct Lake and direct reads raise it (docs/54).
 - **Masks** stay in force in user identity mode; Fabric says DDM is "not
   supported in OneLake security" without saying what happens to existing ones.
 - **EXEC** stays refused on the endpoint, as before.

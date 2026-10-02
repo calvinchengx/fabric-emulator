@@ -305,11 +305,31 @@ without anyone noticing.
   OneLake doesn't use a SQL analytics endpoint to check permissions. It uses
   OneLake security." A table no role grants will not resolve and a column
   outside the projection is reported missing **by name**, which is the product's
-  own shape for it rather than a 403. The **row filter** is the one piece not
-  applied: Fabric filters and returns what the predicate admits, and evaluating
-  a predicate needs an engine — the Spark path hands its filter to Spark SQL,
-  and the Direct Lake read is pure Go over Delta with no counterpart. It is
-  refused, loudly, until a bounded predicate evaluator exists.
+  own shape for it rather than a 403. The **row filter** is applied too
+  (2026-10-02): `pkg/onelakesec` parses Microsoft's documented filter grammar
+  once, and Direct Lake evaluates it over the rows it read — text
+  case-insensitively, numbers exactly, SQL's three-valued logic over NULL —
+  while the SQL analytics endpoint renders the same parse as a SQL Server
+  predicate (docs/60). A gated witness runs ten filters through both and
+  requires the same rows. Rows are filtered before the role's column
+  projection, so a filter may read a column the role does not grant. A filter
+  outside the grammar, or one that does not match the table, blocks the table
+  by name: "access to a table might be blocked if the RLS statement contains
+  syntax errors". Text ordering follows the collation the syntax page names,
+  not its contradictory "bitwise comparison" for `>` and `<` — inferred, and
+  the same choice the endpoint makes.
+- **Row and column security from different roles** — refused, where the union
+  used to grant everything. "OneLake security doesn't support the combination
+  of two or more roles where one contains RLS rules and another contains CLS
+  rules. Users that try to access tables that are part of an unsupported role
+  combination receive query errors." Consolidating by union opened the column
+  role's rows and the row role's columns, so a principal in both read the whole
+  table. `Effective` now marks such a table `Unsupported` and keeps both
+  restrictions instead. Direct Lake and direct DFS/Blob reads raise the error by
+  name; `principalAccess` cannot express an error, so an engine is given both
+  restrictions; the SQL analytics endpoint, which syncs each role on its own,
+  shows the reader no rows (docs/60). Judged per table, an inference; both kinds
+  in ONE role stay supported.
 - **Which items may carry a role** — enforced on the write, not assumed. The
   supported-items table names `Lakehouse`, `MirroredDatabase` and
   `MirroredAzureDatabricksCatalog`; a PUT against anything else is
