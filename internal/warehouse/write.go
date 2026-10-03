@@ -123,11 +123,19 @@ func commitFileName(version int) string { return fmt.Sprintf("%020d.json", versi
 // first commit and on an overwrite (which may change the schema); an append
 // carries only its add action, as Delta writers do.
 func commitJSON(cols []string, kinds []colType, dataFile string, size, rows int, removes []string, version int, nowMillis int64) []byte {
+	return commitJSONMeta(cols, kinds, dataFile, size, rows, removes, version, nowMillis, false)
+}
+
+// commitJSONMeta is commitJSON with the choice of restating the schema. A
+// versioned warehouse table restates it on EVERY commit: an ALTER TABLE changes
+// the schema without removing a file, and a replay that stops at that commit has
+// to see the new columns.
+func commitJSONMeta(cols []string, kinds []colType, dataFile string, size, rows int, removes []string, version int, nowMillis int64, forceMeta bool) []byte {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	_ = enc.Encode(commitInfoAction(nowMillis))
 
-	if version == 0 || len(removes) > 0 {
+	if version == 0 || len(removes) > 0 || forceMeta {
 		fields := make([]map[string]any, len(cols))
 		for i, c := range cols {
 			fields[i] = map[string]any{"name": c, "type": deltaTypeName(kinds[i]), "nullable": true, "metadata": map[string]any{}}

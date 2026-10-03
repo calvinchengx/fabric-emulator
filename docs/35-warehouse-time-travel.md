@@ -1,13 +1,14 @@
 # 35 — Warehouse time travel: the history is already on disk
 
-**Status: shipped for the SQL analytics endpoint (Phases 0–3); the warehouse
-write path is still a gap (Phase 4), and so is retention (Phase 5).** The hard
+**Status: shipped for the SQL analytics endpoint (Phases 0–3) and for the
+Warehouse (Phase 4, write versioning) with its retention window (Phase 5).** The hard
 part of time travel is retaining versions, and the emulator already retained
 them before any of this phase list started — `_delta_log` keeps every commit
 and Delta's `remove` is a tombstone, not a delete. What this plan closes is the
 ability to *ask* for one: the T-SQL surface (`OPTION (FOR TIMESTAMP AS OF
 …)`), now wired into the Lakehouse's SQL analytics endpoint. The warehouse
-tables that live in the sidecar rather than in Delta are still untravelled.
+tables that live in the sidecar rather than in Delta gained a history of their
+own in Phase 4: each accepted statement commits a Delta version.
 
 [29-tsql-parity.md](29-tsql-parity.md) supplies the Class A/B/C vocabulary this
 plan is written in and is the doc that must be updated when it ships.
@@ -344,19 +345,89 @@ endpoint's own tables are where the real multi-commit Delta history lives
 either way. Both are named in `timetravel_adapt.go` and `timetravel.go` rather
 than discovered later.
 
-**Phase 4 — warehouse write versioning.** Give warehouse tables a history by
-committing to Delta on each data-changing statement. The TDS front already
-observes accepted writes — that is how `ProducerWarehouse` lineage is recorded
-([`warehouselineage.go`](../internal/server/warehouselineage.go)) — so the hook
-exists; what is new is writing Delta from it. This is the phase to scope
-separately and price properly, because it changes the write path gold depends
-on.
+**Phase 4 — warehouse write versioning. Done.**
+[`warehouseVersioner`](../internal/server/warehouseversioning.go) is the second
+consumer of the flows the TDS front hands over (the first is lineage). After the
+engine accepts a statement that changed a Warehouse table, it reads the table
+back from the sidecar and commits it as the next Delta version under the item's
+own `Tables/<name>` — [`SnapshotTable`](../internal/warehouse/versioning.go) —
+which is where a real Warehouse keeps its data. The existing reader and
+resolver then serve a Warehouse unchanged: the only wiring is that a Warehouse
+connection now gets a resolver too
+([`WarehouseTimeTravelResolver`](../internal/warehouse/versioning.go)).
 
-**Phase 5 — retention.** Configurable 1–120 days, default 30, and expiry of
-files past it. Cheap once versions are addressable, and meaningless before.
+What counts as a version: `CREATE TABLE` (empty, so the table exists from that
+instant), `CTAS`/`SELECT INTO`, `INSERT` (with or without a `SELECT`), `UPDATE`,
+`DELETE`, `TRUNCATE`, `MERGE` and `ALTER TABLE` — one commit per statement, the
+schema restated every time so an `ALTER` is visible to a replay stopped there.
+`UPDATE x … FROM dbo.t x` resolves the alias through the statement's own `FROM`
+list ([`dataflow_modify.go`](../internal/tsql/dataflow_modify.go)).
 
-Phases 0–3 are done: a real, honest feature covering the SQL analytics
-endpoint, with the warehouse recorded as 🟠 rather than claimed.
+History belongs to the table *object*, which is Fabric's behaviour and not a
+choice made here: `sp_rename` moves it with the table, `DROP TABLE` ends it. A
+dbt rebuild (build `x__dbt_temp`, swap it in) therefore starts the new table's
+history at the swap, and the table it replaced does not leak into it.
+
+It can never fail the statement. The observer runs after the client already has
+its result, so a snapshot that fails is logged with the table's name and leaves
+a gap in that table's history; the write stands.
+
+Not versioned, so nobody learns it by surprise (each is logged when it applies,
+never silent):
+
+- **Writes the wire cannot see** — a stored procedure's body, `BULK INSERT`/bcp,
+  a pipeline Script activity (it uses the control-plane connection), and a
+  statement whose response carries a result set (`UPDATE … OUTPUT`). Class B.
+- **A table outside `dbo`**, **a view** (no rows), and **a table over
+  `MaxVersionedRows` (500,000)** — a snapshot reads the whole table, so a loop
+  of single-row `INSERT`s into a large table would be quadratic.
+- **A Lakehouse and a SQL Database** — the first is read-only on this wire (its
+  history is its Delta log), the second mirrors on demand.
+
+The cost is real and stated: every data-changing statement on a Warehouse now
+also reads that table and writes a Parquet file. `-warehouse-versioning=false`
+(`FABRIC_WAREHOUSE_VERSIONING=off`) turns it off for a build that does not want
+a history.
+
+**Phase 5 — retention. Done.** `-warehouse-retention-days` /
+`FABRIC_WAREHOUSE_RETENTION_DAYS`, 1–120, default 30; anything outside the range
+is refused at startup rather than clamped. Two halves:
+
+- **The window is checked, by name.** An instant older than it is refused with
+  `… is older than this warehouse's N-day data retention window (oldest
+  available: …)` — before the reader runs, so it never surfaces as a missing
+  data file.
+- **Expiry removes bytes, not history.**
+  [`ExpireVersions`](../internal/warehouse/versioning.go) runs on the table
+  just written, so it is deterministic under the emulator's controllable clock
+  (no background timer to wait for). It deletes only the data files that no
+  version inside the window can reach, and keeps the state at the cutoff itself
+  (a query for exactly that instant must still work). The `_delta_log` is kept
+  whole — deleting leading commits would leave a log delta-rs and Spark cannot
+  replay, and the log is metadata, not the space. That is Delta's own `VACUUM`.
+  Nothing the current table needs can be removed: the newest version is never
+  before the base.
+
+The window applies to a **Warehouse**. A Lakehouse's analytics endpoint reads the
+Delta log the user owns, and what it retains is the user's `VACUUM` policy, not
+this setting.
+
+Found on the way: Phase 3 left a plain batch's `#tt0` temp table alive for the
+whole session, so a **second** time-travel query on one connection failed with
+"There is already an object named '#tt0'". Every earlier test issued one hint
+per connection. The materialisation now drops a stale table of that name first
+(`TestAdaptWithTimeTravelDropsAStaleTempTableFirst`; end to end,
+`TestWarehouseTimeTravelOverTheWire`). It affected the Lakehouse endpoint too.
+
+Witnessed over the real TDS wire against a real SQL Server:
+[`warehouse_versioning_e2e_test.go`](../internal/server/warehouse_versioning_e2e_test.go)
+(history across insert/update/delete/truncate, a dbt swap, a drop, the
+retention refusal, and the off switch), with the log/expiry mechanics also
+pinned without a server in
+[`versioning_test.go`](../internal/warehouse/versioning_test.go).
+
+Phases 0–5 are done: a real, honest feature covering the SQL analytics endpoint
+and the Warehouse.
 
 ## Risks, stated rather than discovered later
 
@@ -374,7 +445,10 @@ endpoint, with the warehouse recorded as 🟠 rather than claimed.
   WHERE A.id = B.id`, no alias at all) referring to nothing.
 - **Phase 4 touches the path that builds gold.** `e2e/dbt-fabric` and the
   medallion examples are the regression surface, and a mistake there is
-  expensive in a way Phases 0–3 are not.
+  expensive in a way Phases 0–3 are not. Mitigated by construction: versioning
+  runs after the client has its result and cannot fail the statement; it is
+  switchable off; and the whole Go suite plus the dbt/medallion e2e legs run
+  with it on.
 - **A materialised snapshot is not a Fabric MPP snapshot.** The emulator
   answers from a `#temp` table populated at query time from literal SQL text —
   not even the bulk-copy path `reflectTable` uses for an ordinary reflect,
@@ -387,11 +461,11 @@ endpoint, with the warehouse recorded as 🟠 rather than claimed.
   result set is usually far smaller than a full reflect, which is the
   mitigating fact, not a reason to call the trade-off free.
 - **Retention that silently deletes is worse than none.** Phase 5 removes files
-  a user could previously query. Until expiry is implemented, the emulator
-  retains everything — which is *more* permissive than Fabric and therefore a
-  Class B entry of its own: a query that works locally and fails in production
-  because the window had passed. Now that Phase 3 ships, this is recorded in
-  [29-tsql-parity.md](29-tsql-parity.md) rather than waiting for Phase 5.
+  a user could previously query, so it is loud: the refusal names the window and
+  the oldest instant available, expiry only ever removes what no in-window
+  version reaches, and the log stays whole. A Lakehouse endpoint has no window
+  (see Phase 5) — still *more* permissive than Fabric there, recorded in
+  [29-tsql-parity.md](29-tsql-parity.md).
 
 ## Non-goals
 

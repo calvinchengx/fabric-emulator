@@ -135,7 +135,7 @@ func observeBatch(obs Observer, database string, typ byte, payload, response []b
 func mightMove(sql string) bool {
 	for range 8 { // bounded: a preamble, not an arbitrary script
 		switch leadingKeyword(sql) {
-		case "CREATE", "INSERT", "DROP", "ALTER", "EXEC", "EXECUTE", "SP_RENAME":
+		case "CREATE", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "MERGE", "DROP", "ALTER", "EXEC", "EXECUTE", "SP_RENAME":
 			return true
 		case "SELECT", "WITH":
 			return strings.Contains(strings.ToLower(sql), "into")

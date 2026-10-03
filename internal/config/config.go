@@ -203,6 +203,17 @@ type Config struct {
 	// Fabric-green build, at the cost of failing SQL that works today.
 	TSQLStrict bool
 
+	// WarehouseVersioning commits each accepted data-changing statement on a
+	// Warehouse to Delta, which is what gives `OPTION (FOR TIMESTAMP AS OF …)`
+	// a past to read (docs/35-warehouse-time-travel.md, Phase 4). On by
+	// default, as on Fabric; FABRIC_WAREHOUSE_VERSIONING=off is the escape for a
+	// build whose cost is not worth a history.
+	WarehouseVersioning bool
+
+	// WarehouseRetentionDays is how far back time travel reaches (Phase 5).
+	// 0 means the default; Finish refuses anything outside Fabric's range.
+	WarehouseRetentionDays int
+
 	// AirflowURL attaches an upstream Apache Airflow 2.10 REST API. DAG files
 	// are materialised into AirflowDAGDir, which must be a shared volume mounted
 	// as the scheduler's DAG folder.
@@ -314,30 +325,39 @@ func FromEnvPartial() *Config {
 		// FABRIC_DEFINITION_LRO is the older, narrower name this shipped under
 		// and is still honoured, so a compose file or CI leg that already sets
 		// it keeps working rather than silently losing the async path.
-		ForceLRO:              boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
-		NameReservation:       durationEnv("FABRIC_NAME_RESERVATION"),
-		WebActivityStub:       strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
-		CustomActivityShell:   customActivityEnabled(os.Getenv("FABRIC_CUSTOM_ACTIVITY")),
-		WarehouseSQLURL:       os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
-		TSQLStrict:            boolEnv("FABRIC_TSQL_STRICT"),
-		ListPageSize:          intEnv("FABRIC_LIST_PAGE_SIZE"),
-		AirflowURL:            os.Getenv("FABRIC_AIRFLOW_URL"),
-		AirflowDAGDir:         os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
-		AirflowUsername:       os.Getenv("FABRIC_AIRFLOW_USERNAME"),
-		AirflowPassword:       os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
-		MLflowURL:             os.Getenv("FABRIC_MLFLOW_URL"),
-		KQLURL:                os.Getenv("FABRIC_KQL_URL"),
-		DAXURL:                os.Getenv("FABRIC_DAX_URL"),
-		KafkaBootstrap:        os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
-		DatabricksURL:         os.Getenv("FABRIC_DATABRICKS_URL"),
-		DatabricksToken:       os.Getenv("FABRIC_DATABRICKS_TOKEN"),
-		DatabricksTLSInsecure: boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
-		ARMURL:                os.Getenv("FABRIC_ARM_URL"),
-		ARMPollSeconds:        intEnv("FABRIC_ARM_POLL_SECONDS"),
-		MaxRequestBytes:       maxRequestBytesEnv("FABRIC_MAX_REQUEST_BYTES"),
-		RetryAfterSeconds:     1,
+		ForceLRO:               boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
+		NameReservation:        durationEnv("FABRIC_NAME_RESERVATION"),
+		WebActivityStub:        strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
+		CustomActivityShell:    customActivityEnabled(os.Getenv("FABRIC_CUSTOM_ACTIVITY")),
+		WarehouseSQLURL:        os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
+		TSQLStrict:             boolEnv("FABRIC_TSQL_STRICT"),
+		WarehouseVersioning:    customActivityEnabled(os.Getenv("FABRIC_WAREHOUSE_VERSIONING")),
+		WarehouseRetentionDays: intEnv("FABRIC_WAREHOUSE_RETENTION_DAYS"),
+		ListPageSize:           intEnv("FABRIC_LIST_PAGE_SIZE"),
+		AirflowURL:             os.Getenv("FABRIC_AIRFLOW_URL"),
+		AirflowDAGDir:          os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
+		AirflowUsername:        os.Getenv("FABRIC_AIRFLOW_USERNAME"),
+		AirflowPassword:        os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
+		MLflowURL:              os.Getenv("FABRIC_MLFLOW_URL"),
+		KQLURL:                 os.Getenv("FABRIC_KQL_URL"),
+		DAXURL:                 os.Getenv("FABRIC_DAX_URL"),
+		KafkaBootstrap:         os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
+		DatabricksURL:          os.Getenv("FABRIC_DATABRICKS_URL"),
+		DatabricksToken:        os.Getenv("FABRIC_DATABRICKS_TOKEN"),
+		DatabricksTLSInsecure:  boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
+		ARMURL:                 os.Getenv("FABRIC_ARM_URL"),
+		ARMPollSeconds:         intEnv("FABRIC_ARM_POLL_SECONDS"),
+		MaxRequestBytes:        maxRequestBytesEnv("FABRIC_MAX_REQUEST_BYTES"),
+		RetryAfterSeconds:      1,
 	}
 }
+
+// Warehouse data-retention window, in calendar days (Fabric: 1-120, default 30).
+const (
+	MinWarehouseRetentionDays     = 1
+	MaxWarehouseRetentionDays     = 120
+	DefaultWarehouseRetentionDays = 30
+)
 
 // Finish validates and derives dependent fields. Call after flag overrides.
 func (c *Config) Finish() error {
@@ -349,6 +369,13 @@ func (c *Config) Finish() error {
 	}
 	if c.RetryAfterSeconds <= 0 {
 		c.RetryAfterSeconds = 1
+	}
+	if c.WarehouseRetentionDays == 0 {
+		c.WarehouseRetentionDays = DefaultWarehouseRetentionDays
+	}
+	if c.WarehouseRetentionDays < MinWarehouseRetentionDays || c.WarehouseRetentionDays > MaxWarehouseRetentionDays {
+		return fmt.Errorf("FABRIC_WAREHOUSE_RETENTION_DAYS %d is outside Fabric's %d-%d day range",
+			c.WarehouseRetentionDays, MinWarehouseRetentionDays, MaxWarehouseRetentionDays)
 	}
 	// A terminal without a token is a shell with no lock on it, so the token is
 	// generated rather than defaulted: there is no safe fixed value, and an

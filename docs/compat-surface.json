@@ -21,8 +21,8 @@
   ],
   "counts": {
     "subcommands": 2,
-    "cliFlags": 28,
-    "envVars": 39,
+    "cliFlags": 30,
+    "envVars": 41,
     "routes": 1059
   },
   "subcommands": [
@@ -56,7 +56,9 @@
     "sql-tds-addr",
     "tenant-admins",
     "tsql-strict",
+    "warehouse-retention-days",
     "warehouse-sql-url",
+    "warehouse-versioning",
     "web-activity"
   ],
   "envVars": [
@@ -97,7 +99,9 @@
     "FABRIC_TERMINAL_TOKEN",
     "FABRIC_TERMINAL_URL",
     "FABRIC_TSQL_STRICT",
+    "FABRIC_WAREHOUSE_RETENTION_DAYS",
     "FABRIC_WAREHOUSE_SQL_URL",
+    "FABRIC_WAREHOUSE_VERSIONING",
     "FABRIC_WEB_ACTIVITY"
   ],
   "docsUndocumented": {

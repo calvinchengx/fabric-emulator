@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"log"
@@ -23,6 +24,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/purview"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/tds"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
 // SQLAudience is the Entra resource a Fabric SQL/Warehouse token carries
@@ -202,6 +204,25 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			// Gold is built over this wire, so the flow graph only reaches it if
 			// the TDS front records what its statements moved.
 			s.TDS.Observe = newWarehouseLineage(st).observe
+			// And a Warehouse table gets a version history from the same
+			// statements (docs/35 Phase 4), so FOR TIMESTAMP AS OF has a past.
+			if cfg.WarehouseVersioning {
+				route := s.TDS.OnConnect
+				s.TDS.OnConnect = func(ctx context.Context, server, database, user string) (tds.Connection, error) {
+					conn, err := route(ctx, server, database, user)
+					if err != nil {
+						return conn, err
+					}
+					// A Warehouse travels in the history versioning wrote; a
+					// SQL Database never has one (docs/35 Phase 4).
+					if it, gerr := st.GetItemByID(conn.TargetDB); gerr == nil && it.Type == "Warehouse" {
+						conn.TimeTravel = warehouse.WarehouseTimeTravelResolver(st, it.ID, cfg.WarehouseRetentionDays)
+					}
+					return conn, nil
+				}
+				s.TDS.Observe = chainObservers(s.TDS.Observe,
+					newWarehouseVersioner(st, be, cfg.WarehouseRetentionDays).observe)
+			}
 			// A Fabric SQL Database mirrors its SQL tables to OneLake Delta; wire the
 			// control-plane refresh hook to the same per-item backend.
 			a.MirrorItem = mirrorItem(be, st)
