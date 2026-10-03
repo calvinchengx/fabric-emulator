@@ -36,7 +36,7 @@
     "see."
   ],
   "counts": {
-    "subsystems": 13,
+    "subsystems": 14,
     "exemptions": 1,
     "legacyEnvNames": 1
   },
@@ -53,6 +53,7 @@
     "spark-job-drive",
     "store",
     "tds",
+    "versioning",
     "warehouse"
   ],
   "exemptions": [

@@ -216,3 +216,34 @@ func TestLeadingKeywordSkipsCommentsAndPreamble(t *testing.T) {
 		}
 	}
 }
+
+// docs/35 Phase 4: a version is written per data-changing statement, so the
+// prefilter has to let the in-place writers through to the parser. They moved
+// no data from another table, which is why none was admitted before.
+func TestObserveBatchReportsInPlaceWrites(t *testing.T) {
+	var got []string
+	obs := func(db string, flows []tsql.Flow) {
+		for _, f := range flows {
+			got = append(got, f.Kind+"|"+strings.Join(f.Target, "."))
+		}
+	}
+	for _, q := range []string{
+		"UPDATE dbo.t SET a = 1",
+		"DELETE FROM dbo.t",
+		"TRUNCATE TABLE dbo.t",
+		"MERGE INTO dbo.t USING dbo.s ON 1=1 WHEN MATCHED THEN DELETE;",
+		"/* meta */\nUSE [wh];\nUPDATE dbo.t SET a = 1",
+	} {
+		got = nil
+		observeBatch(obs, "wh-guid", PktSQLBatch, batchMsg(q), done(doneFinal, 0))
+		if len(got) != 1 || got[0] != tsql.FlowModify+"|dbo.t" {
+			t.Errorf("%q observed as %v", q, got)
+		}
+	}
+	got = nil
+	observeBatch(obs, "wh-guid", PktSQLBatch, batchMsg("UPDATE dbo.t SET a = 1"),
+		concat(errorToken(547, "constraint"), done(doneError, 0)))
+	if got != nil {
+		t.Errorf("a rejected UPDATE was observed: %v", got)
+	}
+}

@@ -83,9 +83,9 @@ func TestDataFlowSelectIntoAndInsert(t *testing.T) {
 	if f.Kind != FlowInsert || len(f.Sources) != 2 {
 		t.Fatalf("insert select = %+v", f)
 	}
-	// INSERT … VALUES moves no table.
-	if flows := DataFlows(`INSERT INTO dbo.dst (a) VALUES (1)`); flows != nil {
-		t.Fatalf("insert values produced flows: %+v", flows)
+	// INSERT … VALUES moves no table, but it changes one.
+	if f := one(t, `INSERT INTO dbo.dst (a) VALUES (1)`); f.Kind != FlowModify || len(f.Sources) != 0 {
+		t.Fatalf("insert values = %+v", f)
 	}
 }
 
@@ -102,11 +102,13 @@ func TestDataFlowDrop(t *testing.T) {
 
 func TestDataFlowIgnoresWhatItShould(t *testing.T) {
 	for _, sql := range []string{
-		`SELECT * FROM dbo.t`,                          // a read moves nothing
-		`CREATE TABLE dbo.t (a int)`,                   // DDL without AS
-		`SELECT name FROM sys.tables`,                  // catalog read
-		`SELECT x INTO #tmp FROM dbo.t`,                // temp target
-		`UPDATE dbo.t SET a = 1`,                       // no table-to-table movement modelled
+		`SELECT * FROM dbo.t`,           // a read moves nothing
+		`SELECT name FROM sys.tables`,   // catalog read
+		`SELECT x INTO #tmp FROM dbo.t`, // temp target
+		`UPDATE STATISTICS dbo.t`,       // not a write to the rows
+		`UPDATE #tmp SET a = 1`,         // session-scoped
+		`DELETE FROM @tv`,               // table variable
+		`TRUNCATE TABLE #tmp`,
 		`EXEC(@dynamic_sql)`,                           // unknowable content
 		`EXEC('EXEC(''SELECT 1 INTO dbo.two_deep'')')`, // second level stays alone
 		`this is not sql at all`,
@@ -284,5 +286,50 @@ func TestDataFlowCreateViewMalformedIsIgnored(t *testing.T) {
 		if flows := DataFlows(sql); flows != nil {
 			t.Errorf("DataFlows(%q) = %+v; want nil", sql, flows)
 		}
+	}
+}
+
+// Phase 4 of docs/35: every statement that changes a table in place is a
+// FlowModify naming it, so a version is written for each.
+func TestDataFlowModify(t *testing.T) {
+	for _, c := range []struct {
+		sql  string
+		want []string
+	}{
+		{`CREATE TABLE dbo.t (a int)`, []string{"dbo", "t"}},
+		{`UPDATE dbo.t SET a = 1`, []string{"dbo", "t"}},
+		{`UPDATE TOP (5) dbo.t SET a = 1`, []string{"dbo", "t"}},
+		{`UPDATE TOP 5 PERCENT dbo.t SET a = 1`, []string{"dbo", "t"}},
+		{`DELETE FROM dbo.t WHERE a = 1`, []string{"dbo", "t"}},
+		{`DELETE dbo.t`, []string{"dbo", "t"}},
+		{`DELETE TOP (1) FROM [dbo].[t]`, []string{"dbo", "t"}},
+		{`TRUNCATE TABLE dbo.t`, []string{"dbo", "t"}},
+		{`MERGE INTO dbo.t AS x USING dbo.s ON x.a = s.a WHEN MATCHED THEN DELETE;`, []string{"dbo", "t"}},
+		{`MERGE TOP (3) dbo.t USING dbo.s ON 1=1 WHEN MATCHED THEN DELETE;`, []string{"dbo", "t"}},
+		{`ALTER TABLE dbo.t ADD b int`, []string{"dbo", "t"}},
+		// An alias target resolves through the statement's own FROM list.
+		{`UPDATE x SET a = 1 FROM dbo.t x JOIN dbo.s ON x.k = s.k`, []string{"dbo", "t"}},
+		{`UPDATE x SET a = 1 FROM dbo.s JOIN dbo.t AS x ON x.k = s.k`, []string{"dbo", "t"}},
+		{`DELETE x FROM dbo.s, dbo.t x WHERE x.k = s.k`, []string{"dbo", "t"}},
+		{`DELETE x FROM dbo.t x`, []string{"dbo", "t"}},
+		{`UPDATE t SET a = 1 FROM dbo.t`, []string{"dbo", "t"}},
+		{`UPDATE t SET a = 1 FROM dbo.s`, []string{"t"}}, // no alias matches: the table as written
+		{`UPDATE x SET a = 1 FROM dbo.t [x] WHERE 1=1`, []string{"dbo", "t"}},
+		{`UPDATE x SET a = 1 FROM (SELECT 1) d JOIN dbo.t x ON 1=1`, []string{"dbo", "t"}},
+	} {
+		f := one(t, c.sql)
+		if f.Kind != FlowModify || !reflect.DeepEqual(f.Target, c.want) {
+			t.Errorf("%q = %+v; want a modify of %v", c.sql, f, c.want)
+		}
+	}
+	// Nothing to name: not guessed at.
+	for _, sql := range []string{`UPDATE`, `DELETE`, `MERGE`, `UPDATE TOP (`, `ALTER TABLE`} {
+		if flows := DataFlows(sql); flows != nil {
+			t.Errorf("DataFlows(%q) = %+v; want nil", sql, flows)
+		}
+	}
+	// Through dbt's own wrapper.
+	if f := one(t, `EXEC('UPDATE dbo.t SET a = 1')`); f.Kind != FlowModify {
+		t.Errorf("wrapped update = %+v", f)
 	}
 }

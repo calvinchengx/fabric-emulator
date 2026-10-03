@@ -330,3 +330,20 @@ func TestCheckColumnsExistedAsOfAcrossJoin(t *testing.T) {
 		}
 	})
 }
+
+// A plain batch's #temp table outlives the batch, so the materialisation has to
+// be safe to run twice on one session: the second hint used to fail with
+// "There is already an object named '#tt0'".
+func TestAdaptWithTimeTravelDropsAStaleTempTableFirst(t *testing.T) {
+	s := snap([]string{"id"}, []string{"INT"}, [][]string{{"1"}}, nil)
+	out, changed, err := AdaptWithTimeTravel("SELECT id FROM dbo.customer"+hint,
+		resolverOf(t, map[string]*TimeTravelSnapshot{"customer": s}, nil))
+	if err != nil || !changed {
+		t.Fatalf("= (%q, %v, %v)", out, changed, err)
+	}
+	drop := strings.Index(out, "IF OBJECT_ID('tempdb..#tt0') IS NOT NULL DROP TABLE #tt0;")
+	create := strings.Index(out, "CREATE TABLE #tt0")
+	if drop < 0 || create < 0 || drop > create {
+		t.Fatalf("the drop must precede the create:\n%s", out)
+	}
+}

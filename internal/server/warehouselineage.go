@@ -81,6 +81,9 @@ func (w *warehouseLineage) observe(database string, flows []tsql.Flow) {
 			w.drop(database, f)
 		case tsql.FlowCreateView:
 			w.recordView(database, f)
+		case tsql.FlowModify:
+			// A table changed in place: no data moved between tables, so there
+			// is no edge to draw. Time travel versions it instead (versioning.go).
 		default:
 			w.recordEdges(database, f)
 		}

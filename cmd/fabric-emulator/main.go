@@ -90,6 +90,8 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	tenantAdmins := strings.Join(cfg.TenantAdmins, ",")
 	fs.StringVar(&tenantAdmins, "tenant-admins", tenantAdmins, "comma-separated principal ids (oid, or appid for a service principal) that are Fabric administrators for /v1/admin/*; empty means nobody is, so every admin mutation is refused")
 	fs.BoolVar(&cfg.TSQLStrict, "tsql-strict", cfg.TSQLStrict, "refuse T-SQL that real Fabric rejects but SQL Server accepts (recursive CTEs, triggers, enforced constraints; see docs/29)")
+	fs.IntVar(&cfg.WarehouseRetentionDays, "warehouse-retention-days", cfg.WarehouseRetentionDays, "how many days back FOR TIMESTAMP AS OF reaches on a Warehouse (1-120; 0 = 30)")
+	fs.BoolVar(&cfg.WarehouseVersioning, "warehouse-versioning", cfg.WarehouseVersioning, "commit each data-changing Warehouse statement to Delta so time travel has a past (docs/35)")
 	fs.StringVar(&cfg.WarehouseSQLURL, "warehouse-sql-url", cfg.WarehouseSQLURL, "real SQL Server backend the SQL endpoint relays to (go-mssqldb DSN; empty = stub result)")
 	// A string rather than a bool so the flag reads like the env var it mirrors
 	// (FABRIC_WEB_ACTIVITY=stub) and leaves room for a future mode.

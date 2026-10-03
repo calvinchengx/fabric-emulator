@@ -244,7 +244,19 @@ type resolvedTimeTravelTable struct {
 // writeTimeTravelMaterialize appends the CREATE TABLE + INSERT statements
 // that build rt's #temp snapshot. An empty table still gets its CREATE TABLE,
 // since the query may legitimately expect zero rows.
+//
+// The CREATE is preceded by a drop of any stale table of that name. Sent as a
+// plain batch (no sp_executesql around it) a #temp table lives for the whole
+// SESSION, so a second time-travel query on one connection collided with the
+// first one's "#tt0" -- "There is already an object named '#tt0'" -- and every
+// later hint on that session failed. It went unseen because every test issued
+// one hint per connection.
 func writeTimeTravelMaterialize(b *strings.Builder, rt *resolvedTimeTravelTable) {
+	b.WriteString("IF OBJECT_ID('tempdb..")
+	b.WriteString(rt.tempName)
+	b.WriteString("') IS NOT NULL DROP TABLE ")
+	b.WriteString(rt.tempName)
+	b.WriteString(";\n")
 	b.WriteString("CREATE TABLE ")
 	b.WriteString(rt.tempName)
 	b.WriteString(" (")

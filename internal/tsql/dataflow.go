@@ -128,7 +128,7 @@ func classify(sig []Token, level int) []Flow {
 	case startsWith(sig, "exec"), startsWith(sig, "execute"), startsWith(sig, "sp_rename"):
 		return execFlow(sig, level)
 	}
-	return nil
+	return modifyFlow(sig)
 }
 
 // ctasFlow: CREATE TABLE name [WITH (…)] AS body.
@@ -144,7 +144,8 @@ func ctasFlow(sig []Token) []Flow {
 		}
 	}
 	if i >= len(sig) || !wordIs(sig[i], "as") {
-		return nil // a plain CREATE TABLE (…): DDL, no movement
+		// A plain CREATE TABLE (…): no movement, but the table now exists.
+		return []Flow{{Kind: FlowModify, Target: target}}
 	}
 	body := sig[i+1:]
 	return []Flow{{Kind: FlowCTAS, Target: target, Sources: bodySources(body)}}
@@ -180,7 +181,7 @@ func viewFlow(sig []Token) []Flow {
 }
 
 // insertFlow: INSERT [INTO] name [(cols)] SELECT|WITH …. INSERT … VALUES moves
-// no table, so it yields nothing.
+// no table, so it is a FlowModify rather than a movement.
 func insertFlow(sig []Token) []Flow {
 	i := 1
 	if i < len(sig) && wordIs(sig[i], "into") {
@@ -197,7 +198,7 @@ func insertFlow(sig []Token) []Flow {
 	}
 	if i >= len(sig) || sig[i].Kind != Word ||
 		(!wordIs(sig[i], "select") && !wordIs(sig[i], "with")) {
-		return nil
+		return []Flow{{Kind: FlowModify, Target: target}}
 	}
 	return []Flow{{Kind: FlowInsert, Target: target, Sources: bodySources(sig[i:])}}
 }
