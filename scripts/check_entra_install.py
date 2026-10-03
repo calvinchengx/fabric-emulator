@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""The retry in e2e/entra_install.py, tested in both directions.
+"""The retry in e2e/entra_install.py, tested in both directions — and the rule
+that a PATH hit must be a binary this harness can terminate.
 
 A retry is the easiest thing in a build to get silently wrong: too narrow and it
 does not fire on the failure it was written for; too broad and it turns a real
 breakage into three sleeps and the same error, with the diagnosis buried under
 "attempt 3/3". Both look identical in a green log, so both are asserted.
+
+The PATH rule has the same shape. A version-manager shim on PATH runs the
+emulator as a CHILD, so `terminate()` reaches the shim, `wait()` returns -15, and
+the teardown reports success while the emulator keeps its port until the machine
+reboots. Nothing fails at the time — which is precisely why it is asserted here
+rather than trusted to be noticed.
 """
 
 import importlib.util
+import os
 import pathlib
 import sys
+import tempfile
 
 spec = importlib.util.spec_from_file_location(
     "entra_install",
@@ -98,6 +107,30 @@ def with_stubs(outputs, attempts=3):
         ei.subprocess.run, ei.shutil.which = real_run, real_which
 
 
+def _write(directory, name, content):
+    """A file with the given first bytes — the only thing the PATH rule reads."""
+    path = os.path.join(directory, name)
+    with open(path, "wb") as fh:
+        fh.write(content)
+    os.chmod(path, 0o755)
+    return path
+
+
+def _install_with_path(what_which_returns, go_bin_dir=None):
+    """go_install with PATH stubbed to return `what_which_returns`, and any
+    install stubbed to succeed. Returns the path it chose."""
+    real_run, real_which, real_bin = ei.subprocess.run, ei.shutil.which, ei._go_bin_dir
+    run, _ = fake_run([(0, "")])
+    ei.subprocess.run = run
+    ei.shutil.which = lambda _: what_which_returns
+    ei._go_bin_dir = lambda: go_bin_dir
+    try:
+        return ei.go_install("entra-emulator", "example.com/mod/cmd/entra-emulator", "/tmp/w",
+                             version="v0.3.0", log=lambda *_: None)
+    finally:
+        ei.subprocess.run, ei.shutil.which, ei._go_bin_dir = real_run, real_which, real_bin
+
+
 def main():
     # 1. The window: fails once with the sumdb lag, then succeeds. Must retry.
     result, error, calls, slept = with_stubs([(1, SUMDB_LAG), (0, "")])
@@ -143,15 +176,38 @@ def main():
     check("attempts were not exhausted", len(calls) == 3)
     check("the final error lost the diagnosis", error and "sum.golang.org" in error)
 
-    # 6. Already on PATH: no install at all.
-    real_which = ei.shutil.which
-    ei.shutil.which = lambda _: "/usr/local/bin/entra-emulator"
-    try:
-        got = ei.go_install("entra-emulator", "example.com/mod/cmd/entra-emulator", "/tmp/w",
-                            version="v0.3.0", log=lambda *_: None)
-        check("a binary on PATH was reinstalled", got == "/usr/local/bin/entra-emulator")
-    finally:
-        ei.shutil.which = real_which
+    # 6. Already on PATH as a real binary: no install at all.
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _write(tmp, "entra-emulator", b"\x7fELF\x02\x01\x01")
+        shim = _write(tmp, "shim", b"#!/usr/bin/env bash\nexec goenv exec entra-emulator \"$@\"\n")
+        gobin = os.path.join(tmp, "gobin")
+        os.makedirs(gobin)
+
+        got = _install_with_path(binary)
+        check("a binary on PATH was reinstalled", got == binary)
+
+        # 6b. A SHIM on PATH is not a binary this harness can terminate. It must
+        #     not be handed back — the whole failure is that doing so looks like
+        #     it worked, right up to the next run failing on a busy port.
+        got = _install_with_path(shim, go_bin_dir=gobin)  # gobin is empty
+        check("a wrapper script on PATH was handed back as the emulator", got != shim)
+        check("rejecting a wrapper did not fall through to installing",
+              got == os.path.join("/tmp/w", "entra-emulator" + ei.EXE))
+
+        # 6c. ...but the binary the shim would have run is right there in GOBIN,
+        #     so take that rather than paying for an install.
+        real = _write(gobin, "entra-emulator" + ei.EXE, b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01")
+        got = _install_with_path(shim, go_bin_dir=gobin)
+        check("the binary behind the shim was not used", got == real)
+
+        # 6d. The test is the executable IMAGE, not a name or a vendor. Anything
+        #     the OS runs directly passes; anything that runs something else on
+        #     our behalf does not.
+        check("an ELF image was not recognised", ei._is_executable_image(binary) is True)
+        check("a Mach-O image was not recognised", ei._is_executable_image(real) is True)
+        check("a #! wrapper was mistaken for a binary", ei._is_executable_image(shim) is False)
+        check("a missing file was mistaken for a binary",
+              ei._is_executable_image(os.path.join(tmp, "gone")) is False)
 
     # 7. The version is DERIVED from go.mod, which is the other half of this
     #    change — nine copies of a pin maintained by comment are now one read.

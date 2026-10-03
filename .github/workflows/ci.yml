@@ -882,6 +882,10 @@ jobs:
       # `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_logging_quality.py --strict
+      # The port guard, whose failure mode is the same shape: a harness that
+      # leaks its emulator reports a clean shutdown, and the only thing that
+      # ever mentions it is the NEXT run refusing a busy port.
+      - run: uv run --frozen --no-sync python scripts/check_port_guard.py
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the

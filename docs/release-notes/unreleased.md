@@ -62,6 +62,19 @@ internally inconsistent and green at once. Both are documented rather than
 repaired — regenerating a reviewed artifact belongs in a change that can show
 the diff. [docs/65](../65-api-surface-coverage.md)
 
+## e2e harnesses no longer leave entra-emulator running
+
+On a machine where a version manager such as goenv puts `entra-emulator` on
+PATH, every e2e harness that starts it left it running after the run, holding
+its port, and the next run refused to start. PATH resolved to a shell-script
+shim, which runs the real binary as a child process, so the harness's
+shutdown stopped the shim and not the emulator. `e2e/entra_install.py` now
+uses PATH only when it finds the binary itself. For a wrapper script it takes
+the binary `go install` put in GOBIN, and if there is none it installs its own
+copy. The fifteen copies of the busy-port check are now one, `e2e/port_guard.py`,
+and when a port is taken its message names the process holding it and says
+whether that process outlived the run that started it.
+
 ## Test cases can be kept as data
 
 A suite whose cases are a table can now keep them in `cases/<suite>.json`, read

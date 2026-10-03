@@ -19,9 +19,11 @@ import urllib.request
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
+OVERRIDE = "ENTRA_PORT=<free> ARM_PORT=<free> FABRIC_PORT=<free> python3 <this harness>"
 
 sys.path.insert(0, os.path.join(REPO, "e2e"))
 from entra_install import ensure_entra_emulator, go_install  # noqa: E402
+from port_guard import require_free_port  # noqa: E402
 
 WORK = os.path.join(tempfile.gettempdir(), "fabric-arm-capacities-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18543")
@@ -38,16 +40,6 @@ ARM_VERSION = os.environ.get("ARM_VERSION", "v0.4.1")
 
 def log(msg):
     print(f"==> {msg}", flush=True)
-
-
-def require_free_port(port, what):
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        if s.connect_ex(("127.0.0.1", int(port))) == 0:
-            raise SystemExit(
-                f"port {port} is already in use, so this harness cannot start its own "
-                f"{what}. Free it or override ENTRA_PORT / ARM_PORT / FABRIC_PORT.")
 
 
 def wait_healthy(url, deadline=60):
@@ -111,9 +103,9 @@ def start(name, cmd, env):
 
 
 try:
-    require_free_port(ENTRA_PORT, "entra")
-    require_free_port(ARM_PORT, "arm")
-    require_free_port(FABRIC_PORT, "fabric")
+    require_free_port(ENTRA_PORT, "entra", OVERRIDE)
+    require_free_port(ARM_PORT, "arm", OVERRIDE)
+    require_free_port(FABRIC_PORT, "fabric", OVERRIDE)
 
     log(f"starting entra-emulator on :{ENTRA_PORT}")
     start("entra", [entra_bin], {
