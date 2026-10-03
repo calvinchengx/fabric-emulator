@@ -174,3 +174,78 @@ var aliasStop = map[string]bool{
 	"union": true, "option": true, "using": true, "when": true, "with": true, "for": true,
 	"output": true, "having": true, "except": true, "intersect": true,
 }
+
+// cteLedFlow reads a statement that opens with a WITH clause. The clause leads
+// a query or any DML statement; the verb after the CTE list says which. A query
+// is the existing SELECT … INTO reading. For DML the verb's own reader runs on
+// the part after the clause, and a CTE the statement writes THROUGH
+// (WITH c AS (SELECT … FROM dbo.t) DELETE FROM c) is resolved to the base table
+// its body reads, since that is the table whose contents changed.
+func cteLedFlow(sig []Token) []Flow {
+	verb, bodies := cteClause(sig)
+	if verb < 0 {
+		return nil
+	}
+	rest := sig[verb:]
+	switch {
+	case startsWith(rest, "select"):
+		return selectIntoFlow(sig)
+	case startsWith(rest, "insert"):
+		flows := insertFlow(rest)
+		for i := range flows {
+			if flows[i].Kind == FlowInsert {
+				// The CTE bodies are where the rows come from.
+				flows[i].Sources = bodySources(sig)
+			}
+		}
+		return flows
+	}
+	flows := modifyFlow(rest)
+	for i := range flows {
+		t := flows[i].Target
+		if len(t) != 1 {
+			continue
+		}
+		if body, ok := bodies[strings.ToLower(t[0])]; ok {
+			if src := bodySources(body); len(src) > 0 {
+				flows[i].Target = src[0]
+			}
+		}
+	}
+	return flows
+}
+
+// cteClause finds the index of the verb that follows a leading WITH clause
+// (-1 when the clause is malformed) and each CTE's body tokens by lower-cased
+// name.
+func cteClause(sig []Token) (verb int, bodies map[string][]Token) {
+	bodies = map[string][]Token{}
+	i := 1 // past WITH
+	for i < len(sig) {
+		if sig[i].Kind != Word && sig[i].Kind != QuotedIdent {
+			return -1, nil
+		}
+		name := strings.ToLower(unbracket(sig[i].Text))
+		i++
+		if i < len(sig) && punctIs(sig[i], "(") { // optional column list
+			if i = skipBalanced(sig, i); i < 0 {
+				return -1, nil
+			}
+		}
+		if i+1 >= len(sig) || !wordIs(sig[i], "as") || !punctIs(sig[i+1], "(") {
+			return -1, nil
+		}
+		end := skipBalanced(sig, i+1)
+		if end < 0 {
+			return -1, nil
+		}
+		bodies[name] = sig[i+2 : end-1]
+		i = end
+		if i < len(sig) && punctIs(sig[i], ",") {
+			i++
+			continue
+		}
+		return i, bodies
+	}
+	return -1, nil
+}

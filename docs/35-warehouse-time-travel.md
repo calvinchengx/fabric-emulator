@@ -361,7 +361,9 @@ instant), `CTAS`/`SELECT INTO`, `INSERT` (with or without a `SELECT`), `UPDATE`,
 `DELETE`, `TRUNCATE`, `MERGE` and `ALTER TABLE` — one commit per statement, the
 schema restated every time so an `ALTER` is visible to a replay stopped there.
 `UPDATE x … FROM dbo.t x` resolves the alias through the statement's own `FROM`
-list ([`dataflow_modify.go`](../internal/tsql/dataflow_modify.go)).
+list ([`dataflow_modify.go`](../internal/tsql/dataflow_modify.go)). A leading `WITH` clause is read through to the DML verb
+after it, and a write through a CTE counts against the base table the CTE reads
+(`cteLedFlow`).
 
 History belongs to the table *object*, which is Fabric's behaviour and not a
 choice made here: `sp_rename` moves it with the table, `DROP TABLE` ends it. A
