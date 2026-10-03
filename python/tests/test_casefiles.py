@@ -95,3 +95,59 @@ def test_the_repositorys_own_case_files_pass():
 def test_main_without_check_prints_usage_and_refuses(capsys):
     assert casefiles.main([]) == 2
     assert "--check" in capsys.readouterr().out
+
+
+# A suite whose answers are JSON documents states them as expectations, and two
+# runners in two languages evaluate them: these pin what the Python half means.
+# internal/api/fabriciq_cases_test.go pins the Go half to the same table.
+
+DOC = {"Count": 2, "Rows": [{"u": 9, "t": "West"}, {"u": 4.0, "t": "East"}],
+       "Flag": True, "None": None, "Pairs": [{"PK": "a", "FK": "b"}]}
+
+
+def test_substitute_replaces_role_names_in_every_string():
+    got = casefiles.substitute(
+        {"url": "groups/{ws}/reports/{r}", "ids": ["{r}", 3], "n": None}, {"ws": "W", "r": "R"})
+    assert got == {"url": "groups/W/reports/R", "ids": ["R", 3], "n": None}
+
+
+@pytest.mark.parametrize("expectation", [
+    {"at": ["Count"], "equals": 2},
+    {"at": ["Count"], "equals": 2.0},
+    {"at": ["Rows", "*", "t"], "equals": ["West", "East"]},
+    {"at": ["Rows", -1, "t"], "equals": "East"},
+    {"at": ["Rows", "*", "t"], "contains": "East"},
+    {"at": ["Pairs"], "contains": {"FK": "b", "PK": "a"}},
+    {"at": ["Rows"], "length": 2},
+    {"at": ["Rows", "*", "u"], "order": "descending"},
+    {"at": ["Flag"], "equals": True},
+    {"at": ["None"], "equals": None},
+])
+def test_an_expectation_that_holds(expectation):
+    assert casefiles.unmet(DOC, expectation) is None
+
+
+@pytest.mark.parametrize("expectation, fragment", [
+    ({"at": ["Count"], "equals": 3}, "got 2"),
+    ({"at": ["Flag"], "equals": 1}, "got True"),
+    ({"at": ["Missing"], "equals": None}, "got nothing"),
+    ({"at": ["Rows", 5], "equals": None}, "got nothing"),
+    ({"at": ["Count", "*"], "length": 0}, "got nothing"),
+    ({"at": ["Rows", "x"], "equals": None}, "got nothing"),
+    ({"at": ["Rows", "*", "t"], "contains": "North"}, "contains 'North'"),
+    ({"at": ["Pairs"], "contains": {"PK": "a"}}, "contains"),
+    ({"at": ["Rows", "*", "t"], "equals": ["East", "West"]}, "equals"),
+    ({"at": ["Rows"], "length": 3}, "length 3"),
+    ({"at": ["Rows", "*", "t"], "order": "descending"}, "order"),
+    ({"at": ["Rows", "*", "u"], "order": "ascending"}, "not one this runner knows"),
+    ({"at": ["Count"]}, "exactly one of"),
+    ({"at": ["Count"], "equals": 2, "length": 1}, "exactly one of"),
+    ({"equals": 2}, "exactly one of"),
+])
+def test_an_expectation_that_fails_says_what_it_saw(expectation, fragment):
+    why = casefiles.unmet(DOC, expectation)
+    assert why is not None and fragment in why, why
+
+
+def test_ascending_numbers_are_not_descending():
+    assert casefiles.unmet({"r": [1, 2]}, {"at": ["r"], "order": "descending"}) is not None

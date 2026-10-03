@@ -288,33 +288,9 @@ func TestResolveFabricItemReadsGUIDsAndBrowserURLs(t *testing.T) {
 
 func TestGetReportMetadataDescribesPagesVisualsFiltersAndTheModel(t *testing.T) {
 	f := newIQ(t)
-	doc := iqJSON(t, f.a, viewer, "GetReportMetadata", map[string]any{"reportObjectId": f.report.ID})
-	if doc["semanticModel"] != f.model.ID {
-		t.Errorf("semanticModel = %v, want the model id from definition.pbir", doc["semanticModel"])
-	}
-	page := dig(doc, "ReportMetadata", "Pages", 0)
-	if dig(page, "Title") != "Territories" || dig(page, "Visuals", 0, "Title") != "Units by territory" {
-		t.Errorf("page: %v", page)
-	}
-	if dig(page, "Filters", 0, "Operator") != "NotIn" || dig(page, "Filters", 0, "Field") != "'Store'[Territory]" {
-		t.Errorf("page filter: %v", dig(page, "Filters"))
-	}
-	if dig(doc, "ReportMetadata", "Measures", 0, "Expression") != "[TotalUnits] * 2" {
-		t.Errorf("report measures: %v", dig(doc, "ReportMetadata", "Measures"))
-	}
-
-	// queries: the skill's own example shape, with regex_match ignoring case.
-	doc = iqJSON(t, f.a, viewer, "GetReportMetadata", map[string]any{"reportObjectId": f.report.ID, "queries": []any{
-		"ReportMetadata.Pages[].Title",
-		"ReportMetadata.Pages[].Visuals[?regex_match(to_string(@), 'UNITS|revenue')] | [] | [:10].Title",
-	}})
-	res := doc["Results"].([]any)
-	if len(res) != 2 || dig(res, 0, "Result", 0) != "Territories" || dig(res, 1, "Result", 0) != "Units by territory" {
-		t.Errorf("queries: %v", doc)
-	}
+	// Pages, visuals, filters, measures and queries: cases/fabric-iq-tool-calls.json.
 	iqRefused(t, f.a, viewer, "GetReportMetadata", map[string]any{"reportObjectId": f.report.ID, "queries": []any{"Pages[?"}}, "JMESPath")
 	iqRefused(t, f.a, viewer, "GetReportMetadata", map[string]any{"reportObjectId": f.report.ID, "queries": 3}, "list of JMESPath")
-	iqRefused(t, f.a, viewer, "GetReportMetadata", map[string]any{"reportObjectId": f.model.ID}, "is a SemanticModel")
 	iqRefused(t, f.a, stranger, "GetReportMetadata", map[string]any{"reportObjectId": f.report.ID}, "that you can access")
 }
 
@@ -349,33 +325,8 @@ func TestAReportBoundByPathOrToNothingSaysSo(t *testing.T) {
 
 func TestGetSemanticModelSchemaIsTheModelAsTheCallerMaySeeIt(t *testing.T) {
 	f := newIQ(t)
-	doc := iqJSON(t, f.a, owner, "GetSemanticModelSchema", map[string]any{"artifactId": f.model.ID})
-	schema := doc["schema"].(map[string]any)
-	var tables []string
-	for _, tb := range schema["Tables"].([]any) {
-		tables = append(tables, tb.(map[string]any)["Name"].(string))
-	}
-	if !slices.Contains(tables, "Store") || !slices.Contains(tables, "Sales") {
-		t.Errorf("tables %v", tables)
-	}
-	rels := schema["ActiveRelationships"].([]any)
-	if !slices.ContainsFunc(rels, func(r any) bool {
-		return dig(r, "PK") == "'Store'[StoreId]" && dig(r, "FK") == "'Sales'[StoreId]"
-	}) {
-		t.Errorf("relationships should name the one side PK and the many side FK: %v", rels)
-	}
-	if schema["CustomInstructions"] != nil || len(schema["VerifiedAnswers"].([]any)) != 0 {
-		t.Errorf("prep-for-AI objects are not modelled and must be present and empty: %v", schema)
-	}
-	// The skill's queries: measures by keyword, and the priority paths.
-	doc = iqJSON(t, f.a, owner, "GetSemanticModelSchema", map[string]any{"artifactId": f.model.ID, "queries": []any{
-		"schema.Tables[].Measures[?regex_match(to_string(@), 'units delta')].{Name: Name, Expression: Expression} | []",
-		"schema.VerifiedAnswers[].{Title: Title, Question: Question}",
-		"schema.CustomInstructions",
-	}})
-	if dig(doc, "Results", 0, "Result", 0, "Name") != "Units Delta" {
-		t.Errorf("measure search: %v", doc)
-	}
+	// Tables, relationships, prep-for-AI objects and the skill's measure query:
+	// cases/fabric-iq-tool-calls.json.
 
 	// Object-level security: a role that hides PostalCode hides it from its member.
 	ws2 := &store.Workspace{DisplayName: "OLS"}
@@ -402,35 +353,7 @@ func TestGetSemanticModelSchemaIsTheModelAsTheCallerMaySeeIt(t *testing.T) {
 
 func TestValueSearchReturnsTheModelsOwnSpellingWithinTheCallersRows(t *testing.T) {
 	f := newIQ(t)
-	doc := iqJSON(t, f.a, owner, "ValueSearch", map[string]any{"artifactId": f.model.ID, "searchTerms": []any{"west", "store"}})
-	west := dig(doc, "Results", 0, "Matches", 0)
-	if dig(west, "Value") != "West" || dig(west, "ColumnReference") != "'Store'[Territory]" || dig(west, "MatchType") != "Exact" {
-		t.Errorf("west: %v", west)
-	}
-	stores := dig(doc, "Results", 1, "Matches").([]any)
-	if len(stores) != 4 || dig(stores, 0, "MatchType") != "Contains" {
-		t.Errorf("'store' should find the four store names by containment: %v", stores)
-	}
-	// Row-level security: the viewer's rows are the West stores only.
-	doc = iqJSON(t, f.a, viewer, "ValueSearch", map[string]any{"artifactId": f.model.ID, "searchTerms": []any{"East"}})
-	if n := len(dig(doc, "Results", 0, "Matches").([]any)); n != 0 {
-		t.Errorf("viewer found %d East values the West role hides", n)
-	}
-	doc = iqJSON(t, f.a, owner, "ValueSearch", map[string]any{"artifactId": f.model.ID, "searchTerms": []any{"East"}})
-	if n := len(dig(doc, "Results", 0, "Matches").([]any)); n != 1 {
-		t.Errorf("owner found %d East values, want 1", n)
-	}
-	// scope narrows the search; a name the model lacks is refused.
-	doc = iqJSON(t, f.a, owner, "ValueSearch", map[string]any{"artifactId": f.model.ID, "searchTerms": []any{"West"},
-		"scope": []any{"'Store'[Store]"}})
-	if n := len(dig(doc, "Results", 0, "Matches").([]any)); n != 0 {
-		t.Errorf("scope to Store[Store] still matched Territory: %v", doc)
-	}
-	doc = iqJSON(t, f.a, owner, "ValueSearch", map[string]any{"artifactId": f.model.ID, "searchTerms": []any{"West"},
-		"scope": []any{"Store"}})
-	if n := len(dig(doc, "Results", 0, "Matches").([]any)); n != 1 {
-		t.Errorf("scope to the Store table: %v", doc)
-	}
+	// Spelling, containment, the viewer's role and scope: cases/fabric-iq-tool-calls.json.
 	for want, args := range map[string]map[string]any{
 		"not a column of this model": {"artifactId": f.model.ID, "searchTerms": []any{"x"}, "scope": []any{"Store[Nope]"}},
 		"not a table of this model":  {"artifactId": f.model.ID, "searchTerms": []any{"x"}, "scope": []any{"Nope"}},
@@ -451,38 +374,18 @@ func TestExecuteQueryRunsDAXAsTheCallerWithReadAlone(t *testing.T) {
 		map[string]string{"datasetId": f.model.ID}); w.Code != http.StatusForbidden {
 		t.Fatalf("executeQueries without Build = %d, the premise of this test", w.Code)
 	}
-	doc := iqJSON(t, f.a, viewer, "ExecuteQuery", map[string]any{"artifactId": f.model.ID, "daxQueries": []any{q}})
-	rows := dig(doc, "Results", 0, "Rows").([]any)
-	if len(rows) != 1 || dig(rows, 0, "Store[Territory]") != "West" {
-		t.Errorf("viewer's rows %v, want West only", rows)
-	}
-	// The owner sees every territory, sorted by the ORDER BY.
-	doc = iqJSON(t, f.a, owner, "ExecuteQuery", map[string]any{"artifactId": f.model.ID, "daxQueries": []any{q}})
-	rows = dig(doc, "Results", 0, "Rows").([]any)
-	if len(rows) != 3 || dig(rows, 0, "[Units]").(float64) < dig(rows, 2, "[Units]").(float64) {
-		t.Errorf("owner's rows %v, want three territories, largest first", rows)
-	}
-	// maxRows truncates and says so; RowCount is the full count.
-	doc = iqJSON(t, f.a, owner, "ExecuteQuery", map[string]any{"artifactId": f.model.ID, "daxQueries": []any{q}, "maxRows": 1})
-	r0 := dig(doc, "Results", 0).(map[string]any)
-	if r0["Truncated"] != true || r0["RowCount"].(float64) != 3 || len(r0["Rows"].([]any)) != 1 {
-		t.Errorf("truncation: %v", r0)
-	}
+	// That the viewer then gets the West rows alone, the ORDER BY and maxRows:
+	// cases/fabric-iq-tool-calls.json.
+
 	// A failing query reports beside the others; only an all-failed call is an error.
 	text, isErr := iqCall(t, f.a, owner, "ExecuteQuery", map[string]any{"artifactId": f.model.ID,
 		"daxQueries": []any{q, "EVALUATE 'NoSuchTable'"}})
 	if isErr || !strings.Contains(text, `"Error"`) {
 		t.Errorf("one bad query of two: %v %s", isErr, text)
 	}
-	for want, qs := range map[string]string{
-		"MDX and DMV queries are not supported": "SELECT [Measures].[TotalUnits] ON 0 FROM [Model]",
-		"MDX and DMV":                           "SELECT * FROM $SYSTEM.TMSCHEMA_TABLES",
-		"INFO functions are not supported":      "EVALUATE INFO.TABLES()",
-	} {
-		iqRefused(t, f.a, owner, "ExecuteQuery", map[string]any{"artifactId": f.model.ID, "daxQueries": []any{qs}}, want)
-	}
+	iqRefused(t, f.a, owner, "ExecuteQuery", map[string]any{"artifactId": f.model.ID,
+		"daxQueries": []any{"SELECT * FROM $SYSTEM.TMSCHEMA_TABLES"}}, "MDX and DMV")
 	for want, args := range map[string]map[string]any{
-		"1 to 4 DAX queries":  {"artifactId": f.model.ID, "daxQueries": []any{q, q, q, q, q}},
 		"1 to 4":              {"artifactId": f.model.ID},
 		"from 1 to 1000":      {"artifactId": f.model.ID, "daxQueries": []any{q}, "maxRows": 1001},
 		"whole number":        {"artifactId": f.model.ID, "daxQueries": []any{q}, "maxRows": 2.5},

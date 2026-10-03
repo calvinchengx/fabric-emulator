@@ -1,0 +1,268 @@
+{
+  "suite": "fabric-iq-tool-calls",
+  "about": "One Fabric IQ MCP tool call and the answer it owes, against the secured retail fixture both runners build: a workspace, the retail semantic model (seed_data.json) with a role admitting the viewer to the West territory only, and a PBIR report over it with one page `Territories` filtered to exclude East, one bar chart `Units by territory`, and a report measure `Double Units`. `as` is `owner` (workspace Admin, unrestricted) or `viewer` (workspace Viewer, Read without Build, member of the West role). `{workspace}`, `{model}` and `{report}` in `args` or in an expected value are replaced with the fixture's ids. A case either `refused` (a tool error whose text contains the string) or lists `expect`: each entry has `at`, a path into the tool's JSON document (keys, list indexes, and `*` to collect from every element of a list), and one of `equals`, `contains` (the list there holds the value), `length`, or `order` (`descending`). internal/api/fabriciq_cases_test.go runs every case in-process; a case listing e2e/mcp-fabriciq/driver.py in executed_by is also run by that driver through the unmodified mcp SDK as entra-emulator's seeded users, Alice as owner and Bob as viewer.",
+  "cases": [
+    {
+      "id": "discover-finds-the-report-and-the-model",
+      "why": "DiscoverArtifacts is the first call Microsoft's Fabric IQ skill makes; if it misses either item the agent never reaches the others.",
+      "as": "owner",
+      "tool": "DiscoverArtifacts",
+      "args": {"searchQuery": "retail"},
+      "expect": [
+        {"at": ["Count"], "equals": 2},
+        {"at": ["Artifacts", "*", "ArtifactId"], "contains": "{report}"},
+        {"at": ["Artifacts", "*", "ArtifactId"], "contains": "{model}"},
+        {"at": ["Artifacts", "*", "SemanticModelId"], "contains": "{model}"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "resolve-a-report-browser-url",
+      "why": "Users paste the address bar, not a GUID; the skill sends the whole URL and expects the report and its workspace back.",
+      "as": "owner",
+      "tool": "ResolveFabricItem",
+      "args": {"fabricItemId": "https://app.powerbi.com/groups/{workspace}/reports/{report}/ReportSection?experience=power-bi"},
+      "expect": [
+        {"at": ["itemType"], "equals": "Report"},
+        {"at": ["fabricItemId"], "equals": "{report}"},
+        {"at": ["workspaceId"], "equals": "{workspace}"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "resolve-a-fabric-dataset-url",
+      "why": "The Fabric portal still says datasets in its URLs; a resolver that only knows semanticmodels sends the agent to a dead end.",
+      "as": "owner",
+      "tool": "ResolveFabricItem",
+      "args": {"fabricItemId": "https://app.fabric.microsoft.com/groups/{workspace}/datasets/{model}/details"},
+      "expect": [
+        {"at": ["itemType"], "equals": "SemanticModel"},
+        {"at": ["fabricItemId"], "equals": "{model}"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "report-metadata-reads-pages-visuals-and-filters",
+      "why": "The page filter and the visual's bound fields are how the agent learns what the report author already decided; PBIR keeps them in three different files.",
+      "as": "viewer",
+      "tool": "GetReportMetadata",
+      "args": {"reportObjectId": "{report}"},
+      "expect": [
+        {"at": ["semanticModel"], "equals": "{model}"},
+        {"at": ["ReportMetadata", "Pages", 0, "Title"], "equals": "Territories"},
+        {"at": ["ReportMetadata", "Pages", 0, "Visuals", 0, "Title"], "equals": "Units by territory"},
+        {"at": ["ReportMetadata", "Pages", 0, "Visuals", 0, "Fields", "*", "Reference"], "equals": ["'Store'[Territory]", "'Sales'[TotalUnits]"]},
+        {"at": ["ReportMetadata", "Pages", 0, "Filters", 0, "Operator"], "equals": "NotIn"},
+        {"at": ["ReportMetadata", "Pages", 0, "Filters", 0, "Field"], "equals": "'Store'[Territory]"},
+        {"at": ["ReportMetadata", "Measures", 0, "Expression"], "equals": "[TotalUnits] * 2"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "report-metadata-queries-with-regex-match",
+      "why": "The skill narrows metadata with JMESPath and a case-insensitive regex_match; a JMESPath without that function rejects the skill's own example.",
+      "as": "viewer",
+      "tool": "GetReportMetadata",
+      "args": {
+        "reportObjectId": "{report}",
+        "queries": [
+          "ReportMetadata.Pages[].Title",
+          "ReportMetadata.Pages[].Visuals[?regex_match(to_string(@), 'UNITS|revenue')] | [] | [:10].Title"
+        ]
+      },
+      "expect": [
+        {"at": ["Results", 0, "Result"], "equals": ["Territories"]},
+        {"at": ["Results", 1, "Result"], "equals": ["Units by territory"]}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "report-metadata-refuses-a-semantic-model",
+      "why": "Handing a model id to the report tool is the agent's commonest slip; the refusal must name the item's real type so it can recover.",
+      "as": "viewer",
+      "tool": "GetReportMetadata",
+      "args": {"reportObjectId": "{model}"},
+      "refused": "is a SemanticModel",
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "schema-lists-tables-and-relationships",
+      "why": "The agent writes DAX joins from ActiveRelationships; naming the one side PK and the many side FK is what lets it pick the direction.",
+      "as": "owner",
+      "tool": "GetSemanticModelSchema",
+      "args": {"artifactId": "{model}"},
+      "expect": [
+        {"at": ["schema", "Tables", "*", "Name"], "contains": "Store"},
+        {"at": ["schema", "Tables", "*", "Name"], "contains": "Sales"},
+        {"at": ["schema", "Tables", "*", "Name"], "contains": "Time"},
+        {"at": ["schema", "ActiveRelationships"], "contains": {"PK": "'Store'[StoreId]", "FK": "'Sales'[StoreId]"}},
+        {"at": ["schema", "VerifiedAnswers"], "length": 0},
+        {"at": ["schema", "CustomInstructions"], "equals": null}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "schema-queries-measures-by-keyword",
+      "why": "The skill's measure search, verbatim in shape: regex_match over to_string(@), projecting Name and Expression.",
+      "as": "owner",
+      "tool": "GetSemanticModelSchema",
+      "args": {
+        "artifactId": "{model}",
+        "queries": [
+          "schema.Tables[].Measures[?regex_match(to_string(@), 'units delta')].{Name: Name, Expression: Expression} | []"
+        ]
+      },
+      "expect": [
+        {"at": ["Results", 0, "Result", "*", "Name"], "contains": "Units Delta"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "value-search-returns-the-models-spelling",
+      "why": "A user types `west`; the filter must say 'West' or DAX compares a string the column never holds.",
+      "as": "owner",
+      "tool": "ValueSearch",
+      "args": {"artifactId": "{model}", "searchTerms": ["west", "store"]},
+      "expect": [
+        {"at": ["Results", 0, "Matches", 0, "Value"], "equals": "West"},
+        {"at": ["Results", 0, "Matches", 0, "ColumnReference"], "equals": "'Store'[Territory]"},
+        {"at": ["Results", 0, "Matches", 0, "MatchType"], "equals": "Exact"},
+        {"at": ["Results", 1, "Matches"], "length": 4},
+        {"at": ["Results", 1, "Matches", 0, "MatchType"], "equals": "Contains"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "value-search-sees-every-row-as-owner",
+      "why": "The control for the viewer case below: without it, an East that nobody can find would pass as row-level security.",
+      "as": "owner",
+      "tool": "ValueSearch",
+      "args": {"artifactId": "{model}", "searchTerms": ["East"]},
+      "expect": [
+        {"at": ["Results", 0, "Matches"], "length": 1}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "value-search-cannot-see-rows-the-role-hides",
+      "why": "Value search reads column values directly; if it skipped the caller's role it would leak the very values row-level security hides.",
+      "as": "viewer",
+      "tool": "ValueSearch",
+      "args": {"artifactId": "{model}", "searchTerms": ["East"]},
+      "expect": [
+        {"at": ["Results", 0, "Matches"], "length": 0}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "value-search-scope-narrows-to-a-column",
+      "why": "scope is how the skill disambiguates a term found in several columns; ignoring it returns the match the agent asked to exclude.",
+      "as": "owner",
+      "tool": "ValueSearch",
+      "args": {"artifactId": "{model}", "searchTerms": ["West"], "scope": ["'Store'[Store]"]},
+      "expect": [
+        {"at": ["Results", 0, "Matches"], "length": 0}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "value-search-scope-accepts-a-table",
+      "why": "A bare table name in scope means every column of it, not no column at all.",
+      "as": "owner",
+      "tool": "ValueSearch",
+      "args": {"artifactId": "{model}", "searchTerms": ["West"], "scope": ["Store"]},
+      "expect": [
+        {"at": ["Results", 0, "Matches"], "length": 1}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-orders-every-territory",
+      "why": "ORDER BY is how the skill asks for a top-N; the owner's role is unrestricted, so all three territories, largest first.",
+      "as": "owner",
+      "tool": "ExecuteQuery",
+      "args": {
+        "artifactId": "{model}",
+        "daxQueries": [
+          "EVALUATE SUMMARIZECOLUMNS('Store'[Territory], \"Units\", [TotalUnits]) ORDER BY [Units] DESC"
+        ]
+      },
+      "expect": [
+        {"at": ["Results", 0, "Rows"], "length": 3},
+        {"at": ["Results", 0, "Rows", "*", "[Units]"], "order": "descending"}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-applies-the-callers-role",
+      "why": "Fabric IQ admits Read without Build, so the role is the only thing between a viewer and every row: the same query returns West alone.",
+      "as": "viewer",
+      "tool": "ExecuteQuery",
+      "args": {
+        "artifactId": "{model}",
+        "daxQueries": [
+          "EVALUATE SUMMARIZECOLUMNS('Store'[Territory], \"Units\", [TotalUnits]) ORDER BY [Units] DESC"
+        ]
+      },
+      "expect": [
+        {"at": ["Results", 0, "Rows", "*", "Store[Territory]"], "equals": ["West"]}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-truncates-and-says-so",
+      "why": "maxRows caps what the agent reads; RowCount must still be the full count, or the agent reports a truncated answer as complete.",
+      "as": "owner",
+      "tool": "ExecuteQuery",
+      "args": {
+        "artifactId": "{model}",
+        "maxRows": 1,
+        "daxQueries": [
+          "EVALUATE SUMMARIZECOLUMNS('Store'[Territory], \"Units\", [TotalUnits]) ORDER BY [Units] DESC"
+        ]
+      },
+      "expect": [
+        {"at": ["Results", 0, "Truncated"], "equals": true},
+        {"at": ["Results", 0, "RowCount"], "equals": 3},
+        {"at": ["Results", 0, "Rows"], "length": 1}
+      ],
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-refuses-mdx",
+      "why": "Microsoft's tool runs DAX only; an emulator that answered MDX would let an agent rely on a query the real server rejects.",
+      "as": "owner",
+      "tool": "ExecuteQuery",
+      "args": {"artifactId": "{model}", "daxQueries": ["SELECT [Measures].[TotalUnits] ON 0 FROM [Model]"]},
+      "refused": "MDX and DMV queries are not supported",
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-refuses-info-functions",
+      "why": "INFO functions are refused too, with a pointer to GetSemanticModelSchema; the refusal must survive the regex that separates them from ordinary DAX.",
+      "as": "owner",
+      "tool": "ExecuteQuery",
+      "args": {"artifactId": "{model}", "daxQueries": ["EVALUATE INFO.TABLES()"]},
+      "refused": "INFO functions are not supported",
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    },
+    {
+      "id": "execute-query-refuses-a-fifth-query",
+      "why": "The tool takes one to four queries per call; accepting five lets an agent depend on a batch size the real server refuses.",
+      "as": "owner",
+      "tool": "ExecuteQuery",
+      "args": {
+        "artifactId": "{model}",
+        "daxQueries": [
+          "EVALUATE 'Store'",
+          "EVALUATE 'Store'",
+          "EVALUATE 'Store'",
+          "EVALUATE 'Store'",
+          "EVALUATE 'Store'"
+        ]
+      },
+      "refused": "1 to 4 DAX queries",
+      "executed_by": ["e2e/mcp-fabriciq/driver.py"]
+    }
+  ]
+}

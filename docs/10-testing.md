@@ -105,6 +105,32 @@ that the agent *recognises* every case, and `e2e/agent-contract/run.py`
 *executes* the ones that name it against the built image. Before, the e2e runner
 typed its own copies of those statements.
 
+The second is Fabric IQ MCP's tool calls (`cases/fabric-iq-tool-calls.json`),
+read by a Go test and a Python driver. Each case is one call, made as the
+fixture's `owner` or `viewer`, and either `refused` with a message or answered
+with a list of `expect` entries. Each entry is a path into the tool's JSON
+reply plus one of `equals`, `contains`, `length` or `order`:
+
+```json
+{"at": ["Results", 0, "Rows", "*", "Store[Territory]"], "equals": ["West"]}
+```
+
+`*` collects the rest of the path from every element of a list, and a path
+that does not resolve equals nothing, so a renamed field fails the case rather
+than matching `null`. The runners create their own fixtures, so `{model}`,
+`{report}` and `{workspace}` stand in for ids learned at run time.
+`internal/api/fabriciq_cases_test.go` runs every case in-process, and
+`e2e/mcp-fabriciq/driver.py` runs the ones that name it as entra-emulator's
+seeded users, then checks that it ran as many as name it. The expectation
+vocabulary is implemented twice, in `scripts/casefiles.py` and in the Go test.
+Each has a test that runs the same table of expectations, some that hold and
+some that fail. The table is copied into both test files, so a change to the
+vocabulary has to change both copies.
+
+Core MCP's e2e stays as code: `e2e/mcp-core/driver.py` is a
+single story, where each step uses the id the step before created. That is the
+"when not to" below.
+
 **When not to.** Move a suite to a case file when three or more cases run the
 same procedure, or when a second runner needs the same cases. A test whose body
 is its own argument — one situation, one reason — stays a function; turning it

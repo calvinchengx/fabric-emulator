@@ -70,7 +70,12 @@ parametrized over the file, and an e2e runner reads it through the
 standard-library `scripts/casefiles.py`. `make check` refuses a case without a
 unique kebab-case `id` or a `why`. The spark agent's consumer contract is the
 first suite: the unit test and `e2e/agent-contract` now read the same twelve
-cases, where the e2e runner used to retype the statements it executed.
+cases, where the e2e runner used to retype the statements it executed. Fabric
+IQ MCP is the second: its Go test and its e2e driver, which calls the tools
+through the unmodified `mcp` SDK as entra-emulator's seeded users, now run the
+same nineteen tool calls from `cases/fabric-iq-tool-calls.json`. Each case's
+expected answer is a short list of paths into the tool's JSON reply, read the
+same way in Go and Python.
 [docs/10](../10-testing.md#test-cases-as-data)
 
 ## SQL analytics endpoint access modes can be switched

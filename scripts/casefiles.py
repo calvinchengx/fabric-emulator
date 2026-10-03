@@ -126,6 +126,97 @@ def text(value) -> str:
     raise TypeError(f"expected a string or a list of lines, got {value!r}")
 
 
+def substitute(value, ids: dict):
+    """`value` with every `{name}` in its strings replaced by ids[name].
+
+    A case names fixture objects by role (`{model}`), because each runner
+    creates its own and learns the id only at run time.
+    """
+    if isinstance(value, str):
+        for name, real in ids.items():
+            value = value.replace("{" + name + "}", real)
+        return value
+    if isinstance(value, list):
+        return [substitute(v, ids) for v in value]
+    if isinstance(value, dict):
+        return {k: substitute(v, ids) for k, v in value.items()}
+    return value
+
+
+_MISSING = object()
+
+
+def at(doc, path: list):
+    """The value at `path` in a decoded JSON document.
+
+    A string step is a key, an int a list index, and `*` collects the rest of
+    the path from every element of a list. A step that does not resolve gives
+    a sentinel that equals nothing, so a wrong path fails the expectation
+    rather than matching null.
+    """
+    for n, step in enumerate(path):
+        if step == "*":
+            if not isinstance(doc, list):
+                return _MISSING
+            return [at(v, path[n + 1:]) for v in doc]
+        if isinstance(step, int) and not isinstance(step, bool):
+            if not isinstance(doc, list) or not -len(doc) <= step < len(doc):
+                return _MISSING
+            doc = doc[step]
+        elif isinstance(doc, dict) and step in doc:
+            doc = doc[step]
+        else:
+            return _MISSING
+    return doc
+
+
+EXPECT_OPS = ("equals", "contains", "length", "order")
+
+
+def unmet(doc, expectation: dict):
+    """Why `doc` fails `expectation`, or None when it holds.
+
+    An expectation is {"at": path, <one of EXPECT_OPS>: value}; see at().
+    """
+    ops = [op for op in EXPECT_OPS if op in expectation]
+    if len(ops) != 1 or set(expectation) != {"at", ops[0]}:
+        return f"expectation {expectation!r} must have `at` and exactly one of {EXPECT_OPS}"
+    op = ops[0]
+    want = expectation[op]
+    got = at(doc, expectation["at"])
+    shown = "nothing" if got is _MISSING else repr(got)
+    if op == "equals":
+        ok = _same(got, want)
+    elif op == "contains":
+        ok = isinstance(got, list) and any(_same(v, want) for v in got)
+    elif op == "length":
+        ok = isinstance(got, (list, dict, str)) and len(got) == want
+    elif want == "descending":
+        ok = isinstance(got, list) and all(_number(v) for v in got) and got == sorted(got, reverse=True)
+    else:
+        return f"order {want!r} is not one this runner knows (descending)"
+    return None if ok else f"at {expectation['at']}: want {op} {want!r}, got {shown}"
+
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _same(a, b) -> bool:
+    """JSON equality: 3 is 3.0, but true is not 1 and a missing value is nothing."""
+    if a is _MISSING or b is _MISSING:
+        return False
+    if _number(a) and _number(b):
+        return a == b
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    return a == b
+
+
 def check(cases_dir: Path = CASES_DIR, root: Path = ROOT) -> int:
     files = sorted(cases_dir.glob("*.json"))
     found = [p for f in files for p in problems(f, root)]
