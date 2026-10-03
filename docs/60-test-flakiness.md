@@ -8,13 +8,14 @@ CI job running all four, and one static checker with a ledger per surface.**
 **Finding: this suite's flakiness exposure was LATENT, not active. The timing
 discipline was already good; what was missing was any mechanism that would have
 told us if it were not. That held for the Go suite (§1–5), it held again,
-independently, for the Python surface (§7) — where nothing had inspected 104
-`time.sleep` sites and three of the five unbounded ones turned out to be real —
+independently, for the Python surface (§7) — where nothing had inspected 105
+current `time.sleep` sites and three of the five originally unbounded ones
+turned out to be real —
 and it held a third time for the portal's vitest suite (§8), whose one
 real-clock site was the same shape as those three: a fixed sleep before a
 negative assertion.**
 
-Sections 1–5 are scoped to the Go suite — **304** `*_test.go` files as of this
+Sections 1–5 are scoped to the Go suite — **328** `*_test.go` files as of this
 revision (285 when they were written; the figure is refreshed rather than
 reworded, because a count that drifts is how a measured document turns into an
 approximate one). §7 covers the Python surface and §8 the portal's vitest
@@ -260,18 +261,20 @@ the ledger key, and the fact that three of the findings were real.
 
 Measured on the checker's own scan roots — the two pytest `testpaths`
 (`python/tests`, `python/fabric-target/tests`) plus every `e2e/**/*.py` harness —
-at the commit that added it:
+and refreshed against this revision:
 
 | Quantity | Measured |
 | --- | --- |
-| Python files scanned | 232 |
-| `time.sleep` call sites | **104** (101 in `e2e/`, 2 in `python/tests/`, 1 in `python/fabric-target/tests/`) |
-| …of those, sleeping ≥ 1s | **59** |
+| Python files scanned | 247 |
+| `time.sleep` call sites | **105** (all in `e2e/`) |
+| …of those, sleeping ≥ 1s | **58** |
+| Current checker findings | **58**: 56 bounded `long-sleep`, 1 accepted `unbounded-sleep`, 1 accepted `unbounded-poll` |
+| Current strict result | **pass**: 58 accepted, 0 unrecorded, 0 stale |
 | `while True` loops containing a sleep | 3 |
-| Genuinely unbounded sites | **5** |
+| Originally unbounded sites | **5**: 3 fixed, 2 intentionally accepted |
 | Inspected by anything, before this | **0** |
 
-The last row is the finding, exactly as it was in §1 for the race detector. 104
+The last row is the finding, exactly as it was in §1 for the race detector. 105
 sleeps is not a large number for a fleet of e2e harnesses and most of them are
 correct; the point is that nothing could have said so.
 
@@ -319,15 +322,16 @@ daemon heartbeat; bounding it would defeat it, since a watchdog that returns
 stops watching and the run it was set to kill would hang to the CI job's own
 timeout with no traceback.
 
-### 7.3 The 59 long sleeps
+### 7.3 The 56 bounded long sleeps
 
 Not rewritten, and none asked to change: every one sits inside a loop the checker
-already considers bounded — 31 in a `for _ in range(N)`, 11 behind a
-`while time.time() < deadline` (42 unique `file:symbol` keys, several covering
-more than one site). They are recorded for the reason §5 gives for the seven
-container retries: the aggregate cost is real and invisible at any one call site,
-so writing them down makes a sixtieth a deliberate decision rather than an
-unnoticed one. Three buckets, by what is actually being waited on:
+already considers bounded — 44 in a finite `for` loop and 12 behind a
+clock-checked `while` deadline (42 unique `file:symbol:kind` keys, several
+covering more than one site). They are recorded for the reason §5 gives for the
+seven container retries: the aggregate cost is real and invisible at any one call
+site, so writing them down makes a fifty-seventh bounded long sleep a deliberate
+decision rather than an unnoticed one. Three buckets, by what is actually being
+waited on:
 
 | Bucket | Keys | What it waits for |
 | --- | --- | --- |
@@ -424,8 +428,9 @@ silently false of the tree as anyone might next write it:
 - **A scan root that has been renamed away fails.** The vacuity guard is
   all-or-nothing and the sweep is not: `rglob` on a missing path yields nothing
   and raises nothing, so a moved root subtracts its whole share in silence. `e2e/`
-  holds 101 of the 104 sites — rename it and the checker walked the 3 that remain
-  and printed success. A root that *exists* and holds no Python is still fine.
+  held almost all sleep sites when the checker landed; rename it and the checker
+  would have walked only the pytest roots and printed success. A root that
+  *exists* and holds no Python is still fine.
 
 Report mode now prints the stale direction too. It had shown only unrecorded
 sites, so the half of the contract a "flag what is new" reader would never think
