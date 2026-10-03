@@ -6,6 +6,14 @@ here.
 
 
 
+## A WITH clause no longer hides a write from Warehouse versioning
+
+`WITH c AS (…) INSERT/UPDATE/DELETE/MERGE …` was read as a query, so a Warehouse
+table changed that way got no time-travel version, and an `INSERT` or `MERGE`
+was recorded in lineage as `SELECT INTO`. The clause is now read through to the
+verb after it; a write through a CTE (`WITH c AS (SELECT … FROM dbo.t) DELETE
+FROM c`) is attributed to the base table. [docs/35](../35-warehouse-time-travel.md)
+
 ## Direct Lake applies OneLake row filters
 
 A Direct Lake on OneLake query over a table a OneLake security role filters by

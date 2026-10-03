@@ -119,8 +119,10 @@ func classify(sig []Token, level int) []Flow {
 		return viewFlow(sig)
 	case startsWith(sig, "insert"):
 		return insertFlow(sig)
-	case startsWith(sig, "select"), startsWith(sig, "with"):
+	case startsWith(sig, "select"):
 		return selectIntoFlow(sig)
+	case startsWith(sig, "with"):
+		return cteLedFlow(sig)
 	case startsWith(sig, "drop", "table"):
 		return dropFlow(sig, FlowDropTable)
 	case startsWith(sig, "drop", "view"):
