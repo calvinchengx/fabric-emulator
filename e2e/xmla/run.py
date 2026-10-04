@@ -62,7 +62,6 @@ import http.server
 import json
 import os
 import shutil
-import socket
 import ssl
 import subprocess
 import sys
@@ -70,6 +69,11 @@ import tempfile
 import threading
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(DIR))
+
+sys.path.insert(0, os.path.join(REPO, "e2e"))
+from port_guard import require_free_port  # noqa: E402
+
 WORK = os.path.join(tempfile.gettempdir(), "xmla-e2e")
 
 
@@ -153,24 +157,14 @@ def skip_or_fail(reason):
     raise SystemExit(0)
 
 
-def require_free_port(port, what):
-    """Refuse to start when something else already owns `port`.
-
-    Without this, a bind failure is INDISTINGUISHABLE FROM SUCCESS: our listener
-    dies and the probe's requests are captured by a stranger's service — or not
-    captured at all, which here reads as "the client did not connect" and would
-    retract a finding that is actually true.
-    """
-    # CONNECT, do not bind: SO_REUSEADDR lets a 127.0.0.1 bind succeed on macOS
-    # while another socket holds 0.0.0.0 (exactly how a docker -p publish looks).
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        if s.connect_ex(("127.0.0.1", int(port))) == 0:
-            raise SystemExit(
-                f"port {port} is already in use, so this harness cannot start its own "
-                f"{what}.\n"
-                f"  Free the port (`docker ps | grep {port}`) or override it:\n"
-                f"    XMLA_PORT=<free> python3 e2e/xmla/run.py")
+# What a busy PORT costs HERE, which is not what it costs a harness that starts
+# an entra: our listener dies and the probe's requests are captured by a
+# stranger's service — or not captured at all, which here reads as "the client
+# did not connect" and would retract a finding that is actually true.
+PORT_BUSY_COSTS = (
+    "  Our capture listener would then be the one that died, and the probe's\n"
+    "  requests would reach a stranger's service — or nothing, which here reads\n"
+    "  as \"the client did not connect\" and retracts a finding that is true.")
 
 
 # ---------------------------------------------------------------------------
@@ -872,7 +866,9 @@ if not shutil.which("docker"):
 # BEFORE the destructive setup below, not after: the whole point is that a
 # second run must die while it can still do no damage.
 require_sole_run()
-require_free_port(PORT, "TLS capture listener")
+require_free_port(PORT, "TLS capture listener",
+                  override="XMLA_PORT=<free> python3 e2e/xmla/run.py",
+                  consequence=PORT_BUSY_COSTS)
 
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(WORK)

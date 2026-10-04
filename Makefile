@@ -342,6 +342,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# FABRIC_ONELAKE_TRACE now, the legacy spelling is still read and recorded,
 	@# and R3 is what stops the next one landing outside.
 	@$(PY) scripts/check_logging_quality.py --strict
+	@$(PY) scripts/check_port_guard.py
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

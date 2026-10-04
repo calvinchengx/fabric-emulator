@@ -43,7 +43,6 @@ import base64
 import json
 import os
 import shutil
-import socket
 import ssl
 import subprocess
 import sys
@@ -56,8 +55,10 @@ import urllib.request
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
 FIX = os.path.join(REPO, "e2e", "semantic-model", "fixtures")
+OVERRIDE = f"ENTRA_PORT=<free> FABRIC_PORT=<free> python3 {__file__}"
 sys.path.insert(0, os.path.join(REPO, "e2e"))
 from entra_install import module_version  # noqa: E402
+from port_guard import require_free_port  # noqa: E402
 
 WORK = tempfile.mkdtemp(prefix="sempy-e2e-")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18543")
@@ -113,17 +114,6 @@ def http(method, url, body=None, token=None, form=False):
         # mistake.
         hdrs = {k.lower(): v for k, v in r.headers.items()}
         return r.status, hdrs, (json.loads(raw) if raw else {})
-
-
-def require_free_port(port, what):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        if s.connect_ex(("127.0.0.1", int(port))) == 0:
-            raise SystemExit(
-                f"port {port} is in use, so this harness cannot start its own {what};\n"
-                f"  a health check would pass against the OTHER service and every token\n"
-                f"  would carry the wrong issuer.\n"
-                f"  Free it, or: ENTRA_PORT=<free> FABRIC_PORT=<free> python3 {__file__}")
 
 
 def wait_healthy(url, deadline=90):
@@ -187,8 +177,8 @@ if not shutil.which("docker"):
     skip_or_fail("docker is not on PATH; sempy's XMLA path needs a linux/amd64 "
                  ".NET runtime and cannot run on this host directly")
 
-require_free_port(ENTRA_PORT, "entra")
-require_free_port(FABRIC_PORT, "fabric")
+require_free_port(ENTRA_PORT, "entra", OVERRIDE)
+require_free_port(FABRIC_PORT, "fabric", OVERRIDE)
 
 log(f"work dir: {WORK}")
 log("building the emulator")

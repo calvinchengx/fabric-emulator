@@ -23,6 +23,7 @@ REPO = os.path.dirname(os.path.dirname(DIR))
 
 sys.path.insert(0, os.path.join(REPO, "e2e"))
 from entra_install import ensure_entra_emulator  # noqa: E402
+from port_guard import require_free_port  # noqa: E402
 
 WORK = os.path.join(tempfile.gettempdir(), "mcp-core-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18553")
@@ -33,19 +34,6 @@ EXE = ".exe" if os.name == "nt" else ""
 
 def log(msg):
     print(f"==> {msg}", flush=True)
-
-
-def require_free_port(port, what):
-    """Refuse to start when something else already owns `port`."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        if s.connect_ex(("127.0.0.1", int(port))) == 0:
-            raise SystemExit(
-                f"port {port} is already in use, so this harness cannot start its own "
-                f"{what}.\n"
-                f"  Free the port (`docker ps | grep {port}`) or override it:\n"
-                f"    ENTRA_PORT=<free> FABRIC_PORT=<free> python3 <this harness>")
 
 
 def wait_healthy(url, deadline=60):

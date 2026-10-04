@@ -32,6 +32,13 @@ Each call site used to carry `@v0.3.0` beside the comment "bump this together
 with go.mod" — a list a human maintains against another list, with a comment
 where the enforcement should be. The version is read out of `go.mod` instead, so
 it cannot drift from the module the emulator itself builds against.
+
+WHY A PATH HIT IS NOT ENOUGH
+----------------------------
+"PATH first" also has to mean "a path the harness can shut down". A version
+manager puts a SHIM on PATH, and a shim runs the real binary as a child — so
+every teardown in e2e/ signalled the shim and left the emulator holding its
+port. See `_direct_binary`, which is where that is now caught.
 """
 
 import os
@@ -146,12 +153,100 @@ def _unclassified_note(output, version):
     )
 
 
+def _is_executable_image(path):
+    """Does the OS run this file itself, or does something else run it for us?
+
+    The magic bytes of every format a Go build produces. A file that starts with
+    anything else — `#!`, most obviously — is a wrapper: running it starts one
+    process that starts another, and only the outer one is ours to signal.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4)
+    except OSError:
+        return False
+    return head.startswith((
+        b"\x7fELF",            # Linux
+        b"MZ",                 # Windows PE
+        b"\xcf\xfa\xed\xfe",   # Mach-O 64-bit, little-endian (arm64 and amd64)
+        b"\xce\xfa\xed\xfe",   # Mach-O 32-bit
+        b"\xca\xfe\xba\xbe",   # Mach-O universal ("fat")
+        b"\xbe\xba\xfe\xca",   # ... and byte-swapped
+    ))
+
+
+def _go_bin_dir():
+    """Where `go install` puts binaries on this machine, or None.
+
+    This is where the shim's own target lives, because the tool got onto PATH by
+    being `go install`ed in the first place.
+    """
+    try:
+        proc = subprocess.run(["go", "env", "GOBIN", "GOPATH"], capture_output=True, text=True)
+    except OSError:
+        return None  # no toolchain; go_install is about to say so properly
+    if proc.returncode != 0:
+        return None
+    lines = (proc.stdout or "").splitlines()
+    gobin = lines[0].strip() if len(lines) > 0 else ""
+    gopath = lines[1].strip() if len(lines) > 1 else ""
+    if gobin:
+        return gobin
+    return os.path.join(gopath, "bin") if gopath else None
+
+
+def _direct_binary(exe_name, log=print):
+    """A path to `exe_name` that a harness can actually terminate, or None.
+
+    THE BUG THIS EXISTS FOR. `shutil.which` returns whatever PATH resolves, and
+    under a version manager what it resolves to is a SHIM: a small script whose
+    last line is `exec goenv exec entra-emulator`. goenv is itself a Go program,
+    and it runs the requested tool with os/exec rather than replacing itself
+    with it, so the process the harness holds is the middle one:
+
+        python (Popen) -> goenv exec entra-emulator -> entra-emulator (LISTEN)
+
+    `terminate()` then reaches goenv, `wait()` returns -15, and every teardown in
+    e2e/ REPORTS A CLEAN SHUTDOWN while the emulator is reparented to init and
+    keeps its port for as long as the machine is up. Nothing fails at the time.
+    The next run fails instead, in require_free_port, three steps from the cause
+    — which is how seven of these accumulated on one laptop, one of them from a
+    Go toolchain two versions old, before anyone traced the port back to a
+    process rather than to a container.
+
+    So the test is "can the OS run this image directly", not "does this look like
+    goenv". A wrapper's signal behaviour cannot be read off disk: a wrapper that
+    ends in a real `exec` would be fine and one that forks is not, they are
+    indistinguishable without running them, and the cost of guessing wrong is
+    silent. Refusing every wrapper costs a `go install` that is almost always a
+    cache hit; accepting one costs a leaked port and a misdirected diagnosis.
+    """
+    found = shutil.which(exe_name)
+    if not found:
+        return None
+    if _is_executable_image(found):
+        return found
+
+    # PATH gave us a wrapper. The binary it would have run was `go install`ed,
+    # so look where that puts things and take the image directly.
+    bin_dir = _go_bin_dir()
+    direct = os.path.join(bin_dir, exe_name + EXE) if bin_dir else ""
+    if direct and _is_executable_image(direct):
+        log(f"{found} is a wrapper script, which a harness cannot signal; "
+            f"using {direct} instead")
+        return direct
+    log(f"{found} is a wrapper script, which a harness cannot signal, and no "
+        f"binary was found in {bin_dir or 'GOBIN/GOPATH'}; installing our own copy")
+    return None
+
+
 def go_install(exe_name, package, work_dir, version=None, log=print, attempts=3, delay=10,
                sleep=time.sleep):
-    """Return a path to `exe_name`: from PATH if it is there, otherwise
+    """Return a path to `exe_name`: from PATH if it is there AS A BINARY THIS
+    HARNESS CAN TERMINATE (see `_direct_binary`), otherwise
     `go install package@version` into work_dir. `sleep` is injectable so a test
     can prove the retry without waiting for it."""
-    found = shutil.which(exe_name)
+    found = _direct_binary(exe_name, log=log)
     if found:
         return found
     if version is None:
