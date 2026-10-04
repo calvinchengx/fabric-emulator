@@ -46,8 +46,11 @@ type rpcError struct {
 // Fabric serves more than one MCP server (Core, Fabric IQ, …); they share this
 // transport and differ only in what is declared here.
 type mcpServer struct {
-	name         string
-	version      string
+	name    string
+	version string
+	// description, when set, rides on serverInfo, as Fabric's SQL endpoint
+	// server sends one.
+	description  string
 	instructions string
 	tools        []mcpToolSpec
 	dispatch     map[string]func(*API, *auth.Principal, map[string]any) mcpToolResult
@@ -153,9 +156,17 @@ func (srv *mcpServer) initialize(params json.RawMessage) map[string]any {
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": srv.name, "version": srv.version},
+		"serverInfo":      srv.info(),
 		"instructions":    srv.instructions,
 	}
+}
+
+func (srv *mcpServer) info() map[string]any {
+	info := map[string]any{"name": srv.name, "version": srv.version}
+	if srv.description != "" {
+		info["description"] = srv.description
+	}
+	return info
 }
 
 type mcpCallParams struct {
@@ -168,9 +179,31 @@ type mcpToolResult struct {
 	IsError bool         `json:"isError,omitempty"`
 }
 
+// mcpContent is one block of a tool result: text, or an embedded resource
+// (type "resource"), which carries its own uri, mimeType and text.
 type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string       `json:"type"`
+	Text     string       `json:"text"`
+	Resource *mcpResource `json:"resource,omitempty"`
+}
+
+type mcpResource struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType"`
+	Text     string `json:"text"`
+}
+
+// MarshalJSON writes a resource block without the text field a text block
+// must always have: MCP's EmbeddedResource has no top-level text.
+func (c mcpContent) MarshalJSON() ([]byte, error) {
+	if c.Resource != nil {
+		return json.Marshal(struct {
+			Type     string       `json:"type"`
+			Resource *mcpResource `json:"resource"`
+		}{c.Type, c.Resource})
+	}
+	type plain mcpContent
+	return json.Marshal(plain(c))
 }
 
 func (a *API) mcpCall(srv *mcpServer, params json.RawMessage, p *auth.Principal) mcpToolResult {

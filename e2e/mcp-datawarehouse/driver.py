@@ -112,8 +112,11 @@ def create_item(tok, ws, body):
 
 
 def rows_of(result):
-    """The CSV block as rows, header first; the metadata block is the last one."""
-    return list(csv.reader(io.StringIO(result.content[0].text, newline="")))
+    """The embedded text/csv resource as rows, header first."""
+    block = result.content[0]
+    if block.type != "resource" or block.resource.mime_type != "text/csv":
+        raise AssertionError(f"the result set is an embedded text/csv resource, got {block}")
+    return list(csv.reader(io.StringIO(block.resource.text, newline="")))
 
 
 def meta_of(result):
@@ -126,7 +129,9 @@ async def session_for(tok, path, fn):
         streamable_http_client(f"{FABRIC}{path}", http_client=http_client) as streams,
         ClientSession(streams[0], streams[1]) as session,
     ):
-        await session.initialize()
+        init = await session.initialize()
+        check(init.server_info.name == "microsoft.fabric.sqlEndpoint" and init.server_info.version == "0.1.0",
+              "initialize names Fabric's SQL endpoint server", f"{init.server_info.name} {init.server_info.version}")
         return await fn(session)
 
 
@@ -135,7 +140,9 @@ async def as_alice(session, ws, wh, alice_oid):
     check([t.name for t in tools] == ["execute_query"], "tools/list is the one T-SQL tool",
           str([t.name for t in tools]))
     required = set(tools[0].input_schema.get("required", []))
-    check(required == {"workspaceId", "itemId", "query"}, "the global endpoint asks which item", str(required))
+    check(required == {"workspaceId", "itemId", "query"}, "the tool's captured schema", str(required))
+    check(tools[0].title == "Execute T-SQL Query" and tools[0].annotations.destructive_hint is True,
+          "the tool's captured title and annotations")
 
     async def run(query):
         r = await session.call_tool("execute_query", {"workspaceId": ws, "itemId": wh, "query": query})
@@ -155,14 +162,20 @@ async def as_alice(session, ws, wh, alice_oid):
         r = await run(stmt)
         check(len(r.content) == 1 and "no result set" in meta_of(r), f"Alice: {stmt.split('(')[0].strip()}",
               meta_of(r))
+    missing = await session.call_tool("execute_query", {"workspaceId": ws, "itemId": wh,
+                                                         "query": "SELECT * FROM dbo.no_such_table"})
+    check(missing.is_error and missing.content[0].text == "Error -32002: Invalid object name 'dbo.no_such_table'.",
+          "a SQL error is a tool error, in the captured shape", missing.content[0].text[:160])
 
     found = rows_of(await run(
         "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'orders'"))
     check(found == [["TABLE_SCHEMA", "TABLE_NAME"], ["dbo", "orders"]],
           "INFORMATION_SCHEMA finds the table, as Microsoft's page says an agent discovers it", str(found))
 
-    mine = rows_of(await run("SELECT region, amount FROM dbo.orders"))
+    result = await run("SELECT region, amount FROM dbo.orders")
+    mine = rows_of(result)
     check(mine == [["region", "amount"], ["West", "120.50"]], "Alice's own row only", str(mine))
+    check(meta_of(result) == "Query returned 1 rows.", "then the row count", meta_of(result))
 
     last = rows_of(await run("SELECT 1 AS first; SELECT COUNT(*) AS n FROM dbo.orders"))
     check(last == [["n"], ["1"]], "only the last result set comes back", str(last))
@@ -173,9 +186,8 @@ async def as_alice(session, ws, wh, alice_oid):
 
 
 async def as_bob(session, wh):
-    tools = (await session.list_tools()).tools
-    check(set(tools[0].input_schema.get("required", [])) == {"query"},
-          "the item-scoped endpoint takes its warehouse from the URL")
+    # The bound endpoint takes its warehouse from the URL, so the ids may be
+    # omitted, even though the captured schema lists them.
     r = await session.call_tool("execute_query", {"query": "SELECT region, amount FROM dbo.orders ORDER BY amount"})
     got = rows_of(r)
     check(not r.is_error and got == [["region", "amount"], ["East, North", "10.00"], ["East", "80.25"]],

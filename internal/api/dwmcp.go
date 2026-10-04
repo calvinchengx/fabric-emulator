@@ -31,14 +31,22 @@ import (
 //     records 10,000 rows, 300 seconds and 20 requests a minute as "observed
 //     defaults, not a documented contract".
 //
-// The two sources disagree on the tool's name. tools/list publishes
-// execute_query, the name the skills are written against; executeSQL is
-// accepted as the same tool so a client following the Learn page is served.
-// Neither source publishes the schema, the server's name, or the wording of
-// the metadata text, so those are this emulator's own.
+//   - github.com/iemejia/fabio .agents/API-BEHAVIORS-DISCOVERED.md, "Fabric
+//     Data Warehouse MCP Server" and "execute_query result shape" — a third
+//     party's live capture: serverInfo microsoft.fabric.sqlEndpoint 0.1.0, one
+//     tool titled "Execute T-SQL Query" requiring workspaceId, itemId and
+//     query, its annotations, the CSV as an embedded text/csv resource then
+//     "Query returned N rows.", and a SQL error as isError text
+//     "Error -32002: <message>".
+//
+// The Learn page names the tool executeSQL; the live server and the skills say
+// execute_query, so tools/list publishes that, and executeSQL is accepted as
+// the same tool for a client following the Learn page. Not captured anywhere,
+// and so this emulator's own: the resource URI between fabric:// and
+// /query-results/, and the text for a batch that returns no result set.
 
 // dwMaxRows is the observed result cap. The skills say exactly 10,000 rows
-// means the result was truncated; this server also says so in the metadata.
+// means the result was truncated: the server does not say so itself.
 const dwMaxRows = 10000
 
 const (
@@ -84,27 +92,33 @@ func dataWarehouseMCP(scope dwScope) *mcpServer {
 			"endpoint id (properties.sqlEndpointProperties.id), not the lakehouse's own id"},
 		"query": map[string]any{"type": "string", "description": "One T-SQL batch: no GO separators, no sqlcmd commands"},
 	}
+	// The captured schema requires all three. The item-scoped endpoint takes
+	// its item from the URL, so it also accepts a call that omits them, and
+	// refuses one that names another item.
 	required := []any{"workspaceId", "itemId", "query"}
 	about := "Microsoft Fabric Data Warehouse MCP. One tool, execute_query, runs a T-SQL batch on a Warehouse or a " +
 		"SQL analytics endpoint as you, and returns its last result set as CSV."
 	if scope.itemID != "" {
-		required = []any{"query"}
 		about += " This endpoint is bound to item " + scope.itemID + " in workspace " + scope.workspaceID + "."
 	}
 	run := func(a *API, p *auth.Principal, args map[string]any) mcpToolResult {
 		return a.toolDWExecuteQuery(scope, p, args)
 	}
 	return &mcpServer{
-		name:         "fabric-data-warehouse",
-		version:      "preview",
+		name:         "microsoft.fabric.sqlEndpoint",
+		version:      "0.1.0",
+		description:  "Fabric SQL Endpoint – executes T-SQL queries",
 		instructions: about + " Use INFORMATION_SCHEMA and the catalog views to discover tables and columns.",
 		tools: []mcpToolSpec{{
-			Name: dwTool,
+			Name:  dwTool,
+			Title: "Execute T-SQL Query",
 			Description: "Execute one T-SQL batch against a Fabric Warehouse or SQL analytics endpoint and return the " +
-				"last result set as CSV (RFC 4180), followed by a line of metadata. At most 10,000 rows are returned.",
+				"last result set as CSV (RFC 4180), then a row count. At most 10,000 rows are returned.",
 			InputSchema: map[string]any{"type": "object", "properties": props, "required": required},
-			// Writes run where the caller may write, so no readOnlyHint: the
-			// client should ask before each call, as Microsoft's page says.
+			// As captured: writes run where the caller may write, so the client
+			// should ask before each call, as Microsoft's page says.
+			Annotations: map[string]any{"readOnlyHint": false, "destructiveHint": true,
+				"idempotentHint": true, "openWorldHint": false},
 		}},
 		dispatch: map[string]func(*API, *auth.Principal, map[string]any) mcpToolResult{dwTool: run, dwToolAlias: run},
 	}
@@ -134,9 +148,10 @@ func (a *API) toolDWExecuteQuery(scope dwScope, p *auth.Principal, args map[stri
 	}
 	res, err := a.SQLExecAs(context.Background(), target, p.ID, query, dwMaxRows)
 	if err != nil {
-		return mcpErr(err.Error())
+		// The captured shape of a failed batch.
+		return mcpErr("Error -32002: " + err.Error())
 	}
-	return dwResult(res)
+	return dwResult(res, "fabric://workspaces/"+ws+"/items/"+itemID+"/query-results/"+store.NewID()+".csv")
 }
 
 // dwTarget is the SQL item a call runs on, or why it cannot run. A SQL
@@ -171,36 +186,26 @@ func (a *API) dwTarget(principal, ws, itemID string) (string, string) {
 	return "", fmt.Sprintf("%s is a %s; execute_query runs on a Warehouse or a SQL analytics endpoint", it.ID, it.Type)
 }
 
-// dwResult is the tool's answer: the result set as RFC 4180 CSV, header first,
-// then the metadata as a second text block.
-func dwResult(res *SQLBatchResult) mcpToolResult {
-	var meta string
-	csvText := ""
-	switch {
-	case len(res.Columns) == 0:
-		meta = "The batch completed and returned no result set."
-	default:
-		var buf strings.Builder
-		csvRecord(&buf, res.Columns)
-		for _, row := range res.Rows {
-			rec := make([]string, len(row))
-			for i, v := range row {
-				rec[i] = dwCell(v, res.Types[i])
-			}
-			csvRecord(&buf, rec)
-		}
-		csvText = buf.String()
-		meta = fmt.Sprintf("%d row(s), %d column(s).", len(res.Rows), len(res.Columns))
-		if res.Truncated {
-			meta = fmt.Sprintf("%d row(s), %d column(s); truncated at the %d-row limit: narrow the query with TOP, "+
-				"WHERE or an aggregate.", len(res.Rows), len(res.Columns), dwMaxRows)
-		}
+// dwResult is the tool's answer, as captured: the result set as an embedded
+// text/csv resource (RFC 4180, header first), then "Query returned N rows.".
+func dwResult(res *SQLBatchResult, uri string) mcpToolResult {
+	if len(res.Columns) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text",
+			Text: "Query executed successfully. It returned no result set."}}}
 	}
-	content := []mcpContent{}
-	if csvText != "" {
-		content = append(content, mcpContent{Type: "text", Text: csvText})
+	var buf strings.Builder
+	csvRecord(&buf, res.Columns)
+	for _, row := range res.Rows {
+		rec := make([]string, len(row))
+		for i, v := range row {
+			rec[i] = dwCell(v, res.Types[i])
+		}
+		csvRecord(&buf, rec)
 	}
-	return mcpToolResult{Content: append(content, mcpContent{Type: "text", Text: meta})}
+	return mcpToolResult{Content: []mcpContent{
+		{Type: "resource", Resource: &mcpResource{URI: uri, MimeType: "text/csv", Text: buf.String()}},
+		{Type: "text", Text: fmt.Sprintf("Query returned %d rows.", len(res.Rows))},
+	}}
 }
 
 // csvRecord appends one RFC 4180 record, ended by CRLF. A field holding a

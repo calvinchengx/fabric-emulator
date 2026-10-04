@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/tds"
@@ -192,7 +194,7 @@ func (*failingRows) Columns() []string { return []string{"a"} }
 func (*failingRows) Close() error      { return nil }
 func (r *failingRows) Next(dest []driver.Value) error {
 	if r.sent {
-		return errors.New("Invalid object name 'dbo.no_such_table'")
+		return mssql.Error{Number: 208, Message: "Invalid object name 'dbo.no_such_table'."}
 	}
 	r.sent, dest[0] = true, int64(1)
 	return nil
@@ -201,6 +203,13 @@ func (r *failingRows) Next(dest []driver.Value) error {
 func init() { sql.Register("sqlexec-failing", failingDriver{}) }
 
 func TestLastResultSetReportsAnErrorRaisedAfterRows(t *testing.T) {
+	// SQL Server's words reach the caller without the driver's decoration.
+	if got := engineMessage(mssql.Error{Number: 208, Message: "Invalid object name 'x'."}); got.Error() != "Invalid object name 'x'." {
+		t.Errorf("engineMessage = %q", got)
+	}
+	if plain := errors.New("access denied"); engineMessage(plain) != plain {
+		t.Error("an error that is not the engine's is kept as it is")
+	}
 	db, err := sql.Open("sqlexec-failing", "")
 	if err != nil {
 		t.Fatal(err)

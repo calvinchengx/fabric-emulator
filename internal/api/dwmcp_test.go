@@ -93,11 +93,20 @@ func (f *dwFixture) call(path, tool string, args map[string]any) ([]string, bool
 	if err := json.Unmarshal(b, &res); err != nil {
 		f.t.Fatal(err)
 	}
+	return blockTexts(res), res.IsError
+}
+
+// blockTexts is each block's text: a text block's, or an embedded resource's.
+func blockTexts(res mcpToolResult) []string {
 	var texts []string
 	for _, c := range res.Content {
+		if c.Resource != nil {
+			texts = append(texts, c.Resource.Text)
+			continue
+		}
 		texts = append(texts, c.Text)
 	}
-	return texts, res.IsError
+	return texts
 }
 
 const dwGlobal = "/v1/mcp/dataPlane/sqlEndpoint"
@@ -108,26 +117,28 @@ func (f *dwFixture) scoped(it *store.Item) string {
 
 func TestDataWarehouseMCPServesOneToolAtBothEndpoints(t *testing.T) {
 	f := newDW(t)
-	for path, required := range map[string][]any{
-		dwGlobal:           {"workspaceId", "itemId", "query"},
-		f.scoped(f.wh):     {"query"},
-		f.scoped(f.lake()): {"query"},
-	} {
+	for _, path := range []string{dwGlobal, f.scoped(f.wh), f.scoped(f.lake())} {
 		init := f.rpc(path, "initialize", map[string]any{"protocolVersion": "2025-06-18"})
-		if dig(init, "result", "serverInfo", "name") != "fabric-data-warehouse" {
-			t.Errorf("%s: serverInfo %v", path, dig(init, "result", "serverInfo"))
+		info := dig(init, "result", "serverInfo")
+		if dig(info, "name") != "microsoft.fabric.sqlEndpoint" || dig(info, "version") != "0.1.0" ||
+			dig(info, "description") != "Fabric SQL Endpoint – executes T-SQL queries" {
+			t.Errorf("%s: serverInfo %v, want the captured one", path, info)
 		}
 		tools := dig(f.rpc(path, "tools/list", nil), "result", "tools").([]any)
 		if len(tools) != 1 || dig(tools, 0, "name") != "execute_query" {
 			t.Fatalf("%s: tools %v, want execute_query alone", path, tools)
 		}
-		got := dig(tools, 0, "inputSchema", "required").([]any)
-		if len(got) != len(required) {
-			t.Errorf("%s: required %v, want %v", path, got, required)
+		// The captured schema, on both endpoints.
+		if got := dig(tools, 0, "inputSchema", "required").([]any); len(got) != 3 {
+			t.Errorf("%s: required %v, want workspaceId, itemId and query", path, got)
 		}
-		// Writes run where the caller may write, so the tool is not read-only.
-		if dig(tools, 0, "annotations") != nil {
-			t.Errorf("%s: annotations %v", path, dig(tools, 0, "annotations"))
+		if dig(tools, 0, "title") != "Execute T-SQL Query" {
+			t.Errorf("%s: title %v", path, dig(tools, 0, "title"))
+		}
+		ann := dig(tools, 0, "annotations")
+		if dig(ann, "readOnlyHint") != false || dig(ann, "destructiveHint") != true ||
+			dig(ann, "idempotentHint") != true || dig(ann, "openWorldHint") != false {
+			t.Errorf("%s: annotations %v, want the captured hints", path, ann)
 		}
 	}
 	if !strings.Contains(dig(f.rpc(f.scoped(f.wh), "initialize", nil), "result", "instructions").(string), f.wh.ID) {
@@ -159,7 +170,7 @@ func TestExecuteQueryRunsTheBatchAsTheCallerOnTheNamedItem(t *testing.T) {
 	f := newDW(t)
 	texts, isErr := f.call(dwGlobal, "execute_query", map[string]any{
 		"workspaceId": f.ws.ID, "itemId": f.wh.ID, "query": "SELECT 1 AS n"})
-	if isErr || len(texts) != 2 || texts[0] != "n\r\n1\r\n" || texts[1] != "1 row(s), 1 column(s)." {
+	if isErr || len(texts) != 2 || texts[0] != "n\r\n1\r\n" || texts[1] != "Query returned 1 rows." {
 		t.Fatalf("got %v %q", isErr, texts)
 	}
 	if len(f.calls) != 1 || f.calls[0] != (dwCall{f.wh.ID, dwCaller, "SELECT 1 AS n"}) {
@@ -241,7 +252,7 @@ func TestExecuteQueryReportsTheEnginesRefusalAndItsAbsence(t *testing.T) {
 	f := newDW(t)
 	args := map[string]any{"workspaceId": f.ws.ID, "itemId": f.wh.ID, "query": "INSERT INTO t VALUES (1)"}
 	f.err = errors.New("the lakehouse SQL analytics endpoint is read-only; writes require a Warehouse")
-	if texts, isErr := f.call(dwGlobal, "execute_query", args); !isErr || texts[0] != f.err.Error() {
+	if texts, isErr := f.call(dwGlobal, "execute_query", args); !isErr || texts[0] != "Error -32002: "+f.err.Error() {
 		t.Errorf("engine refusal: %v %q", isErr, texts)
 	}
 	f.a.SQLExecAs = nil
@@ -250,7 +261,7 @@ func TestExecuteQueryReportsTheEnginesRefusalAndItsAbsence(t *testing.T) {
 	}
 }
 
-func TestTheResultIsRFC4180CSVThenMetadata(t *testing.T) {
+func TestTheResultIsAnEmbeddedCSVResourceThenARowCount(t *testing.T) {
 	when := time.Date(2026, 10, 4, 9, 30, 15, 123400000, time.FixedZone("", 8*3600))
 	for _, tc := range []struct {
 		name string
@@ -258,35 +269,47 @@ func TestTheResultIsRFC4180CSVThenMetadata(t *testing.T) {
 		csv  string
 		meta string
 	}{
-		{"no result set", &SQLBatchResult{}, "", "The batch completed and returned no result set."},
+		{"no result set", &SQLBatchResult{}, "", "Query executed successfully. It returned no result set."},
 		{"an empty result set keeps its header", &SQLBatchResult{Columns: []string{"a", "b"}, Types: []string{"INT", "INT"}},
-			"a,b\r\n", "0 row(s), 2 column(s)."},
-		{"quoting", &SQLBatchResult{Columns: []string{"say, \"hi\""}, Types: []string{"NVARCHAR"},
+			"a,b\r\n", "Query returned 0 rows."},
+		{"quoting keeps a value byte for byte", &SQLBatchResult{Columns: []string{"say, \"hi\""}, Types: []string{"NVARCHAR"},
 			Rows: [][]any{{"one, two"}, {"line\nbreak"}, {`a "quote"`}}},
-			"\"say, \"\"hi\"\"\"\r\n\"one, two\"\r\n\"line\nbreak\"\r\n\"a \"\"quote\"\"\"\r\n", "3 row(s), 1 column(s)."},
-		{"truncated says so", &SQLBatchResult{Columns: []string{"n"}, Types: []string{"INT"}, Rows: [][]any{{int64(1)}}, Truncated: true},
-			"n\r\n1\r\n", "1 row(s), 1 column(s); truncated at the 10000-row limit: narrow the query with TOP, WHERE or an aggregate."},
+			"\"say, \"\"hi\"\"\"\r\n\"one, two\"\r\n\"line\nbreak\"\r\n\"a \"\"quote\"\"\"\r\n", "Query returned 3 rows."},
+		// The server does not announce truncation: 10,000 rows is the signal.
+		{"truncated says nothing more", &SQLBatchResult{Columns: []string{"n"}, Types: []string{"INT"}, Rows: [][]any{{int64(1)}}, Truncated: true},
+			"n\r\n1\r\n", "Query returned 1 rows."},
 		{"every kind of value", &SQLBatchResult{
 			Columns: []string{"null", "bit1", "bit0", "int", "float", "date", "time", "dto", "dt2", "other"},
 			Types:   []string{"INT", "BIT", "BIT", "BIGINT", "FLOAT", "DATE", "TIME", "DATETIMEOFFSET", "DATETIME2", "X"},
 			Rows:    [][]any{{nil, true, false, int64(-42), 2.5, when, when, when, when, []int{7}}}},
 			"null,bit1,bit0,int,float,date,time,dto,dt2,other\r\n" +
 				",1,0,-42,2.5,2026-10-04,09:30:15.1234,2026-10-04 09:30:15.1234 +08:00,2026-10-04 09:30:15.1234,[7]\r\n",
-			"1 row(s), 10 column(s)."},
+			"Query returned 1 rows."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := dwResult(tc.res)
-			var texts []string
-			for _, c := range out.Content {
-				texts = append(texts, c.Text)
-			}
+			out := dwResult(tc.res, "fabric://x/query-results/1.csv")
 			want := []string{tc.meta}
 			if tc.csv != "" {
 				want = []string{tc.csv, tc.meta}
+				if r := out.Content[0].Resource; r == nil || r.MimeType != "text/csv" || r.URI != "fabric://x/query-results/1.csv" {
+					t.Fatalf("the CSV is an embedded text/csv resource: %+v", out.Content[0])
+				}
 			}
-			if out.IsError || strings.Join(texts, "|") != strings.Join(want, "|") {
-				t.Errorf("got %q\nwant %q", texts, want)
+			if got := blockTexts(out); out.IsError || strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("got %q\nwant %q", got, want)
 			}
 		})
+	}
+}
+
+// A resource block is MCP's EmbeddedResource: no top-level text field.
+func TestAResourceBlockMarshalsWithoutText(t *testing.T) {
+	b, _ := json.Marshal(mcpContent{Type: "resource", Resource: &mcpResource{URI: "u", MimeType: "text/csv", Text: "a\r\n"}})
+	if string(b) != `{"type":"resource","resource":{"uri":"u","mimeType":"text/csv","text":"a\r\n"}}` {
+		t.Errorf("%s", b)
+	}
+	b, _ = json.Marshal(mcpContent{Type: "text"})
+	if string(b) != `{"type":"text","text":""}` {
+		t.Errorf("a text block always has text: %s", b)
 	}
 }

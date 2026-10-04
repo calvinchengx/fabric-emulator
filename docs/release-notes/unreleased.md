@@ -80,8 +80,9 @@ user, and returns the last result set as CSV. It takes the same path a TDS
 client's batch does, so a Viewer and the endpoint's data are read-only, Fabric's
 dialect applies, and SQL Server enforces the caller's grants and row-level
 security. A write it runs is recorded for lineage as one sent over TDS is.
-Microsoft's Learn page calls the tool `executeSQL` and Microsoft's own skills
-call it `execute_query`; both names work. A read-only Warehouse session's
+The tool is `execute_query`, as the live server lists it; the name on the Learn
+page, `executeSQL`, works too. Its result is CSV embedded as a `text/csv`
+resource, then a row count. A read-only Warehouse session's
 refusal now says that, instead of naming the lakehouse endpoint.
 [docs/07](../07-control-plane-api.md#fabric-data-warehouse-mcp)
 

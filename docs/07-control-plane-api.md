@@ -510,7 +510,7 @@ same Streamable HTTP transport as Core MCP.
 
 | Tool | Arguments | What it returns |
 |---|---|---|
-| `execute_query` (also answers as `executeSQL`) | `workspaceId`, `itemId`, `query` | The batch's **last** result set as RFC 4180 CSV, header first, then a line of metadata saying how many rows, and whether the 10,000-row cap truncated them. A batch with no result set returns only the metadata |
+| `execute_query` (also answers as `executeSQL`) | `workspaceId`, `itemId`, `query` | The batch's **last** result set as an embedded `text/csv` resource (RFC 4180, header first, CRLF), then the text `Query returned N rows.`. At most 10,000 rows, and the server does not say when it truncated: exactly 10,000 is the signal. A SQL error is a tool error, `Error -32002: <SQL Server's message>` |
 
 **What runs where.** `itemId` is a Warehouse, or a lakehouse's SQL analytics
 endpoint (`properties.sqlEndpointProperties.id`). The lakehouse's own id is
@@ -525,14 +525,21 @@ recorded for lineage and versioning, as one sent over TDS is. An item the
 caller cannot read is reported as not found, without its type. With no
 `WAREHOUSE_MSSQL_DSN` there is no engine, and the tool says so.
 
-**What is inferred.** The two sources disagree on the tool's name. The Learn
-page says `executeSQL`; Microsoft's `skills-for-fabric` calls and allow-lists
-`execute_query(workspaceId, itemId, query)`, so `tools/list` publishes that and
-`executeSQL` is accepted as the same tool. The skills describe the result as
-"CSV results (RFC 4180) + metadata text"; the metadata's wording is ours. They
-record 10,000 rows, a 300-second timeout and 20 requests a minute as "observed
-defaults, not a documented contract". The emulator applies the first two and
-does not rate-limit. The server's name, `fabric-data-warehouse`, is ours.
+**Where the contract comes from.** The Learn page names the tool `executeSQL`.
+The live server says `execute_query`, as captured by a third party
+(`iemejia/fabio`, `.agents/API-BEHAVIORS-DISCOVERED.md`), and Microsoft's
+`skills-for-fabric` calls and allow-lists that name. So `tools/list` publishes
+`execute_query`, and `executeSQL` is accepted as the same tool. From that
+capture: `serverInfo` `microsoft.fabric.sqlEndpoint` 0.1.0 with its
+description, the tool's title (`Execute T-SQL Query`), its required arguments
+and its annotations (`destructiveHint`, `idempotentHint`), the CSV as an
+embedded resource with the row-count text after it, and the error text. The
+skills record 10,000 rows, a 300-second timeout and 20 requests a minute as
+"observed defaults, not a documented contract". The emulator applies the first
+two and does not rate-limit. Ours, because nothing captured them: the resource
+URI between `fabric://` and `/query-results/`, and the text for a batch that
+returns no result set. The item-scoped endpoint publishes the same schema but
+also accepts a call that omits the ids.
 
 ## Livy / Spark data plane
 

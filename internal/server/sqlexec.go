@@ -62,11 +62,22 @@ func sqlExecAsFor(be principalBackend, route sqlRoute, wire *tds.Server) func(ct
 		defer cancel()
 		res, err := lastResultSet(ctx, db, stmt, maxRows)
 		if err != nil {
-			return nil, err
+			return nil, engineMessage(err)
 		}
 		tds.ObserveBatch(wire.Observe, conn.TargetDB, stmt)
 		return res, nil
 	}
+}
+
+// engineMessage is SQL Server's own words for err, without the driver's
+// "mssql: " prefix and "(number)" suffix: Fabric's server was captured
+// answering "Invalid object name 'dbo.NoSuchTable'." and nothing more.
+func engineMessage(err error) error {
+	var e mssql.Error
+	if errors.As(err, &e) {
+		return errors.New(e.Message)
+	}
+	return err
 }
 
 // lastResultSet runs one batch and keeps its last result set — the one

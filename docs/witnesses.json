@@ -435,7 +435,7 @@
       "go:TestExecuteQueryRunsTheBatchAsTheCallerOnTheNamedItem",
       "go:TestTheItemScopedEndpointTakesItsItemFromTheURL",
       "go:TestExecuteQueryRefusesWhatItCannotRunByName",
-      "go:TestTheResultIsRFC4180CSVThenMetadata",
+      "go:TestTheResultIsAnEmbeddedCSVResourceThenARowCount",
       "go:TestSQLExecAsRunsAsTheCallerWithTheWiresRules",
       "go:TestSQLExecAsReturnsTheLastResultSet",
       "go:TestSQLExecAsKeepsTheAnalyticsEndpointReadOnly",
