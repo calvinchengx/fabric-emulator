@@ -1255,6 +1255,29 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/rti/run.py
 
+  mcp-eventhouse:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Python mcp SDK witnesses Eventhouse MCP, as users, on kustainer (containerized)
+    # Linux/amd64 only, as rti: kustainer's native layer needs AVX2.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+      # All four tools of the KQL database's MCP server, as entra-emulator's
+      # seeded Alice and Bob, against a table Alice builds through the
+      # emulator's Kusto endpoint: every KQL statement is the engine's.
+      - run: uv run --frozen --group mcp python e2e/mcp-eventhouse/run.py
+
   external-s3:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
