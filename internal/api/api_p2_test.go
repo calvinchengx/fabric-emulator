@@ -46,6 +46,14 @@ func mintToken(t *testing.T, key *rsa.PrivateKey, oid string) string {
 // returns the mux plus a valid bearer token for principal "route-admin".
 func newRegisteredAPI(t *testing.T) (*http.ServeMux, *store.Store, string) {
 	t.Helper()
+	mux, _, st, token := newRegisteredAPIWithHooks(t)
+	return mux, st, token
+}
+
+// newRegisteredAPIWithHooks is newRegisteredAPI, also returning the API so a
+// test can set its engine hooks (SQLExecAs, …) before routing through the mux.
+func newRegisteredAPIWithHooks(t *testing.T) (*http.ServeMux, *API, *store.Store, string) {
+	t.Helper()
 	st, err := store.Open("", clock.New())
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +78,7 @@ func newRegisteredAPI(t *testing.T) (*http.ServeMux, *store.Store, string) {
 	a := New(st, v, 1, 0)
 	mux := http.NewServeMux()
 	a.Register(mux)
-	return mux, st, mintToken(t, key, "route-admin")
+	return mux, a, st, mintToken(t, key, "route-admin")
 }
 
 // serve runs one request through the registered mux.

@@ -183,13 +183,7 @@ func (s *Server) handle(conn net.Conn) error {
 	// What a read-only surface refuses. A lakehouse's SQL analytics endpoint is
 	// read-only for DATA but is where its security is authored, so it forwards
 	// what a warehouse Viewer's read-only session does not.
-	var refuse func(string) bool
-	switch {
-	case analyticsEndpoint:
-		refuse = isEndpointWrite
-	case readOnly:
-		refuse = isWriteStatement
-	}
+	refuse := refuserFor(Connection{ReadOnly: readOnly, AnalyticsEndpoint: analyticsEndpoint})
 	// Full-fidelity path: if the backend can open a raw authenticated connection
 	// to the real engine, splice the client's post-login session straight to it
 	// (byte-forwarding) so SQL Server emits every token itself — transactions,
@@ -200,16 +194,7 @@ func (s *Server) handle(conn net.Conn) error {
 		// The target FIRST, carrying the rung OnConnect decided for it. Dial
 		// dedupes by first occurrence, so this is what wins if the workspace
 		// sweep also lists it.
-		target := Grant{Database: targetDB, Role: dbRole}
-		for _, g := range grants {
-			if g.Database == targetDB {
-				target.OneLake, target.OneLakeRoles = g.OneLake, g.OneLakeRoles
-				target.ShortcutTables, target.DeniedTables = g.ShortcutTables, g.DeniedTables
-				target.ShortcutColumns = g.ShortcutColumns
-				break
-			}
-		}
-		grants = append([]Grant{target}, grants...)
+		grants = TargetFirst(Connection{TargetDB: targetDB, Role: dbRole, Grants: grants})
 		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB, principal, grants)
 		if err != nil {
 			return s.reject(conn, "backend connect failed: "+err.Error())
@@ -258,8 +243,8 @@ func (s *Server) handle(conn net.Conn) error {
 		query := sqlBatchQuery(data)
 		// A lakehouse SQL analytics endpoint is read-only; reject writes as
 		// real Fabric does, rather than mutating the reflected mirror.
-		if refuse != nil && refuse(query) {
-			if err := WriteMessage(conn, PktTabular, readOnlyReject()); err != nil {
+		if msg := refusal(refuse, query); msg != "" {
+			if err := WriteMessage(conn, PktTabular, readOnlyReject(msg)); err != nil {
 				return err
 			}
 			continue
@@ -308,11 +293,9 @@ func (s *Server) loginResponse(database string) []byte {
 }
 
 // readOnlyReject is the error response for a write attempted on a read-only
-// surface (a lakehouse SQL analytics endpoint, or a Viewer).
-func readOnlyReject() []byte {
-	return concat(errorToken(50000,
-		"the lakehouse SQL analytics endpoint is read-only; writes require a Warehouse"),
-		done(doneError, 0))
+// surface (a lakehouse SQL analytics endpoint, or a Viewer), in its words.
+func readOnlyReject(msg string) []byte {
+	return concat(errorToken(50000, msg), done(doneError, 0))
 }
 
 // reject sends a login ERROR + errored DONE, then returns (closing the conn).

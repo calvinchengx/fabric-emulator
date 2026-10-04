@@ -426,6 +426,23 @@
       "go:TestOrderBySortsByAResultColumnInEitherDirection"
     ]
   },
+  "fabric-data-warehouse-mcp-post-v1-mcp-dataplane-sqlendpoint": {
+    "section": "Platform / fundamentals",
+    "claim": "**Fabric Data Warehouse MCP** (`POST /v1/mcp/dataPlane/sqlEndpoint`)",
+    "witnesses": [
+      "ci:mcp-datawarehouse",
+      "go:TestDataWarehouseMCPServesOneToolAtBothEndpoints",
+      "go:TestExecuteQueryRunsTheBatchAsTheCallerOnTheNamedItem",
+      "go:TestTheItemScopedEndpointTakesItsItemFromTheURL",
+      "go:TestExecuteQueryRefusesWhatItCannotRunByName",
+      "go:TestTheResultIsAnEmbeddedCSVResourceThenARowCount",
+      "go:TestSQLExecAsRunsAsTheCallerWithTheWiresRules",
+      "go:TestSQLExecAsReturnsTheLastResultSet",
+      "go:TestSQLExecAsKeepsTheAnalyticsEndpointReadOnly",
+      "go:TestSQLExecAsObservesTheWritesItRan",
+      "go:TestPrepareBatchAppliesTheWireRules"
+    ]
+  },
   "fabric-sql-database-database-oltp-onelake-mirror": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
@@ -1527,7 +1544,11 @@
     "go:TestInvalidRLSSyntaxStillNarrowsRatherThanFailingTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestDirectLakeAndTheEndpointAdmitTheSameRows": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestTheEndpointShowsNoRowsToMixedRowAndColumnRoles": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestTheEndpointShowsNoRowsToMixedRowAndColumnRoles": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLExecAsRunsAsTheCallerWithTheWiresRules": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLExecAsReturnsTheLastResultSet": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLExecAsKeepsTheAnalyticsEndpointReadOnly": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLExecAsObservesTheWritesItRan": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
