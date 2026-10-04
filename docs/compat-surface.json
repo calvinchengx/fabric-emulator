@@ -23,7 +23,7 @@
     "subcommands": 2,
     "cliFlags": 30,
     "envVars": 41,
-    "routes": 1059
+    "routes": 1065
   },
   "subcommands": [
     "healthcheck",
@@ -116,6 +116,8 @@
     "DELETE /v1/deploymentPipelines/{}",
     "DELETE /v1/deploymentPipelines/{}/roleAssignments/{}",
     "DELETE /v1/mcp/core",
+    "DELETE /v1/mcp/dataPlane/sqlEndpoint",
+    "DELETE /v1/mcp/dataPlane/workspaces/{}/items/{}/sqlEndpoint",
     "DELETE /v1/mcp/fabriciq",
     "DELETE /v1/workspaces/{}",
     "DELETE /v1/workspaces/{}/AnomalyDetectors/{}",
@@ -267,6 +269,8 @@
     "GET /v1/eventstreams/{}/sources/{}",
     "GET /v1/eventstreams/{}/sources/{}/events",
     "GET /v1/mcp/core",
+    "GET /v1/mcp/dataPlane/sqlEndpoint",
+    "GET /v1/mcp/dataPlane/workspaces/{}/items/{}/sqlEndpoint",
     "GET /v1/mcp/fabriciq",
     "GET /v1/operations/{}",
     "GET /v1/operations/{}/result",
@@ -730,6 +734,8 @@
     "POST /v1/deploymentPipelines/{}/stages/{}/assignWorkspace",
     "POST /v1/deploymentPipelines/{}/stages/{}/unassignWorkspace",
     "POST /v1/mcp/core",
+    "POST /v1/mcp/dataPlane/sqlEndpoint",
+    "POST /v1/mcp/dataPlane/workspaces/{}/items/{}/sqlEndpoint",
     "POST /v1/mcp/fabriciq",
     "POST /v1/workspaces",
     "POST /v1/workspaces/{}/AnomalyDetectors",

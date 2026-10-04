@@ -432,6 +432,14 @@ phase letter; they extend surfaces the earlier phases already named.
       and semantic-model tools, delegated tokens only; the unmodified `mcp` SDK
       drives it in CI as two users. Verified answers, AI instructions and
       workspace apps are not modelled.
+- [x] **Fabric Data Warehouse MCP** — `/v1/mcp/dataPlane/sqlEndpoint`, global
+      and item-scoped. `execute_query` runs T-SQL as the caller by the TDS
+      wire's own path. The unmodified `mcp` SDK drives it in CI as two users on
+      SQL Server. The observed 20-requests-a-minute limit is not modelled.
+- [ ] **Eventhouse MCP** — `/v1/mcp/dataPlane/kqlEndpoint`. Blocked on the tool
+      contract: Microsoft documents the endpoints and the `workspaceId` /
+      `itemId` / `clusterUrl` / `databaseName` parameters, but not the tool
+      names or schemas.
 - [x] **Optional `msmdsrv` DAX oracle** — `FABRIC_DAX_URL` relays
       `executeQueries` to a pump in front of Desktop's engine on a machine
       you own. Not a compose default. [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).

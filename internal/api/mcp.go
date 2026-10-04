@@ -20,6 +20,7 @@ func (a *API) registerMCP(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/mcp/core", a.withAuth(a.handleMCPGet))
 	mux.HandleFunc("DELETE /v1/mcp/core", a.withAuth(a.handleMCPDelete))
 	a.registerFabricIQ(mux)
+	a.registerDataWarehouseMCP(mux)
 }
 
 type rpcRequest struct {

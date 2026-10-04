@@ -41,7 +41,7 @@ func TestSpliceForwardsReadOnlySelect(t *testing.T) {
 	backendA, backendB := net.Pipe()
 	defer clientA.Close()
 	defer backendA.Close()
-	go func() { _ = spliceSession(clientA, backendA, isWriteStatement, false, nil, "", nil) }() // read-only surface
+	go func() { _ = spliceSession(clientA, backendA, refuserFor(Connection{ReadOnly: true}), false, nil, "", nil) }() // read-only surface
 
 	// A SELECT on a read-only surface is still forwarded to the engine.
 	go func() { _ = WriteMessage(clientB, PktSQLBatch, batchMsg("SELECT amount FROM sales")) }()
@@ -74,7 +74,7 @@ func TestSpliceRejectWriteError(t *testing.T) {
 	defer backendB.Close()
 
 	done := make(chan error, 1)
-	go func() { done <- spliceSession(clientA, backendA, isWriteStatement, false, nil, "", nil) }()
+	go func() { done <- spliceSession(clientA, backendA, refuserFor(Connection{ReadOnly: true}), false, nil, "", nil) }()
 	// Send a write, then drop the client before it can read the rejection, so the
 	// server's reject-write fails and the session ends.
 	go func() {
@@ -93,7 +93,7 @@ func TestSpliceReadOnlyRejectsWrite(t *testing.T) {
 	backendA, backendB := net.Pipe()
 	defer clientA.Close()
 	defer backendA.Close()
-	go func() { _ = spliceSession(clientA, backendA, isWriteStatement, false, nil, "", nil) }() // read-only surface
+	go func() { _ = spliceSession(clientA, backendA, refuserFor(Connection{ReadOnly: true}), false, nil, "", nil) }() // read-only surface
 
 	go func() { _ = WriteMessage(clientB, PktSQLBatch, batchMsg("INSERT INTO sales VALUES (1)")) }()
 	// The client receives a rejection...

@@ -152,29 +152,14 @@ func rewriteIsFaithful(orig *rpcRequest, encoded []byte, idx int, want string) b
 }
 
 func fixBatch(data []byte, strict bool, timeTravel tsql.TimeTravelResolver) (out []byte, reject string) {
-	raw := sqlBatchQuery(data)
-	if msg := strictReject(raw, strict); msg != "" {
-		return data, msg
-	}
-	sql, changed, err := tsql.AdaptWithTimeTravel(raw, timeTravel)
+	sql, changed, reject := adaptText(sqlBatchQuery(data), strict, timeTravel)
 	switch {
-	case err != nil:
-		// A statement Fabric itself refuses, or one that cannot be flattened
-		// without changing its meaning: say so, by name.
-		var restriction *tsql.RestrictionError
-		var shadowed *tsql.ShadowedNameError
-		var timeTravelErr *tsql.TimeTravelError
-		if errors.As(err, &restriction) || errors.As(err, &shadowed) || errors.As(err, &timeTravelErr) {
-			return data, err.Error()
-		}
-		// Anything else is a parse failure — forward untouched and let the
-		// engine be the authority on its own dialect.
-		return data, ""
+	case reject != "":
+		return data, reject
 	case changed:
 		return rewriteBatch(data, sql), ""
-	default:
-		return data, ""
 	}
+	return data, ""
 }
 
 // rewriteBatch rebuilds a SQLBatch payload around new statement text. The
