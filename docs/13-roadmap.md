@@ -436,10 +436,11 @@ phase letter; they extend surfaces the earlier phases already named.
       and item-scoped. `execute_query` runs T-SQL as the caller by the TDS
       wire's own path. The unmodified `mcp` SDK drives it in CI as two users on
       SQL Server. The observed 20-requests-a-minute limit is not modelled.
-- [ ] **Eventhouse MCP** — `/v1/mcp/dataPlane/kqlEndpoint`. Blocked on the tool
-      contract: Microsoft documents the endpoints and the `workspaceId` /
-      `itemId` / `clusterUrl` / `databaseName` parameters, but not the tool
-      names or schemas.
+- [x] **Eventhouse MCP** — `/v1/mcp/dataPlane/kqlEndpoint`, global and scoped
+      to a KQL database. The four tools Fabric's live server lists, from two
+      third parties' captures, since Microsoft names none. The unmodified `mcp`
+      SDK drives it in CI against kustainer. The grounding tools' documents
+      are the emulator's own; learned examples are not modelled.
 - [x] **Optional `msmdsrv` DAX oracle** — `FABRIC_DAX_URL` relays
       `executeQueries` to a pump in front of Desktop's engine on a machine
       you own. Not a compose default. [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).

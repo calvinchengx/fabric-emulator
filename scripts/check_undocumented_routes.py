@@ -168,6 +168,13 @@ NATIVE = {
         "data-warehouse-mcp-server). Real, and not a REST operation: JSON-RPC "
         "over MCP Streamable HTTP. Witnessed by e2e/mcp-datawarehouse with "
         "Microsoft's own `mcp` client, as signed-in users on SQL Server.",
+    r"^(GET|POST|DELETE) /v1/mcp/dataPlane/(kqlEndpoint|workspaces/\{[^}]+\}/items/\{[^}]+\}/kqlEndpoint)$":
+        "Eventhouse MCP, which Fabric serves at /v1/mcp/dataPlane/kqlEndpoint "
+        "and, bound to one KQL database, at /v1/mcp/dataPlane/workspaces/<ws>/"
+        "items/<db>/kqlEndpoint on api.fabric.microsoft.com (learn.microsoft.com/"
+        "fabric/real-time-intelligence/mcp-remote-eventhouse). Real, and not a "
+        "REST operation: JSON-RPC over MCP Streamable HTTP. Witnessed by "
+        "e2e/mcp-eventhouse with Microsoft's own `mcp` client against kustainer.",
     r"^(GET|PUT|DELETE) /v1/workspaces/\{wid\}/items/\{iid\}/_emulator/access":
         "Emulator-native by its own name: the `_emulator/` segment is this "
         "repository's reserved prefix for levers real Fabric has no API for. "
