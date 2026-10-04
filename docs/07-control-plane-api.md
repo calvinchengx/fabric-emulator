@@ -492,6 +492,55 @@ the per-query error shape and the 10-match cap are ours.
 AI" objects), workspace apps, the embedded CSV resource the real server returns
 for large results, and OAuth discovery: a client sends the bearer itself.
 
+## Fabric Data Warehouse MCP
+
+Microsoft's MCP server for T-SQL on a Warehouse or a lakehouse's SQL analytics
+endpoint (learn.microsoft.com/fabric/data-warehouse/data-warehouse-mcp-server).
+It "uses the signed-in user's identity and respects Fabric permissions", and has
+one tool and no separate schema tools: an agent discovers tables by querying
+`INFORMATION_SCHEMA`. The emulator serves both of Microsoft's endpoints on the
+same Streamable HTTP transport as Core MCP.
+
+| Method + path | Notes |
+|---|---|
+| `POST /mcp/dataPlane/sqlEndpoint` | The global endpoint: each call names its workspace and item |
+| `POST /mcp/dataPlane/workspaces/{workspaceId}/items/{itemId}/sqlEndpoint` | Bound to one item: the tool takes only `query`, and naming any other item is refused |
+| `GET` either | 405, no SSE stream |
+| `DELETE` either | ends the session, 204 |
+
+| Tool | Arguments | What it returns |
+|---|---|---|
+| `execute_query` (also answers as `executeSQL`) | `workspaceId`, `itemId`, `query` | The batch's **last** result set as an embedded `text/csv` resource (RFC 4180, header first, CRLF), then the text `Query returned N rows.`. At most 10,000 rows, and the server does not say when it truncated: exactly 10,000 is the signal. A SQL error is a tool error, `Error -32002: <SQL Server's message>` |
+
+**What runs where.** `itemId` is a Warehouse, or a lakehouse's SQL analytics
+endpoint (`properties.sqlEndpointProperties.id`). The lakehouse's own id is
+refused with that pointer, because Microsoft's skills say Fabric refuses it. The
+batch takes the same path a TDS client's would
+([55](55-tsql-security.md)). It is routed and access-checked as the caller,
+which needs Read on the item. Then it is refused or adapted by the wire's rules:
+a Viewer's session and the endpoint's data are read-only, and Fabric's dialect
+and time travel apply. It runs logged in as the caller, so grants, row-, column-
+and object-level security are SQL Server's own. A write the engine accepts is
+recorded for lineage and versioning, as one sent over TDS is. An item the
+caller cannot read is reported as not found, without its type. With no
+`WAREHOUSE_MSSQL_DSN` there is no engine, and the tool says so.
+
+**Where the contract comes from.** The Learn page names the tool `executeSQL`.
+The live server says `execute_query`, as captured by a third party
+(`iemejia/fabio`, `.agents/API-BEHAVIORS-DISCOVERED.md`), and Microsoft's
+`skills-for-fabric` calls and allow-lists that name. So `tools/list` publishes
+`execute_query`, and `executeSQL` is accepted as the same tool. From that
+capture: `serverInfo` `microsoft.fabric.sqlEndpoint` 0.1.0 with its
+description, the tool's title (`Execute T-SQL Query`), its required arguments
+and its annotations (`destructiveHint`, `idempotentHint`), the CSV as an
+embedded resource with the row-count text after it, and the error text. The
+skills record 10,000 rows, a 300-second timeout and 20 requests a minute as
+"observed defaults, not a documented contract". The emulator applies the first
+two and does not rate-limit. Ours, because nothing captured them: the resource
+URI between `fabric://` and `/query-results/`, and the text for a batch that
+returns no result set. The item-scoped endpoint publishes the same schema but
+also accepts a call that omits the ids.
+
 ## Livy / Spark data plane
 
 Fabric exposes Spark through the Apache Livy REST API at a **lakehouse-scoped**

@@ -115,6 +115,12 @@ type API struct {
 	// way a relayed connection is (docs/59). The caller closes it. nil → Direct
 	// Lake on SQL is refused by name.
 	SQLDBAs func(ctx context.Context, itemID, principalID string) (*sql.DB, error)
+	// SQLExecAs runs one T-SQL batch on a Warehouse or a lakehouse's SQL
+	// analytics endpoint AS the principal, by the TDS wire's own route,
+	// refusals, dialect and observers, and returns its last result set with at
+	// most maxRows rows. nil → no SQL engine is attached, and Fabric's Data
+	// Warehouse MCP server says so.
+	SQLExecAs func(ctx context.Context, itemID, principalID, query string, maxRows int) (*SQLBatchResult, error)
 	// SwitchDataAccessMode applies a SQL analytics endpoint's change of data
 	// access mode to the engine and records it (docs/60). nil → no SQL engine is
 	// attached, and the mode is only recorded.

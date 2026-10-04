@@ -20,6 +20,7 @@ var mcpToolNames = []string{
 
 type mcpToolSpec struct {
 	Name        string         `json:"name"`
+	Title       string         `json:"title,omitempty"`
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 	Annotations map[string]any `json:"annotations,omitempty"`

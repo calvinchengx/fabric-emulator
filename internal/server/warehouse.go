@@ -32,17 +32,34 @@ type warehouseBackend interface {
 // endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
 // principalOf resolves the FedAuth token to its principal id.
 func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error), external warehouse.ExternalDelta) func(context.Context, string, string, string) (tds.Connection, error) {
+	return tokenRoute(principalOf, warehouseRoute(st, be, external))
+}
+
+// sqlRoute decides one principal's connection to one SQL item: the database
+// it reaches, the surface's read-only rules and the rung it gets. The TDS wire
+// reaches it through a token (tokenRoute); Fabric's Data Warehouse MCP server,
+// whose caller is already authenticated, reaches it directly (sqlExecAsFor).
+type sqlRoute func(ctx context.Context, server, database, principal string) (tds.Connection, error)
+
+// tokenRoute is a route for a FedAuth login: the token's principal, then route.
+func tokenRoute(principalOf func(token string) (string, error), route sqlRoute) func(context.Context, string, string, string) (tds.Connection, error) {
+	return func(ctx context.Context, server, database, token string) (tds.Connection, error) {
+		principal, err := principalOf(token)
+		if err != nil {
+			return tds.Connection{}, fmt.Errorf("resolving principal: %w", err)
+		}
+		return route(ctx, server, database, principal)
+	}
+}
+
+func warehouseRoute(st *store.Store, be warehouseBackend, external warehouse.ExternalDelta) sqlRoute {
 	// One Reflector for the life of the server, captured here rather than made
 	// per connection — its whole value is remembering across logins. See its
 	// doc: without that memory a retrying client restarts the entire reflection
 	// every attempt and can only finish if one attempt fits inside the login
 	// timeout.
 	reflector := &warehouse.Reflector{External: external}
-	return func(ctx context.Context, server, database, token string) (tds.Connection, error) {
-		principal, err := principalOf(token)
-		if err != nil {
-			return tds.Connection{}, fmt.Errorf("resolving principal: %w", err)
-		}
+	return func(ctx context.Context, server, database, principal string) (tds.Connection, error) {
 		it, err := resolveSQLItem(st, server, database)
 		if err != nil {
 			return tds.Connection{}, err

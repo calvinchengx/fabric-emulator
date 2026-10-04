@@ -1651,6 +1651,42 @@ jobs:
       # security role is what makes two users' answers differ.
       - run: uv run --frozen --group mcp python e2e/mcp-fabriciq/run.py
 
+  mcp-datawarehouse:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Python mcp SDK witnesses Fabric Data Warehouse MCP, as users, on SQL Server
+    # Single OS: a wire contract driven by a pure-python client, and SQL Server
+    # is a Linux container (as in warehouse-tds).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+      # execute_query runs T-SQL as the signed-in user, so the conversation is
+      # Alice's and Bob's (entra-emulator's seeded users, password grant), and
+      # a row-level security policy keyed on the connected user is what makes
+      # their answers differ. ADO-style DSN: a sqlserver:// URL breaks the
+      # emulator's credential handling silently.
+      - env:
+          WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
+        run: uv run --frozen --group mcp python e2e/mcp-datawarehouse/run.py
+
   azcopy:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
@@ -2650,7 +2686,7 @@ jobs:
       - name: Real SQL Server relay + Delta-reflection e2e
         env:
           WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
-        run: go test ./internal/server/ ./internal/api/ -run 'TestWarehouse|TestSQLDatabase|TestPipelineSQLActivities|TestRefreshMirroredDatabaseE2E|TestRelayEnforces|TestDirectLakeOnSQL|TestDirectLakeOnly|TestSQLDBAsFor|TestSwitchingTheDataAccessMode|TestUserIdentityMode|TestAOneLakeSync|TestARowFilterSurvives|TestDirectLakeAndTheEndpointAdmitTheSameRows|TestTheEndpointShowsNoRowsToMixed|TestAnUnchangedSync|TestAShortcut|TestAColumn|TestDelegatedModeBlocks' -v -count=1
+        run: go test ./internal/server/ ./internal/api/ -run 'TestWarehouse|TestSQLDatabase|TestPipelineSQLActivities|TestRefreshMirroredDatabaseE2E|TestRelayEnforces|TestDirectLakeOnSQL|TestDirectLakeOnly|TestSQLDBAsFor|TestSwitchingTheDataAccessMode|TestUserIdentityMode|TestAOneLakeSync|TestARowFilterSurvives|TestDirectLakeAndTheEndpointAdmitTheSameRows|TestTheEndpointShowsNoRowsToMixed|TestAnUnchangedSync|TestAShortcut|TestAColumn|TestDelegatedModeBlocks|TestSQLExecAs' -v -count=1
 
   semantic-model:
     needs: changes

@@ -70,6 +70,22 @@ internally inconsistent and green at once. Both are documented rather than
 repaired — regenerating a reviewed artifact belongs in a change that can show
 the diff. [docs/65](../65-api-surface-coverage.md)
 
+## Fabric Data Warehouse MCP
+
+The emulator now serves Microsoft's Data Warehouse MCP server at both of its
+endpoints: `POST /v1/mcp/dataPlane/sqlEndpoint`, and one scoped to a single
+item. Its one tool, `execute_query(workspaceId, itemId, query)`, runs a T-SQL
+batch on a Warehouse or a lakehouse's SQL analytics endpoint as the signed-in
+user, and returns the last result set as CSV. It takes the same path a TDS
+client's batch does, so a Viewer and the endpoint's data are read-only, Fabric's
+dialect applies, and SQL Server enforces the caller's grants and row-level
+security. A write it runs is recorded for lineage as one sent over TDS is.
+The tool is `execute_query`, as the live server lists it; the name on the Learn
+page, `executeSQL`, works too. Its result is CSV embedded as a `text/csv`
+resource, then a row count. A read-only Warehouse session's
+refusal now says that, instead of naming the lakehouse endpoint.
+[docs/07](../07-control-plane-api.md#fabric-data-warehouse-mcp)
+
 ## e2e harnesses no longer leave entra-emulator running
 
 On a machine where a version manager such as goenv puts `entra-emulator` on
