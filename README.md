@@ -178,7 +178,8 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   On by default in `make up`; `make up PROFILE="--profile governance"` leaves it
   out, and without the wiring the routes answer `AirflowNotConfigured` rather
   than pretending. See
-  [14-real-compute.md](docs/14-real-compute.md#e1) and `e2e/airflow`.
+  [14-real-compute.md](docs/14-real-compute.md#track-e--pipelines-real-orchestration-where-it-exists-real-work-everywhere)
+  and `e2e/airflow`.
 
 The bare binary runs none of the engines (clock-derived, milliseconds) — but
 `docker compose up` auto-loads the override that attaches them, so the
