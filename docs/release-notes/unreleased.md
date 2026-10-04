@@ -86,6 +86,17 @@ resource, then a row count. A read-only Warehouse session's
 refusal now says that, instead of naming the lakehouse endpoint.
 [docs/07](../07-control-plane-api.md#fabric-data-warehouse-mcp)
 
+## Eventhouse MCP
+
+The emulator now serves Fabric's remote Eventhouse MCP server at both of its
+endpoints: `POST /v1/mcp/dataPlane/kqlEndpoint`, and one scoped to a single KQL
+database. It has the four tools Fabric's live server lists: `executeQuery` runs
+real KQL on the attached engine as the signed-in user, and `getSchema`,
+`getGeneralKQLExamples` and `getSpecificKQLExamples` ground a query in the
+database. Microsoft names none of these tools; the contract comes from two
+third parties' captures of the live server, and the grounding documents are the
+emulator's own. [docs/07](../07-control-plane-api.md#eventhouse-mcp)
+
 ## e2e harnesses no longer leave entra-emulator running
 
 On a machine where a version manager such as goenv puts `entra-emulator` on

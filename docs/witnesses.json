@@ -443,6 +443,21 @@
       "go:TestPrepareBatchAppliesTheWireRules"
     ]
   },
+  "eventhouse-mcp-post-v1-mcp-dataplane-kqlendpoint": {
+    "section": "Platform / fundamentals",
+    "claim": "**Eventhouse MCP** (`POST /v1/mcp/dataPlane/kqlEndpoint`)",
+    "witnesses": [
+      "ci:mcp-eventhouse",
+      "go:TestEventhouseMCPServesTheFourCapturedToolsAtBothEndpoints",
+      "go:TestExecuteQueryAnswersAKustoDocumentNamedByTableKind",
+      "go:TestEventhouseMCPRefusesWhatItCannotRunByName",
+      "go:TestClusterUrlRedirectsToAnotherDatabaseOfAnEventhouse",
+      "go:TestAFailedQueryNamesTheClusterDatabaseAndTheEnginesError",
+      "go:TestGetSchemaRanksByTheReferenceAndSamplesTheData",
+      "go:TestTheGroundingToolsRefuseAnEmptyDatabase",
+      "go:TestTheExampleTools"
+    ]
+  },
   "fabric-sql-database-database-oltp-onelake-mirror": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",

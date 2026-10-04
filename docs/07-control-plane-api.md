@@ -541,6 +541,53 @@ URI between `fabric://` and `/query-results/`, and the text for a batch that
 returns no result set. The item-scoped endpoint publishes the same schema but
 also accepts a call that omits the ids.
 
+## Eventhouse MCP
+
+Fabric's remote MCP server over one KQL database
+(learn.microsoft.com/fabric/real-time-intelligence/mcp-remote-eventhouse). The
+emulator serves both of its endpoints on the same Streamable HTTP transport as
+Core MCP. The item is the **KQL database**, not the eventhouse; an eventhouse id
+is refused, with a pointer to `properties.databasesItemIds`.
+
+| Method + path | Notes |
+|---|---|
+| `POST /mcp/dataPlane/kqlEndpoint` | The global endpoint: every call carries `workspaceId` and `itemId` |
+| `POST /mcp/dataPlane/workspaces/{workspaceId}/items/{itemId}/kqlEndpoint` | Bound to one KQL database; naming another is refused |
+| `GET` either | 405, no SSE stream |
+| `DELETE` either | ends the session, 204 |
+
+| Tool | Arguments | What it returns |
+|---|---|---|
+| `executeQuery` | `kqlQuery`, `maxRecords`, `activityTitle?`, `activityDescription?` | A Kusto document, `{"Tables":[…]}`, one table per result, named by its kind (`QueryProperties`, `PrimaryResult`, `QueryCompletionInformation`), with at most `maxRecords` rows of `PrimaryResult` and never more than 1,000, silently. A failed query is a tool error: `Error in executing KQL query. cluster='<queryServiceUri>', database='<name>', Exception='<category>: <the engine's error>'` |
+| `getSchema` | `referenceText` | The database's tables (columns, docstring, row count and five sample rows for the first 20), materialized views and functions, the tables sharing most words with `referenceText` first |
+| `getGeneralKQLExamples` | `referenceText` | Five natural-language-to-KQL examples, as markdown, the ones sharing most words with `referenceText` first |
+| `getSpecificKQLExamples` | `referenceText` | Examples curated for this database: none, since the emulator learns nothing |
+
+Every tool also takes `clusterUrl` and `databaseName`, which together run it
+against another database. The emulator hosts no Azure Data Explorer cluster, so
+`clusterUrl` must be one of its own eventhouses' query URIs (any host). The
+three grounding tools refuse a database with no tables: `Database is empty`.
+
+The caller needs **Read** on the KQL database, from a workspace role or a
+direct share, and a database they cannot read is reported as not found. That is
+a share-aware check; the Kusto REST endpoint itself checks the workspace role
+only. Queries run on the attached engine (`FABRIC_KQL_URL`,
+[25](25-rti-kusto.md)), in the database's own engine database, whose name is
+mapped back to the display name in every answer.
+
+**Where the contract comes from.** Microsoft documents the endpoints and the
+optional `clusterUrl` and `databaseName`, but names no tools. Two third parties
+captured the live server's `initialize` and `tools/list`:
+`iemejia/fabio` (`.agents/API-BEHAVIORS-DISCOVERED.md`) gives
+`KustoMCP` 1.0.0, the four tool names, `referenceText`, and
+`Database is empty`. `adindabudi/enterprise-data-analyst-agent`
+(`apps/api/…/fabric_auth/eventhouse.py`) gives `executeQuery`'s input schema,
+the 1,000-row cap, the Kusto document read through `PrimaryResult`, and a failed
+query's text. Ours: every description, the grounding tools' schemas beyond
+`referenceText`, the documents `getSchema` and the example tools return, and
+their ranking. Fabric grounds with Copilot, and the emulator has no model, so it
+ranks by shared words and its general examples are its own.
+
 ## Livy / Spark data plane
 
 Fabric exposes Spark through the Apache Livy REST API at a **lakehouse-scoped**
