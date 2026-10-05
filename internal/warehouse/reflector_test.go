@@ -137,8 +137,8 @@ func TestReflectorResumesAfterCancellation(t *testing.T) {
 	}
 }
 
-// A fresh Reflector must work with no setup: warehouseRouter builds one with a
-// composite literal, and the package-level Reflect delegates to a throwaway.
+// A fresh Reflector must work with no setup: server.warehouseRoute builds one
+// with a composite literal, and ReflectWithExternal delegates to a throwaway.
 func TestReflectorZeroValueIsUsable(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	put(t, st, wsID, itemID, "Tables/sales/part-0.parquet",

@@ -15,28 +15,24 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-// Reflect (re)materialises a lakehouse's Delta tables into the SQL engine so the
-// warehouse endpoint can query them: for each Tables/<name>, read the Delta
-// table and DROP/CREATE/INSERT it into db. Idempotent — safe to call on every
-// connect. Returns the names reflected.
+// ReflectWithExternal (re)materialises a lakehouse's Delta tables into the SQL
+// engine so the warehouse endpoint can query them: for each Tables/<name>, read
+// the Delta table and DROP/CREATE/INSERT it into db. Idempotent — safe to call
+// on every connect. Returns the names reflected.
 //
-// This is the unconditional form: every table, every time. It is what the tests
-// use and what a caller wants when it has nowhere to keep state. A server
-// handling repeated logins should use a Reflector instead — see its doc for why
-// reflecting everything on every connect is not merely wasteful but unable to
-// converge.
-func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([]string, error) {
-	return (&Reflector{}).Reflect(ctx, db, st, itemID)
-}
-
-// ReflectWithExternal is Reflect with external shortcut tables (ADLS Gen2,
-// Amazon S3, Dataverse) included: without an ExternalDelta, one of those is
-// simply not among the tables reflected, the same as a stray non-Delta folder.
+// External shortcut tables (ADLS Gen2, Amazon S3, Dataverse) are included: with
+// no ExternalDelta, one of those is simply not among the tables reflected, the
+// same as a stray non-Delta folder.
+//
+// This is the unconditional form: every table, every time, by a caller with
+// nowhere to keep state. A server handling repeated logins should use a
+// Reflector instead — see its doc for why reflecting everything on every
+// connect is not merely wasteful but unable to converge.
 func ReflectWithExternal(ctx context.Context, db *sql.DB, st *store.Store, itemID string, external ExternalDelta) ([]string, error) {
 	return (&Reflector{External: external}).Reflect(ctx, db, st, itemID)
 }
 
-// A Reflector is a Reflect that remembers what it already did.
+// A Reflector reflects a lakehouse's tables and remembers what it already did.
 //
 // Reflection runs during TDS login, synchronously, before the connection is
 // usable. On a lakehouse holding real data that takes minutes, so the client's

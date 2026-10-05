@@ -16,8 +16,9 @@ package api
 //
 // So when a Livy session opens against a lakehouse, enumerate its Delta tables
 // and register them in the agent's Spark catalog. The enumeration is the same
-// one warehouse.Reflect does to build the SQL analytics endpoint — the two
-// surfaces now expose the same set of tables, which is the property that was
+// one warehouse.ReflectWithExternal does to build the SQL analytics endpoint
+// — the two surfaces now expose the same set of tables, which is the property
+// that was
 // missing.
 
 import (

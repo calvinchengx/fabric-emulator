@@ -399,7 +399,7 @@ warehouse owns its own data in the sidecar; it is not mirrored back to Delta).
   Verified locally against a real `mcr.microsoft.com/mssql/server:2022`
   container (all three warehouse e2es pass), not just in CI.
 - **T4a — both surfaces, isolated. ✅ Done.** Explicit item-type routing behind
-  one TDS front (`warehouseRouter`): the connection's `database` is a Fabric
+  one TDS front (`warehouseRoute`): the connection's `database` is a Fabric
   item id, and **each item is its own SQL Server database** (`EnsureDatabase`
   per item id — no cross-item collision). A **Lakehouse** → reflect its Delta +
   **read-only** (writes rejected with a clear error, as real Fabric does); a
@@ -412,7 +412,7 @@ warehouse owns its own data in the sidecar; it is not mirrored back to Delta).
   real SQL Server.
 - **T4b — RBAC + parity. ✅ Done.**
   1. **RBAC → SQL permissions. ✅** On connect, the token's principal is resolved
-     and its **workspace role** is enforced (`warehouseRouter`): no role → login
+     and its **workspace role** is enforced (`warehouseRoute`): no role → login
      rejected; Viewer → read-only; Contributor/Member/Admin → read-write on a
      Warehouse (a Lakehouse endpoint is always read-only). Unit-tested (each role
      tier + deny) + a wire-level e2e (a principal with no role on the item's

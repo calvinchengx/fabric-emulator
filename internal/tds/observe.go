@@ -28,7 +28,7 @@ import (
 
 // Observer is notified of the data movements a statement performed, once the
 // backend has accepted it. database is the resolved backend database (a Fabric
-// item id — see warehouseRouter).
+// item id — see server.warehouseRoute).
 //
 // It receives parsed flows rather than SQL so the statement is parsed exactly
 // once, here, where the token stream is already in hand.

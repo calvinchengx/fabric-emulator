@@ -73,7 +73,7 @@ func TestWarehouseRouter(t *testing.T) {
 	ctx := context.Background()
 	// Identity principalOf: the "token" passed in is the principal id.
 	idOf := func(tok string) (string, error) { return tok, nil }
-	route := warehouseRouter(st, &fakeWH{db: db}, idOf, nil)
+	route := tokenRoute(idOf, warehouseRoute(st, &fakeWH{db: db}, nil))
 
 	// "u" created the workspace, so it is Admin. Lakehouse by id → read-only, the
 	// resolved backend database is the item id, and reflection populated the engine.
@@ -104,7 +104,7 @@ func TestWarehouseRouter(t *testing.T) {
 		t.Error("notebook accepted as a SQL endpoint")
 	}
 	// EnsureDatabase failure surfaces.
-	if _, err := warehouseRouter(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, idOf, nil)(ctx, "", wh.ID, "u"); err == nil {
+	if _, err := tokenRoute(idOf, warehouseRoute(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, nil))(ctx, "", wh.ID, "u"); err == nil {
 		t.Error("EnsureDatabase error not surfaced")
 	}
 
@@ -458,7 +458,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 		st, ws, dir := diskStoreWithWarehouse(t)
 		items, _ := st.ListItems(ws.ID, "Warehouse")
 		execOn(t, dir, `ALTER TABLE role_assignments RENAME TO ra_elsewhere`)
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "owner"); err == nil ||
+		if _, err := tokenRoute(idOf, warehouseRoute(st, &fakeWH{}, nil))(ctx, "", items[0].ID, "owner"); err == nil ||
 			!strings.Contains(err.Error(), "checking access") {
 			t.Fatalf("err = %v, want an access-check failure", err)
 		}
@@ -477,7 +477,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		execOn(t, dir, `UPDATE item_access SET permissions = 'not json' WHERE item_id = '`+other.ID+`'`)
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "owner"); err == nil ||
+		if _, err := tokenRoute(idOf, warehouseRoute(st, &fakeWH{}, nil))(ctx, "", items[0].ID, "owner"); err == nil ||
 			!strings.Contains(err.Error(), "checking access") {
 			t.Fatalf("err = %v, want the sweep's failure", err)
 		}
@@ -485,7 +485,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 	t.Run("no Read", func(t *testing.T) {
 		st, ws, _ := diskStoreWithWarehouse(t)
 		items, _ := st.ListItems(ws.ID, "Warehouse")
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "stranger"); err == nil ||
+		if _, err := tokenRoute(idOf, warehouseRoute(st, &fakeWH{}, nil))(ctx, "", items[0].ID, "stranger"); err == nil ||
 			!strings.Contains(err.Error(), "access denied") {
 			t.Fatalf("err = %v, want access denied", err)
 		}
