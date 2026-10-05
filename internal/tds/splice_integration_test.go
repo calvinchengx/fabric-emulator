@@ -390,7 +390,7 @@ func (c *countingSpliceBackend) counts() (int, []string) {
 //
 // Production sets OnConnect only where the backend is a SpliceBackend
 // (server.go wires both inside the same `WarehouseSQLURL != ""` block), and
-// warehouseRouter returns an item GUID, never an empty string. So once an empty
+// warehouseRoute returns an item GUID, never an empty string. So once an empty
 // database is rejected, every accepted session has a non-empty targetDB and
 // satisfies the splice gate — the re-encode relay, whose DB("") is the
 // backend's DEFAULT pool, becomes unreachable.

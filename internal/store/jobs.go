@@ -231,17 +231,6 @@ func (s *Store) GetPipelineRun(jobID string) (status, activityRunsJSON string, e
 	return status, activityRunsJSON, err
 }
 
-// SetJobFailure records a terminal failure code on a job (used when a
-// DataPipeline interpreter run fails, overriding the clock-derived success).
-func (s *Store) SetJobFailure(itemID, id, failWith string) error {
-	res, err := s.db.Exec(
-		`UPDATE job_instances SET fail_with = ? WHERE item_id = ? AND id = ?`, failWith, itemID, id)
-	if err != nil {
-		return err
-	}
-	return oneRow(res)
-}
-
 // FinalizeJob forces a job to a terminal state *now* — complete_at=now with the
 // given failure code (empty = success). Used when a real engine reports a
 // RunNotebook result, so the job reflects the run rather than the clock.

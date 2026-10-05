@@ -85,7 +85,7 @@ func TestReflectFromOneLake(t *testing.T) {
 	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
-	done, err := Reflect(ctx, db, st, itemID)
+	done, err := (&Reflector{}).Reflect(ctx, db, st, itemID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +102,9 @@ func TestReflectFromOneLake(t *testing.T) {
 	}
 }
 
-// TestReflect exercises the exported Reflect (which forces the SQL Server "N"
-// Unicode string prefix). A numeric-only table keeps the generated literals
-// valid on the SQLite test engine, covering the production entry point.
+// TestReflect covers the production entry point, ReflectWithExternal, with no
+// ExternalDelta: a lakehouse holding only its own Delta tables reflects them
+// all, and a loose file directly under Tables/ is skipped rather than fatal.
 func TestReflect(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	put(t, st, wsID, itemID, "Tables/metrics/part-0.parquet",
@@ -117,7 +117,7 @@ func TestReflect(t *testing.T) {
 	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
-	done, err := Reflect(ctx, db, st, itemID)
+	done, err := ReflectWithExternal(ctx, db, st, itemID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestReflectListError(t *testing.T) {
 	st, _, itemID := seedLakehouse(t)
 	_ = st.Close() // a closed store makes ListOneLakePaths fail
 	db := testsupport.OpenMSSQL(t)
-	if _, err := Reflect(context.Background(), db, st, itemID); err == nil {
+	if _, err := (&Reflector{}).Reflect(context.Background(), db, st, itemID); err == nil {
 		t.Fatal("expected an error from the closed store")
 	}
 }

@@ -19,22 +19,6 @@ type warehouseBackend interface {
 	DB(database string) *sql.DB
 }
 
-// warehouseRouter builds the TDS OnConnect callback. The connection addresses a
-// lakehouse/warehouse either by item id (GUID) or by display name — real
-// Fabric's addressing, where the workspace is encoded in the server name. Each
-// item gets its own isolated SQL Server database (named by the item id), which
-// the router returns so the query loop routes there regardless of how the
-// client named it.
-//
-// It enforces the same workspace RBAC as the rest of the emulator: the token's
-// principal must have a role on the item's workspace (else the login is
-// rejected), and the surface is read-only for a Lakehouse (the analytics
-// endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
-// principalOf resolves the FedAuth token to its principal id.
-func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error), external warehouse.ExternalDelta) func(context.Context, string, string, string) (tds.Connection, error) {
-	return tokenRoute(principalOf, warehouseRoute(st, be, external))
-}
-
 // sqlRoute decides one principal's connection to one SQL item: the database
 // it reaches, the surface's read-only rules and the rung it gets. The TDS wire
 // reaches it through a token (tokenRoute); Fabric's Data Warehouse MCP server,
@@ -52,6 +36,20 @@ func tokenRoute(principalOf func(token string) (string, error), route sqlRoute) 
 	}
 }
 
+// warehouseRoute decides a connection to one lakehouse/warehouse. The
+// connection addresses the item either by item id (GUID) or by display name —
+// real Fabric's addressing, where the workspace is encoded in the server name.
+// Each item gets its own isolated SQL Server database (named by the item id),
+// which this returns so the query loop routes there regardless of how the
+// client named it.
+//
+// It enforces the same workspace RBAC as the rest of the emulator: the
+// principal must have a role on the item's workspace (else the login is
+// rejected), and the surface is read-only for a Lakehouse (the analytics
+// endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
+//
+// The TDS wire reaches it through tokenRoute, which resolves the FedAuth token
+// to its principal; server.go composes the two into OnConnect.
 func warehouseRoute(st *store.Store, be warehouseBackend, external warehouse.ExternalDelta) sqlRoute {
 	// One Reflector for the life of the server, captured here rather than made
 	// per connection — its whole value is remembering across logins. See its
