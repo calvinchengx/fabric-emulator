@@ -288,7 +288,20 @@ package = false
 #
 # Re-check when dbt-core relaxes the bound: this override should then be
 # DELETED rather than left to pin the ecosystem quietly.
-override-dependencies = ["sqlparse>=0.6.0"]
+#
+# oauthlib: databricks-sql-connector (via dbt-databricks, spark-agent-dbt only)
+# caps oauthlib<4.0.0 through its latest release, 4.6.0, which keeps 3.3.1 and
+# its two advisories (GHSA-xpv3-w29h-x7cv, GHSA-hj66-6f7g-4r5v). Both are in
+# oauthlib's SERVER endpoints; the connector is a client. It makes four calls
+# (`databricks/sql/auth/oauth.py`: `WebApplicationClient`'s
+# prepare_authorization_request, parse_request_uri_response,
+# prepare_request_body, prepare_refresh_body, plus `OAuth2Error`), and running
+# them with the connector's own arguments under 3.3.1 and 4.0.0 returns
+# BYTE-IDENTICAL results, refusals included. 4.0.0's only client change is the
+# removal of the JSONP `callback` from token revocation, which it never calls.
+#
+# Same rule: DELETE this once the connector allows oauthlib 4.
+override-dependencies = ["sqlparse>=0.6.0", "oauthlib>=4.0.0"]
 conflicts = [
     [
         { group = "dbt-fabric" },
