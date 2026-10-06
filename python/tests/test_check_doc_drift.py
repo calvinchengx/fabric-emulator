@@ -55,11 +55,11 @@ def tree(tmp_path, monkeypatch):
         for rel in files:
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("placeholder\n")
+            path.write_text("placeholder\n", encoding="utf-8")
         for rel, body in docs.items():
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(body)
+            path.write_text(body, encoding="utf-8")
         (tmp_path / "Makefile").write_text(makefile)
         monkeypatch.setattr(c, "ROOT", tmp_path)
         monkeypatch.setattr(c, "MAKEFILE", tmp_path / "Makefile")
