@@ -172,9 +172,15 @@ def main():
     check("the compile error was swallowed", error and "undefined: doesNotExist" in error)
 
     # 5. Exhausted retries surface go's output, not just "failed after 3".
+    #    The WHOLE message, not a token from it: go_install embeds `last`
+    #    verbatim, so anything less would still pass if the error were
+    #    truncated to the line that happens to name the checksum DB. (It read
+    #    `"sum.golang.org" in error` until CodeQL flagged the bare host as URL
+    #    sanitisation — alerts #58 and #82, the same finding twice as the line
+    #    moved. Asserting the full text is both stronger and not that shape.)
     _, error, calls, _ = with_stubs([(1, SUMDB_LAG)], attempts=3)
     check("attempts were not exhausted", len(calls) == 3)
-    check("the final error lost the diagnosis", error and "sum.golang.org" in error)
+    check("the final error lost go's own output", error and SUMDB_LAG.strip() in error)
 
     # 6. Already on PATH as a real binary: no install at all.
     with tempfile.TemporaryDirectory() as tmp:
