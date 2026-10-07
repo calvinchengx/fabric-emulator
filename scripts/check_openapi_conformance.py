@@ -16,7 +16,7 @@ path, status, body. No headers, ever -- see internal/server/record.go. The e2e
 suites already generate the traffic; recording is the only new thing, and a
 suite that does not set the variable simply contributes nothing.
 
-WHAT IS CHECKED, three classes, chosen because they are what a typed client
+WHAT IS CHECKED, four classes, chosen because they are what a typed client
 stumbles into:
 
   1. UNDOCUMENTED STATUS -- the emulator answered a code the spec does not list
@@ -24,6 +24,25 @@ stumbles into:
   2. MISSING REQUIRED PROPERTY -- including inside arrays, which is where most
      of the surface lives.
   3. WRONG PRIMITIVE TYPE, and enum membership.
+  4. WRONG STRING FORMAT -- `date-time`, `uuid`, `int32`, `int64`.
+
+WHY THE FOURTH CLASS IS WORTH A PASS OF ITS OWN. `type: string` is satisfied by
+any string at all, and the vendored specs carry 2,315 `format` annotations over
+these four spellings alone -- 2,095 `uuid`, 120 `date-time`, 92 `int32`, 8
+`int64`. Format is EXACTLY what a swagger-generated typed client enforces, at
+the deserializer and before the caller's own code runs: `uuid` becomes a Guid,
+`date-time` becomes a DateTime, `int32` becomes an int. So a zone-less
+timestamp or a non-UUID id satisfies all three classes above and throws inside
+the generated client -- the one contract class that can be green here and
+broken there.
+
+AND ITS LIMIT, which is why class 4 arrived carrying pins rather than fixes. A
+`format` is Microsoft's claim about what a route renders, and a MEASUREMENT
+against a real tenant outranks it: internal/api/items.go documents the
+operation timestamps as observed zone-less with a trimmed fraction, which
+`format: date-time` reads as RFC 3339 and therefore calls wrong. Every class-4
+pin below cites evidence of that kind. The gate's value is the surfaces NOT yet
+measured -- a NEW zone-less timestamp or non-UUID id there now fails.
 
 WHAT IS DELIBERATELY NOT CHECKED. Unexpected properties. Swagger omits
 `additionalProperties` almost everywhere, so "extra field" would fire on nearly
@@ -84,8 +103,15 @@ SPEC_ROOTS = (
 # object-shaped note.
 #
 # An entry is a SUBSTRING of the finding text. Adding one is a claim that the
-# disagreement is known and unadjudicated; the list is auditable and it shrinks
-# -- it has already gone from eleven to one.
+# disagreement is known and ADJUDICATED -- the reason string is the
+# adjudication, and a pin without one fails its own meta-test.
+#
+# THE LIST DOES NOT ONLY SHRINK, and an earlier draft of this comment claimed
+# it did. It shrinks when a defect is fixed and it GROWS when a new class of
+# oracle starts looking: adding the `format` pass surfaced four disagreement
+# classes at once, of which one was a real defect and is fixed and three are
+# pinned below with their evidence. A gate that could only ever shrink its
+# exclusion list is a gate nobody can extend.
 KNOWN = {
     # NOT IMPLEMENTED, and the 404 is the honest answer rather than a wrong
     # shape. Each is graded in docs/parity.md and asserted as refused by
@@ -172,6 +198,73 @@ KNOWN = {
         "drives isRefreshable=false on the dataset, so a client that trusts "
         "the flag is never then contradicted. A Direct Lake model takes the "
         "positive branch and is witnessed in e2e/data-science-loop.",
+    # ---- class 4, WRONG STRING FORMAT: three pins, each with its evidence ----
+    #
+    # The `format` pass arrived with four disagreement classes in this tree.
+    # ONE WAS A REAL DEFECT AND IS FIXED rather than pinned: GET /v1/admin/items
+    # rendered `lastUpdatedDate` zone-less with nothing defending it, and now
+    # sends RFC 3339 (internal/api/adminitems.go). The three below are pinned,
+    # and the reason is NOT laziness in each case -- it is that a MEASUREMENT
+    # outranks a `format`, or that the value is not the emulator's to choose.
+
+    # TENANT-MEASURED, and the spec is wrong for this route. internal/api/items.go
+    # defines `fabricOperationTime` from samples taken against a real tenant on
+    # 2026-08-11: ISO 8601, fraction trimmed, and NO `Z`. Two samples minutes
+    # apart carried 7 and 6 fractional digits, which is what settles the trimming
+    # rule. `format: date-time` reads as RFC 3339 and would have this emulator
+    # send a shape the tenant does not. Fixing it would mean making the emulator
+    # LESS faithful than the thing it emulates, so the finding is the honest
+    # record and the pin names where the measurement lives.
+    "GET /v1/operations/{operationId}.createdTimeUtc: is not RFC 3339":
+        "the operation timestamps are zone-less because a real tenant was "
+        "MEASURED sending them that way -- see fabricOperationTime in "
+        "internal/api/items.go, which cites the samples. The spec's "
+        "`format: date-time` is wrong for this route; matching it would make "
+        "the emulator diverge from the tenant.",
+    "GET /v1/operations/{operationId}.lastUpdatedTimeUtc: is not RFC 3339":
+        "as above, same rendering rule and same measurement.",
+
+    # NOT THE EMULATOR'S VALUE TO CHOOSE. A schedule's startDateTime and
+    # endDateTime are supplied by the CALLER and echoed back verbatim, so this
+    # finding describes a request body, not a rendering decision -- and the two
+    # suites in this tree send two different spellings, both accepted:
+    # e2e/az-rest/driver.py formats with a `Z` and produces no finding, while
+    # e2e/fabric-cli/driver.sh drives `fab job run-sch --start
+    # 2026-01-01T09:00:00`, and MICROSOFT'S OWN PUBLISHED CLI builds the body
+    # from that and sends it zone-less. A gate demanding `Z` here would be
+    # demanding the emulator refuse what fabric-cli sends.
+    #
+    # AND THE SPEC CONTRADICTS ITSELF HERE, which is the deciding half.
+    # common/job_scheduling.json makes `localTimeZoneId` a REQUIRED sibling of
+    # these two fields -- the timestamps are local to a named zone, which is why
+    # internal/schedule/schedule.go's parseLocalTime reads them in that zone and
+    # says so. A local time carrying a mandatory UTC offset is incoherent, and
+    # the property's own description ("in UTC, using the YYYY-MM-DDTHH:mm:ssZ
+    # format") disagrees with the schema it sits in. Unsettled in Microsoft's
+    # favour would break a documented client; recorded instead.
+    "configuration.startDateTime: is not RFC 3339":
+        "caller-supplied and echoed. Microsoft's own fabric-cli sends these "
+        "zone-less, and the schema requires a separate `localTimeZoneId`, so "
+        "the timestamps are local to a named zone rather than UTC. The "
+        "spec's `format: date-time` contradicts its own required sibling "
+        "field. See internal/schedule/schedule.go parseLocalTime.",
+    "configuration.endDateTime: is not RFC 3339":
+        "as above, the other half of the same schedule window.",
+
+    # CALLER-SUPPLIED AND ECHOED, exactly like the tenantId pin below, and the
+    # same resolution for the same reason. e2e/az-rest/driver.py assigns a role
+    # to `{"id": "az-rest-viewer", "type": "User"}` and the emulator stores and
+    # returns the principal it was handed. The spec marks `principal.id`
+    # `format: uuid`, so the faithful fix is to REFUSE a non-UUID principal at
+    # authoring time -- which is a behaviour change across several fixtures and
+    # deserves its own change rather than being folded into the one that made it
+    # visible.
+    ".principal.id: is not a canonical 8-4-4-4-12 UUID":
+        "a test fixture's non-UUID principal id, stored and echoed rather than "
+        "invented. The faithful fix is refusing it at authoring time, which is "
+        "a behaviour change owed its own PR -- the same call already made for "
+        "microsoftEntraMembers tenantId below.",
+
     "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
         "NOT the emulator inventing a shape: OneLake roles are stored as the "
         "raw body the caller PUT and echoed back, so this is a test fixture's "
@@ -222,6 +315,70 @@ TYPES = {
 # "not implemented" signal, and it is worth seeing: the Power BI routes pinned
 # in KNOWN are exactly that, recorded rather than hidden.
 AUTH_STATUSES = frozenset({401, 403})
+
+# RFC 3339, which is what `format: date-time` means and what a generated
+# client's DateTime deserializer accepts. The OFFSET IS MANDATORY in RFC 3339 --
+# either `Z` or +/-hh:mm -- and that is the whole substance of this pattern:
+# every class-4 finding in this tree is a timestamp that is otherwise perfectly
+# well formed and carries no zone, so a pattern with an optional offset would
+# find nothing at all and read as a clean tree.
+#
+# The fractional part is optional and unbounded in width, deliberately: a
+# tenant was measured sending 6 digits and 7 digits minutes apart
+# (internal/api/items.go), so a fixed width here would invent a disagreement.
+RFC3339 = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$")
+
+# The canonical 8-4-4-4-12 spelling. Case-insensitive, and the braced and
+# urn: spellings are NOT accepted: `format: uuid` in a response is what becomes
+# a Guid in a typed client, and the wire form Fabric uses everywhere else in
+# these same specs is the bare canonical one.
+UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                  r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+# Inclusive bounds of the two signed integer widths a typed client deserializes
+# into. An int32 field answered 2**31 is not a large number to a C# client; it
+# is an OverflowException.
+INT_RANGES = {
+    "int32": (-2**31, 2**31 - 1),
+    "int64": (-2**63, 2**63 - 1),
+}
+
+
+def format_violation(value, fmt):
+    """Why `value` is not a valid `fmt`, or None if it is fine.
+
+    FORMATS NOT LISTED HERE RETURN None RATHER THAN RAISING, and that is a
+    deliberate choice about what this gate claims. The specs also carry `uri`,
+    `double`, `binary`, `duration` and a handful of one-off spellings, and a
+    checker that guessed at those would manufacture findings on surfaces nobody
+    has measured. Four formats, each with an unambiguous wire grammar and each
+    enforced by a generated client's deserializer.
+
+    EACH BRANCH RE-CHECKS THE PYTHON TYPE, which looks redundant beside the
+    caller's own type check and is not. A schema may carry a `format` and NO
+    `type` -- the specs do this -- and then nothing upstream has established
+    that a `uuid` field holds a string at all. Matching a regex against an int
+    raises, and a gate that dies on one odd schema stops checking every
+    response after it.
+    """
+    if fmt == "date-time":
+        if isinstance(value, str) and not RFC3339.match(value):
+            return ("is not RFC 3339 (`format: date-time`); a generated "
+                    "client's DateTime deserializer requires a `Z` or "
+                    "+/-hh:mm offset")
+    elif fmt == "uuid":
+        if isinstance(value, str) and not UUID.match(value):
+            return "is not a canonical 8-4-4-4-12 UUID (`format: uuid`)"
+    elif fmt in INT_RANGES:
+        low, high = INT_RANGES[fmt]
+        # A bool is an int in Python, the same leak the type check guards
+        # against: `true` is not an out-of-range int32.
+        if isinstance(value, int) and not isinstance(value, bool) \
+                and not low <= value <= high:
+            return f"is outside the range of an {fmt} (`format: {fmt}`)"
+    return None
+
 
 # How many entries of an array to validate. The whole point of an array
 # response is that its entries share a schema, so the tenth is evidence of
@@ -286,22 +443,55 @@ class Specs:
         return None, None, None
 
 
-def validate(value, schema, specs, origin, where, found):
-    """Append a finding for every way `value` disagrees with `schema`."""
+def validate(value, schema, specs, origin, where, found, samples=None):
+    """Append a finding for every way `value` disagrees with `schema`.
+
+    `samples` is an optional dict that collects the FIRST value seen for each
+    finding text. It exists because the finding text deliberately does NOT
+    name the offending value -- see note() -- and a reader still needs one
+    concrete example to go and look at.
+    """
     schema, origin = specs.deref(schema, origin)
     if not isinstance(schema, dict) or value is None:
         return
 
+    def note(finding, value=None):
+        """Record a finding, and the value that provoked it, SEPARATELY.
+
+        THE VALUE MUST NOT GO IN THE FINDING TEXT, and this was measured. KNOWN
+        pins match by substring and main() dedups by finding text, so a
+        timestamp in the text turns ONE rendering rule into one line per
+        distinct instant: the local run over these recordings produces 17
+        different `createdTimeUtc` values from a single defect, which is
+        unpinnable and is exactly the crying-wolf the module docstring warns
+        about. So the text names the route, the field path and the expected
+        format, and the example lives here.
+        """
+        found.append(finding)
+        if samples is not None and value is not None:
+            samples.setdefault(finding, value)
+
     for sub in schema.get("allOf", []):
-        validate(value, sub, specs, origin, where, found)
+        validate(value, sub, specs, origin, where, found, samples)
 
     # A bool is an int in Python, and reporting `true` as a bad integer would
     # be this checker's own type system leaking into its findings.
     expected = schema.get("type")
     mistyped = expected in TYPES and not isinstance(value, TYPES[expected])
     if mistyped and not (expected == "integer" and isinstance(value, bool)):
-        found.append(f"{where}: type is {type(value).__name__}, spec says {expected}")
+        note(f"{where}: type is {type(value).__name__}, spec says {expected}")
         return
+
+    # FORMAT, and only once the TYPE already agreed -- a mistyped value
+    # returned above. Reporting a format on top of a type mismatch would be one
+    # defect wearing two hats, and of the two the type is the more useful
+    # finding: `format: uuid` on an integer is not a malformed UUID, it is not
+    # a string.
+    fmt = schema.get("format")
+    if fmt:
+        why = format_violation(value, fmt)
+        if why:
+            note(f"{where}: {why}", value)
 
     if isinstance(value, dict):
         for name in schema.get("required", []):
@@ -309,12 +499,14 @@ def validate(value, schema, specs, origin, where, found):
                 found.append(f"{where}: MISSING required property '{name}'")
         for name, sub in schema.get("properties", {}).items():
             if name in value:
-                validate(value[name], sub, specs, origin, f"{where}.{name}", found)
+                validate(value[name], sub, specs, origin, f"{where}.{name}",
+                         found, samples)
     elif isinstance(value, list):
         item = schema.get("items")
         if item:
             for index, entry in enumerate(value[:ARRAY_SAMPLE]):
-                validate(entry, item, specs, origin, f"{where}[{index}]", found)
+                validate(entry, item, specs, origin, f"{where}[{index}]",
+                         found, samples)
 
     choices = schema.get("enum")
     if choices and isinstance(value, (str, int)) and value not in choices:
@@ -340,8 +532,14 @@ def read_recording(path):
     return entries
 
 
-def conformance(entries, specs):
-    """(findings, matched, unmatched-paths) for a recording."""
+def conformance(entries, specs, samples=None):
+    """(findings, matched, unmatched-paths) for a recording.
+
+    `samples` is an optional dict filled in place with one example value per
+    distinct finding. An OUT-PARAMETER rather than a fourth element of the
+    return, deliberately: this tuple is unpacked in several tests and the shape
+    is the kind of thing a caller elsewhere would silently mis-destructure.
+    """
     found, matched, unmatched = [], 0, set()
     for entry in entries:
         template, origin, responses = specs.match(entry["method"], entry["path"])
@@ -369,7 +567,7 @@ def conformance(entries, specs):
         schema = documented.get("schema")
         if schema and entry.get("body") is not None:
             validate(entry["body"], schema, specs, origin,
-                     f"{entry['method']} {template}", found)
+                     f"{entry['method']} {template}", found, samples)
     return found, matched, unmatched
 
 
@@ -399,7 +597,8 @@ def main() -> int:
               "than a pass.", file=sys.stderr)
         return 1
 
-    raw, matched, unmatched = conformance(entries, specs)
+    samples = {}
+    raw, matched, unmatched = conformance(entries, specs, samples)
 
     # ONE LINE PER DISTINCT DISAGREEMENT, with how many responses carried it.
     # A suite calls the same route many times -- `GET /v1/workspaces` runs 51
@@ -445,6 +644,12 @@ def main() -> int:
         seen = occurrences[finding]
         tally = f"  ({seen} responses)" if seen > 1 else ""
         print(f"  - {finding}{tally}")
+        # The example, on its own line, because the finding text cannot carry
+        # it without breaking both the dedup and the pins. A format
+        # disagreement is close to unactionable without one: "not RFC 3339"
+        # does not say whether the zone is missing or the whole string is junk.
+        if finding in samples:
+            print(f"      e.g. {samples[finding]!r}")
     print("\n  -> correct the response, or if the spec is wrong for this route, "
           "say so where the route is implemented and exclude it deliberately.")
     return 1 if arguments.strict else 0
