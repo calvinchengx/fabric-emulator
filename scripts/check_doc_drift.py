@@ -546,6 +546,7 @@ _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
 _SIMPLE_HEADING_ANCHOR = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _LINE_ANCHOR = re.compile(r"^L\d+(?:-L\d+)?$")
 _HTML_TAG = re.compile(r"<[^>]+>")
+_INLINE_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _MD_PUNCT = re.compile(r"[^\w\s-]")
 _MD_SPACE = re.compile(r"\s")
 
@@ -595,6 +596,7 @@ def _resolve_doc_link(doc, target):
 def github_heading_slug(heading):
     """GitHub-style slug base for a Markdown heading."""
     heading = _HTML_TAG.sub("", heading)
+    heading = _INLINE_LINK.sub(r"\1", heading)
     heading = re.sub(r"`([^`]*)`", r"\1", heading)
     heading = heading.strip().lower()
     heading = _MD_PUNCT.sub("", heading)

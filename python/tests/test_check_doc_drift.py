@@ -467,6 +467,15 @@ def test_a_heading_anchor_with_github_double_hyphen_passes(tree):
     assert c.findings() == []
 
 
+def test_a_heading_containing_a_link_slugs_to_its_link_text(tree):
+    # GitHub slugs "## See [Foo](bar.md) now" as see-foo-now; keeping the URL
+    # would flag a correct anchor as dead.
+    tree({"docs/a.md": "see [t](b.md#see-foo-now)\n",
+          "docs/b.md": "## See [Foo](bar.md) now\n"},
+         files=["docs/a.md", "docs/b.md", "docs/bar.md"])
+    assert c.findings() == []
+
+
 def test_a_github_line_anchor_is_ignored(tree):
     tree({"docs/a.md": "see [line](b.md#L28)\n",
           "docs/b.md": "# Target\n"},
