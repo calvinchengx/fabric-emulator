@@ -12,6 +12,12 @@ release notes and non-heading fragments such as line anchors. The first run
 fixed stale links in the medallion PySpark README and old anchors into the real
 compute and notebook capability docs. [docs/10](../10-testing.md#the-failure-this-codebase-keeps-producing)
 
+## Doc drift slugs headings that contain links correctly
+
+A heading such as `## See [Foo](bar.md) now` is slugged by GitHub as
+`see-foo-now`. The Markdown-link check kept the URL in the slug, so a correct
+anchor into such a heading would have been reported as dead.
+
 ## A WITH clause no longer hides a write from Warehouse versioning
 
 `WITH c AS (…) INSERT/UPDATE/DELETE/MERGE …` was read as a query, so a Warehouse
