@@ -4,7 +4,13 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 `v0.41.0.md` (or whichever minor) when tagging. Open pull requests are not
 here.
 
+## Documentation drift catches Markdown links
 
+`scripts/check_doc_drift.py` now checks ordinary Markdown links to tracked repo
+files, directories and simple heading anchors, while still skipping historical
+release notes and non-heading fragments such as line anchors. The first run
+fixed stale links in the medallion PySpark README and old anchors into the real
+compute and notebook capability docs. [docs/10](../10-testing.md#the-failure-this-codebase-keeps-producing)
 
 ## A WITH clause no longer hides a write from Warehouse versioning
 
