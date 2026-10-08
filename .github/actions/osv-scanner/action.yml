@@ -1,0 +1,35 @@
+# Installs the pinned advisory scanner shared by the python-advisories and
+# js-advisories jobs.
+#
+# A composite action rather than the install steps duplicated in both jobs:
+# the version is the thing that must not drift between them. Two copies of a
+# curl pinned to a version is two places to bump, and the failure mode of
+# missing one is that the two ecosystems get scanned by different parsers
+# while both report green.
+#
+# Pinned to a release rather than tracking latest, for the same reason
+# gitleaks is pinned in the workflow that calls this: an advisory scanner
+# whose lockfile parsing changes between runs makes a green check mean
+# something different from week to week. The version is asserted against
+# scripts/check_advisories.py's SCANNER_VERSION by that script's test, so the
+# pin here and the pin recorded in the checker cannot drift apart silently.
+name: Install osv-scanner
+description: Install a pinned osv-scanner onto PATH
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        # Keep in step with SCANNER_VERSION in scripts/check_advisories.py.
+        OSV_VERSION: 2.2.3
+      run: |
+        set -euo pipefail
+        curl -fsSL -o /tmp/osv-scanner \
+          "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+        sudo install /tmp/osv-scanner /usr/local/bin/osv-scanner
+        # Prove the binary runs before a scan depends on it. A failed install
+        # that still exits 0 would leave the scan job reporting green having
+        # scanned nothing, which is the failure the scan's own missing-binary
+        # branch is written about.
+        osv-scanner --version
