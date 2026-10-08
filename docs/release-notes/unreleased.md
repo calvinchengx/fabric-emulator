@@ -18,6 +18,10 @@ A heading such as `## See [Foo](bar.md) now` is slugged by GitHub as
 `see-foo-now`. The Markdown-link check kept the URL in the slug, so a correct
 anchor into such a heading would have been reported as dead.
 
+A heading that contains an image, `## ![logo](l.png) Title`, is slugged as
+`title`: an image contributes no text, so its alt text is no longer part of the
+slug.
+
 ## A WITH clause no longer hides a write from Warehouse versioning
 
 `WITH c AS (…) INSERT/UPDATE/DELETE/MERGE …` was read as a query, so a Warehouse

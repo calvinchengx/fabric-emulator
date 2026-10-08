@@ -476,6 +476,22 @@ def test_a_heading_containing_a_link_slugs_to_its_link_text(tree):
     assert c.findings() == []
 
 
+def test_a_heading_containing_an_image_slugs_without_its_alt_text(tree):
+    # GitHub slugs "## ![logo](l.png) Title" as title: an image has no text.
+    tree({"docs/a.md": "see [t](b.md#title)\n",
+          "docs/b.md": "## ![logo](l.png) Title\n"},
+         files=["docs/a.md", "docs/b.md", "docs/l.png"])
+    assert c.findings() == []
+
+
+def test_a_heading_image_alt_text_is_not_an_anchor(tree):
+    # The pre-fix slug was alt-title; an anchor to it must now be dead.
+    tree({"docs/a.md": "see [t](b.md#logo-title)\n",
+          "docs/b.md": "## ![logo](l.png) Title\n"},
+         files=["docs/a.md", "docs/b.md", "docs/l.png"])
+    assert len(c.findings()) == 1
+
+
 def test_a_github_line_anchor_is_ignored(tree):
     tree({"docs/a.md": "see [line](b.md#L28)\n",
           "docs/b.md": "# Target\n"},
