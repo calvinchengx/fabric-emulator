@@ -2808,7 +2808,7 @@ jobs:
       # which is only a finding if staticcheck has lost the fact that
       # `t.Fatalf` does not return. It reproduced twice in CI on a lockfile-only
       # change, and NOT ONCE locally with the same linter (v2.12.2), the same Go
-      # (1.26.6 from go.mod), the same GOOS/GOARCH, and a cleaned cache. The
+      # (1.26.9 from go.mod), the same GOOS/GOARCH, and a cleaned cache. The
       # only difference was `Restored cache for golangci-lint`, and
       # `skip-cache: true` made the same code pass.
       #
