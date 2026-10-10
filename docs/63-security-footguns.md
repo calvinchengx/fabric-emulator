@@ -1,9 +1,9 @@
 # 63 — Security foot-guns: what scanned this source, what did not, and what now guards it
 
 **Status: nothing in this repository read its own source for insecure code
-shapes. Three scanners run here and all three answer a different question —
-govulncheck watches dependencies, gitleaks watches committed strings, and
-Dependabot watches versions. `.golangci.yml` enables no gosec and
+shapes. The scanners that run here all answer a different question —
+govulncheck and osv-scanner watch dependencies, gitleaks watches committed
+strings, and Dependabot watches versions. `.golangci.yml` enables no gosec and
 `pyproject.toml` does not select ruff's flake8-bandit family. The category was
 absent rather than incomplete, which is why
 [SECURITY.md](../SECURITY.md)'s honest "what does not run" section could not
@@ -29,7 +29,10 @@ gate the class rather than the instances.
 | govulncheck | `security.yml` | a vulnerable dependency symbol this code can reach | no — the module graph |
 | gitleaks | `security.yml`, tree + full history | a secret string that was committed | no — string contents |
 | Dependabot | `dependabot.yml`, five ecosystems | version currency plus the advisory graph | no — manifests |
+| osv-scanner (`python-advisories`) | `security.yml`, 9 tracked `uv.lock` | a vulnerable locked *version* — **not** reachability-filtered | no — lockfiles |
+| osv-scanner (`js-advisories`) | `security.yml`, root `pnpm-lock.yaml` | the same question for the pnpm workspace | no — lockfiles |
 | `check_dismissed_advisories.py` | `security.yml` | a dismissal whose justification expired | no — alert state |
+| `check_dependency_risk.py` | `make check` + `ci.yml` | is every manifest watched, and is every ecosystem *scanned* | no — config vs tree |
 | golangci-lint | `ci.yml` | errcheck, govet, ineffassign, staticcheck, unused | yes, but **no gosec** |
 | ruff | `ci.yml` | E, W, F, I, UP, B, SIM, RUF | yes, but **no `S` (flake8-bandit)** |
 
@@ -278,6 +281,14 @@ run":
   a symbol's enclosing function is a straight-line reading of the file.
 - **It does not read TypeScript.** The portal is out of scope, as it is for the
   `check_*_test_flakiness.py` trio's AST-based members.
-- **There is still no SBOM and no licence check**, and Python and npm
-  dependencies still get no reachability-filtered advisory scan. Those gaps are
-  SECURITY.md's and are unchanged by this document.
+- **There is still no SBOM and no licence check.** That gap is SECURITY.md's
+  and is unchanged by this document — there is no inventory artifact for a
+  downstream consumer to ingest.
+- **Only Go gets reachability filtering.** Python and npm are scanned against
+  the advisory graph now (the two osv-scanner rows above), which they were not
+  when this document was written, but version-level: a finding means the locked
+  version is affected, not that anything here calls the affected symbol. The
+  gap narrowed from "no advisory scan at all" to "no reachability analysis",
+  and those are not the same claim. `docs/advisory-holds.json` records the
+  advisories this repository knowingly carries, each with the upstream change
+  that retires it.

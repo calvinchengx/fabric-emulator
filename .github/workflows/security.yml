@@ -69,6 +69,57 @@ jobs:
       # here is a call path rather than a dependency-tree coincidence.
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # PYTHON AND npm HAD NO ADVISORY SCAN AT ALL. SECURITY.md listed that under
+  # "what does not run" as an honest known gap: Go had govulncheck and the
+  # other two ecosystems had Dependabot alerts alone. Python is this
+  # repository's largest dependency surface -- nine tracked uv.lock files, 856
+  # locked packages, seven of them the example lockfiles people copy out of
+  # here -- and a grep for pip-audit/osv-scanner/pnpm audit/trivy across these
+  # workflows, the Makefile and pyproject.toml returned nothing.
+  #
+  # Two jobs rather than one, over a tool that handles both ecosystems: a red
+  # job then names WHICH surface broke without anyone opening the log, and
+  # check_dependency_risk.py's fourth invariant can line each ecosystem up
+  # against the job that scans it.
+  #
+  # INPUTS ARE DISCOVERED FROM `git ls-files`, never listed here. A
+  # hand-maintained path list is the exact failure check_dependency_risk.py
+  # exists to prevent -- seven example lockfiles watched by nothing -- and
+  # discovery means a new example is scanned by code already in the tree. That
+  # is enforced, not merely intended: the fourth invariant fails this file if
+  # either job grows a literal lockfile path.
+  python-advisories:
+    name: Python advisories (9 uv.lock files)
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: ./.github/actions/osv-scanner
+      - run: python3 scripts/check_advisories.py --ecosystem uv
+
+  js-advisories:
+    name: JavaScript advisories (pnpm workspace)
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: ./.github/actions/osv-scanner
+      # No pnpm or node setup step, deliberately: osv-scanner reads
+      # pnpm-lock.yaml as a file. `pnpm audit` would need an install first,
+      # and installing to find out what is already pinned would make the scan
+      # depend on a resolution step that can itself fail.
+      - run: python3 scripts/check_advisories.py --ecosystem npm
+
   # A DISMISSED ALERT NEVER COMES BACK. Dependabot 56 was dismissed as
   # tolerable risk because the MLflow advisory had no fixed release -- true
   # when it was written and only until upstream ships one. Nothing in GitHub

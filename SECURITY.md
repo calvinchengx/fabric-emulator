@@ -74,9 +74,9 @@ little; a silent one costs more.
 ### Part of that list is now enforced mechanically
 
 The in-scope list above is a judgement about what matters, and until recently
-nothing checked this repository's own source against any of it. Three scanners
-run here and all three look elsewhere: govulncheck reads the dependency graph,
-gitleaks reads committed strings, Dependabot reads manifests. The two tools that
+nothing checked this repository's own source against any of it. The dependency
+scanners all look elsewhere: govulncheck and osv-scanner read the dependency
+graph, gitleaks reads committed strings, Dependabot reads manifests. The two tools that
 *do* read this source carry no security analyser — `.golangci.yml` enables no
 gosec, and `pyproject.toml` does not select ruff's flake8-bandit family, though
 fifteen `# noqa: S###` directives in the tree were written as though it did.
@@ -115,6 +115,17 @@ and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
 - **govulncheck** over the Go module, with reachability filtering: it reports a
   vulnerable symbol this code can actually call, not merely a vulnerable
   version in the graph.
+- **osv-scanner** over every tracked `uv.lock` — nine of them, 856 locked
+  packages, discovered from `git ls-files` rather than a listed set of paths —
+  and over the root `pnpm-lock.yaml`, which `pnpm-workspace.yaml` makes cover
+  `portal` and `website` too. Two jobs, `python-advisories` and
+  `js-advisories`, so a red one names which surface broke. **This is a
+  version-level scan against the advisory graph, not reachability analysis:**
+  a finding means the locked version is affected, not that this code calls the
+  affected symbol. `scripts/check_advisories.py` runs it; the inputs are
+  discovered rather than listed, and `check_dependency_risk.py` fails the
+  build if a scan job ever grows a literal lockfile path, because a
+  hand-maintained list is exactly what drifted before.
 - **`scripts/check_dismissed_advisories.py`**, which re-asks whether each
   dismissed alert's justification has expired. GitHub never re-raises a
   dismissal when upstream ships a fix.
@@ -124,9 +135,19 @@ and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
 
 **What does not run**, named here rather than left to be assumed:
 
-- **Python and npm dependencies get no reachability-filtered advisory scan.**
-  Go has govulncheck; the other two have Dependabot alerts alone, which flag a
-  vulnerable version whether or not anything here calls the affected code.
+- **Only Go gets reachability filtering.** Python and npm are now scanned
+  against the advisory graph on every push (above), but version-level: a
+  finding there flags a vulnerable version whether or not anything here calls
+  the affected code, and conversely a vulnerable *symbol* nobody calls still
+  fails those two jobs where it would not fail govulncheck. The gap narrowed
+  from "no advisory scan at all" to "no reachability analysis"; it did not
+  close, and the two are not the same claim.
+- **`docker` and `github-actions` get no advisory scan**, deliberately and for
+  a structural reason rather than a budget one: a base-image tag and a pinned
+  action are not resolved dependency sets, so there is no locked version list
+  to match against advisories. Dependabot's bumps are the whole of the
+  coverage there. The decision, and the reason, are recorded in `SCANNERS` in
+  `scripts/check_dependency_risk.py`, where the fourth invariant reads them.
 - **Nothing produces an SBOM, and nothing checks licences.** There is no
   inventory artifact for a downstream consumer to ingest.
 
@@ -140,12 +161,31 @@ including two published to GHCR and pulled family-wide. Both were found through
 a stale alert naming a directory deleted months earlier.
 
 So `scripts/check_dependency_risk.py` runs offline in `make check` and in CI,
-and enforces three things: every tracked manifest is covered by some Dependabot
-entry (with deliberate exclusions written out as data with their reason, never
-as silence), every watched directory still exists and still holds a manifest,
-and every `ignore:` hold declares its exit condition — either the upstream
-change that retires it, or an explicit statement that it is policy rather than
-delay.
+and enforces five things. The first three are about Dependabot still matching
+the tree: every tracked manifest is covered by some entry (with deliberate
+exclusions written out as data with their reason, never as silence), every
+watched directory still exists and still holds a manifest, and every `ignore:`
+hold declares its exit condition — either the upstream change that retires it,
+or an explicit statement that it is policy rather than delay.
+
+The last two are about whether anything *scans* what Dependabot watches, which
+is a different question with the same symptom when the answer is no: every
+ecosystem with tracked manifests is reached by a named scanner job in
+`security.yml` (or is recorded as deliberately on Dependabot alone, with the
+reason), and every hold in `docs/advisory-holds.json` declares its exit
+condition under the same rule.
+
+**That ledger is the maintenance-risk half, and `cryptography` is why it is
+shaped this way.** The hold above was written because mlflow's `requires_dist`
+said `cryptography<50,>=43.0.0`, and its comment named the cost in advance:
+*"cryptography is security-relevant and 49.x carries no open advisory today,
+but that could change while the ceiling holds."* It changed — `PYSEC-2026-3552`
+(CVSS 8.2) landed against 49.0.0 with its fix in exactly the 50.0.0 the ceiling
+forbade — and nothing in this repository was asking whether the prediction had
+come true until the advisory scan above started looking. mlflow 3.16.1 has
+since raised its ceiling to `<51`, so the hold's stated `LIFT THIS` condition
+was already met and the advisory was fixable after all. A hold with an exit
+condition is only worth writing if something re-reads it.
 
 ## Supported versions
 

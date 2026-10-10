@@ -113,13 +113,23 @@ updates:
     # cryptography reproduce with the mlflow line below, and databricks-sdk
     # fails in Dependabot with the dbt-databricks line.
     ignore:
-      # mlflow 3.15.1 `requires_dist`: `cryptography<50,>=43.0.0`.
-      # Our own range is `>=42,<51`, so WE permit 50 and mlflow forbids it.
-      # This is the one with a real cost: cryptography is security-relevant and
-      # 49.x carries no open advisory today, but that could change while the
-      # ceiling holds.
+      # mlflow 3.16.1 `requires_dist`: `cryptography<51,>=43.0.0`.
+      # Our own range is `>=42,<51`, so the two now agree on the ceiling and
+      # the hold bites only on the NEXT major.
       #
-      # LIFT THIS when mlflow's `requires_dist` admits cryptography 50.
+      # THE PREDICTION THIS COMMENT USED TO CARRY CAME TRUE, which is the
+      # reason it is worth reading. It said: `cryptography is security-relevant
+      # and 49.x carries no open advisory today, but that could change while
+      # the ceiling holds`. It changed -- PYSEC-2026-3552 / GHSA-g6cj-pr64-35w5
+      # (CVSS 8.2) landed against 49.0.0 with its fix in exactly the 50.0.0
+      # that mlflow 3.15.1 forbade. By then mlflow had shipped 3.16.1 and
+      # raised its ceiling to `<51`, so the fix was reachable and the lockfile
+      # now carries 50.0.2. Nothing in this repository was asking; the Python
+      # advisory scan added in security.yml (`python-advisories`) is what
+      # asked. A hold with an exit condition is only worth writing if
+      # something re-reads it.
+      #
+      # LIFT THIS when mlflow's `requires_dist` admits cryptography 51.
       - dependency-name: cryptography
         update-types: ['version-update:semver-major']
       # mlflow 3.15.1 `requires_dist`: `pandas<3`.
