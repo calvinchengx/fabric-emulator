@@ -247,11 +247,12 @@ to every check in this repository today. It would show as ✅ in the Axis A tabl
 and would not appear here at all. That is the shape of gap this document exists
 to name rather than discover.
 
-**What would close it** is [Phase 3](#phase-3--behaviour-contracts), which is
-the largest phase for this reason: it is the only one that cannot be done by
-enumeration. Each member needs an assertion in the shape contract 4 established
-— execute through the real path, then verify out of band, so the component that
-acted is never the one that confirms. Until then the honest sentence about this
+**What would close it** is Phase 3 in
+[the delivery table](#the-phases-and-what-each-one-found), which is the largest
+phase for this reason: it is the only one that cannot be done by enumeration.
+Each member needs an assertion in the shape contract 4 established — execute
+through the real path, then verify out of band, so the component that acted is
+never the one that confirms. Until then the honest sentence about this
 axis is that nobody has asked the question of any member, which is different
 from having asked and found nothing wrong.
 

@@ -317,14 +317,17 @@ SIBLING entra-emulator repo, read here as one of ours.
 None of the three is a typo. Each is a fact that expired, and the only thing
 that would ever have caught them is somebody happening to click.
 
-`scripts/check_doc_drift.py` now asserts three things across the prose, in
+`scripts/check_doc_drift.py` now asserts five things across the prose, in
 `make check` and in the `witnesses` job: a backticked repo path exists, a
-`make <target>` names a target the Makefile defines, and a documented
-FABRIC_/ENTRA_-style variable is read by some non-Markdown file. Only the first
-class had live drift. The other two land as regression guards — and because a
-check that always passes is indistinguishable from a check that is working,
-both are tested against synthetic drift rather than trusted on the strength of a
-green tree. That is item Eight's lesson applied to the fix for item Twelve.
+`make <target>` names a target the Makefile defines, a documented
+FABRIC_/ENTRA_-style variable is read by some non-Markdown file, a backticked
+Go package/symbol reference names code that exists, and an ordinary Markdown
+link points at a tracked file, directory or simple heading anchor. The path and
+Markdown-link classes have found live drift; the others land as regression
+guards — and because a check that always passes is indistinguishable from a
+check that is working, every class is tested against synthetic drift rather
+than trusted on the strength of a green tree. That is item Eight's lesson
+applied to the fix for item Twelve.
 
 It is tuned for **precision over recall**, because a checker that cries wolf
 gets muted, and a muted check is item Eight again. `make` is read only from
@@ -332,9 +335,12 @@ command-shaped code spans: the naive bare-word regex returns 13 hits on this
 tree and all 13 are English prose ("make the", "make it", "make every"). A dot
 that is not a known file extension means "not a path", so the Go symbol
 `internal/tsql.DataFlows` is left alone. `docs/24` is this repo's shorthand for
-a NUMBERED DOCUMENT and never a path. Release notes are skipped outright: a
-v0.16 note naming a since-renamed file is correct about the tree at that tag,
-and editing it to please a checker would be falsifying a historical record.
+a NUMBERED DOCUMENT and never a path. Markdown heading anchors are checked only
+when the target file exists and the fragment is a simple GitHub-style heading
+slug, so line anchors and generated ids are not treated as promises this checker
+can verify. Release notes are skipped outright: a v0.16 note naming a
+since-renamed file is correct about the tree at that tag, and editing it to
+please a checker would be falsifying a historical record.
 
 The prose it reads is every `docs/` page, the root readme, and **every
 per-directory README** — beside an example, a suite, a package. That last group

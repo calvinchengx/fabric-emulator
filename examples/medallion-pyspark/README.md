@@ -76,9 +76,11 @@ runs all 17 steps in about the same. The landed files are ~75 MB of CSV, ~95 MB
 of JSON Lines, ~30 MB of nested JSON and ~1.9 MB of Parquet.
 
 Change the scale with `N_CUSTOMERS` / `N_ORDERS` in
-[`source_system.py`](source_system.py) and `N_WEB_CUSTOMERS` / `N_WEB_ORDERS` in
-[`web_store.py`](web_store.py). Every `EXPECTED_*` value is computed from those
-constants and the defect ratios, so nothing needs updating alongside them.
+[`source_system.py`](../contoso-fixtures/source_system.py) and
+`N_WEB_CUSTOMERS` / `N_WEB_ORDERS` in
+[`web_store.py`](../contoso-fixtures-advanced/web_store.py). Every `EXPECTED_*`
+value is computed from those constants and the defect ratios, so nothing needs
+updating alongside them.
 
 Two things to know before raising them. The emulator keeps OneLake in an
 **in-memory** store by default (`docker-compose.yml` sets `FABRIC_DATA_DIR`

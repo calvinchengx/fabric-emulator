@@ -20,8 +20,8 @@ finding anything:
 So the tests that matter most are the ones asserting each class FAILS on a dead
 reference. A checker that always passes is indistinguishable from a checker that
 is working, which is the exact failure docs/10 catalogues at length -- and the
-reason the two currently-clean classes (make, env) are tested against synthetic
-drift rather than trusted because the tree is green.
+reason every class is tested against synthetic drift rather than trusted because
+the tree is green.
 """
 import pathlib
 import sys
@@ -55,11 +55,11 @@ def tree(tmp_path, monkeypatch):
         for rel in files:
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("placeholder\n")
+            path.write_text("placeholder\n", encoding="utf-8")
         for rel, body in docs.items():
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(body)
+            path.write_text(body, encoding="utf-8")
         (tmp_path / "Makefile").write_text(makefile)
         monkeypatch.setattr(c, "ROOT", tmp_path)
         monkeypatch.setattr(c, "MAKEFILE", tmp_path / "Makefile")
@@ -429,12 +429,110 @@ def test_a_go_symbol_exempt_entry_is_skipped(tree, tmp_path):
     assert c.findings() == []
 
 
+# --- class 5: dead Markdown links --------------------------------------------
+
+def test_a_dead_relative_markdown_link_fails(tree):
+    tree({"docs/a.md": "see [missing](missing.md)\n"}, files=["docs/a.md"])
+    found = c.findings()
+    assert kinds(found) == ["markdown-link"]
+    assert found[0][3] == "missing.md"
+
+
+def test_a_live_relative_markdown_link_passes(tree):
+    tree({"docs/a.md": "see [next](b.md)\n",
+          "docs/b.md": "# Target\n"},
+         files=["docs/a.md", "docs/b.md"])
+    assert c.findings() == []
+
+
+def test_a_same_document_anchor_passes(tree):
+    tree({"docs/a.md": "# Target Heading\n\nsee [target](#target-heading)\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_dead_heading_anchor_fails(tree):
+    tree({"docs/a.md": "see [target](b.md#missing-heading)\n",
+          "docs/b.md": "# Present Heading\n"},
+         files=["docs/a.md", "docs/b.md"])
+    found = c.findings()
+    assert kinds(found) == ["markdown-link"]
+    assert found[0][3] == "b.md#missing-heading"
+
+
+def test_a_heading_anchor_with_github_double_hyphen_passes(tree):
+    tree({"docs/a.md": "see [target](b.md#phase-3--behaviour-contracts)\n",
+          "docs/b.md": "## Phase 3 — behaviour contracts\n"},
+         files=["docs/a.md", "docs/b.md"])
+    assert c.findings() == []
+
+
+def test_a_heading_containing_a_link_slugs_to_its_link_text(tree):
+    # GitHub slugs "## See [Foo](bar.md) now" as see-foo-now; keeping the URL
+    # would flag a correct anchor as dead.
+    tree({"docs/a.md": "see [t](b.md#see-foo-now)\n",
+          "docs/b.md": "## See [Foo](bar.md) now\n"},
+         files=["docs/a.md", "docs/b.md", "docs/bar.md"])
+    assert c.findings() == []
+
+
+def test_a_heading_containing_an_image_slugs_without_its_alt_text(tree):
+    # GitHub slugs "## ![logo](l.png) Title" as title: an image has no text.
+    tree({"docs/a.md": "see [t](b.md#title)\n",
+          "docs/b.md": "## ![logo](l.png) Title\n"},
+         files=["docs/a.md", "docs/b.md", "docs/l.png"])
+    assert c.findings() == []
+
+
+def test_a_heading_image_alt_text_is_not_an_anchor(tree):
+    # The pre-fix slug was alt-title; an anchor to it must now be dead.
+    tree({"docs/a.md": "see [t](b.md#logo-title)\n",
+          "docs/b.md": "## ![logo](l.png) Title\n"},
+         files=["docs/a.md", "docs/b.md", "docs/l.png"])
+    assert len(c.findings()) == 1
+
+
+def test_a_github_line_anchor_is_ignored(tree):
+    tree({"docs/a.md": "see [line](b.md#L28)\n",
+          "docs/b.md": "# Target\n"},
+         files=["docs/a.md", "docs/b.md"])
+    assert c.findings() == []
+
+
+def test_an_external_markdown_link_is_ignored(tree):
+    tree({"docs/a.md": "see [site](https://example.com/missing.md#heading)\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_an_image_markdown_link_is_ignored(tree):
+    tree({"docs/a.md": "![alt](missing.png)\n"}, files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_markdown_link_inside_a_fenced_block_is_not_read(tree):
+    tree({"docs/a.md": "```md\n[missing](gone.md)\n```\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_markdown_link_exempt_entry_is_scoped_to_its_own_document(tree):
+    tree({"docs/a.md": "planned: [future](future.md)\n",
+          "docs/b.md": "broken: [future](future.md)\n"},
+         files=["docs/a.md", "docs/b.md"],
+         exempt={("docs/a.md", "future.md"): "planned doc"})
+    found = c.findings()
+    assert kinds(found) == ["markdown-link"]
+    assert found[0][1] == "docs/b.md"
+
+
 # --- scope, exemptions, reporting ---------------------------------------------
 
 def test_release_notes_are_skipped(tree):
     # A v0.16 note naming a since-renamed file is CORRECT about the tree at
     # that tag; editing it would falsify a historical record.
-    tree({"docs/release-notes/v0.16.0.md": "shipped `internal/store/gone.go`\n"},
+    tree({"docs/release-notes/v0.16.0.md":
+          "shipped `internal/store/gone.go` and [old docs](gone.md)\n"},
          files=["docs/a.md"])
     assert c.findings() == []
 

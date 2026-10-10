@@ -20,7 +20,7 @@ same shape -- a reference that was true when it was typed:
 None of these is a typo. Each is a fact that expired, and the only thing that
 would ever have caught them is somebody happening to click.
 
-WHAT THIS CHECKS. Four classes of doc/code drift across the prose docs:
+WHAT THIS CHECKS. Five classes of doc/code drift across the prose docs:
 
   1. DEAD REPO PATHS   -- a backticked `dir/path` under a tracked top-level
                           directory that no longer exists on disk.
@@ -32,10 +32,12 @@ WHAT THIS CHECKS. Four classes of doc/code drift across the prose docs:
   4. DEAD GO SYMBOLS   -- a backticked repo package reference such as
                           `internal/api.SomeName` whose tracked Go package
                           directory or top-level symbol no longer exists.
+  5. DEAD MD LINKS     -- a Markdown link to a repo file, directory, or simple
+                          Markdown heading anchor that no longer exists.
 
 PRECISION OVER RECALL, deliberately, because a checker that cries wolf gets
 muted and then it is a check that does not run (docs/10 has the full account of
-what that costs). Three concessions buy it:
+what that costs). These concessions buy it:
 
   * MAKE TARGETS ARE ANCHORED TO CODE SPANS. The naive `make \w+` regex was
     measured against this tree: 13 hits, every one of them English prose --
@@ -50,6 +52,10 @@ what that costs). Three concessions buy it:
     generic funcs, and type/var/const declarations. It deliberately ignores
     methods and deeper language semantics so it can fail on stale prose without
     pretending to be `go/types`.
+  * MARKDOWN ANCHORS ARE SIMPLE HEADING SLUGS ONLY. Ordinary links to files and
+    directories are checked against git's tracked paths; anchors are checked
+    only for Markdown targets that exist, and only when the fragment looks like
+    a GitHub-style heading slug rather than a line anchor or generated id.
   * RELEASE NOTES ARE OUT OF SCOPE. docs/release-notes/** describes the repo as
     it was at a tag. A v0.16 note naming a since-renamed file is CORRECT, and
     editing it would be falsifying a historical record to please a checker.
@@ -74,6 +80,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAKEFILE = ROOT / "Makefile"
@@ -144,6 +151,7 @@ EXEMPT = {
 
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _INLINE = re.compile(r"`([^`\n]+)`")
+_MD_LINK = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 
 
 def scan_lines(text):
@@ -199,6 +207,22 @@ def inline_spans(text):
             yield lineno, match.group(1)
 
 
+def markdown_links(text):
+    """Yield (lineno, target) for Markdown links outside fences.
+
+    The extractor is intentionally small: it catches ordinary inline Markdown
+    links, not every CommonMark edge case. Images, fenced examples, reference
+    links, and HTML are outside this class's precision budget.
+    """
+    for lineno, line, in_fence in scan_lines(text):
+        if in_fence:
+            continue
+        for match in _MD_LINK.finditer(line):
+            target = match.group(1).strip().strip("<>")
+            if target:
+                yield lineno, target
+
+
 # --- class 1: dead repo paths -------------------------------------------------
 
 _LINE_SUFFIX = re.compile(r":\d+(?:-\d+)?$")
@@ -218,8 +242,8 @@ def tracked_index():
     reference with the wrong case passes `make check` on a laptop and fails in
     CI -- the checker disagreeing with itself across platforms, which is the
     one failure that makes a guard untrustworthy rather than merely wrong.
-    Asking git is exact everywhere, and it is the same list the other two
-    classes already read.
+    Asking git is exact everywhere, and it is the same list the other classes
+    already read.
     """
     paths = tracked_files()
     tops = {path.split("/", 1)[0] for path in paths if "/" in path}
@@ -516,6 +540,120 @@ def dead_go_symbols(doc, text, packages):
             yield lineno, token, candidate
 
 
+# --- class 5: dead Markdown links --------------------------------------------
+
+_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
+_SIMPLE_HEADING_ANCHOR = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_LINE_ANCHOR = re.compile(r"^L\d+(?:-L\d+)?$")
+_HTML_TAG = re.compile(r"<[^>]+>")
+_INLINE_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_INLINE_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_PUNCT = re.compile(r"[^\w\s-]")
+_MD_SPACE = re.compile(r"\s")
+
+
+def _normalise_repo_path(path):
+    """Collapse a POSIX path and return None if it escapes the repo."""
+    parts = []
+    for part in pathlib.PurePosixPath(path).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _resolve_doc_link(doc, target):
+    """Return (repo path or None for same doc, anchor, shown key), or None."""
+    pieces = urllib.parse.urlsplit(target)
+    if pieces.scheme or pieces.netloc:
+        return None
+    if pieces.path.startswith("/"):
+        return None
+    if pieces.scheme in ("mailto",):
+        return None
+
+    raw_path = urllib.parse.unquote(pieces.path)
+    anchor = urllib.parse.unquote(pieces.fragment)
+    if pieces.query:
+        return None
+    if not raw_path and not anchor:
+        return None
+
+    if raw_path:
+        base = pathlib.PurePosixPath(doc).parent
+        resolved = _normalise_repo_path(str(base / raw_path))
+    else:
+        resolved = doc
+    if resolved is None:
+        return None
+    return resolved, anchor, target
+
+
+def github_heading_slug(heading):
+    """GitHub-style slug base for a Markdown heading."""
+    heading = _HTML_TAG.sub("", heading)
+    heading = _INLINE_IMAGE.sub("", heading)
+    heading = _INLINE_LINK.sub(r"\1", heading)
+    heading = re.sub(r"`([^`]*)`", r"\1", heading)
+    heading = heading.strip().lower()
+    heading = _MD_PUNCT.sub("", heading)
+    heading = _MD_SPACE.sub("-", heading).strip("-")
+    return heading
+
+
+def markdown_heading_anchors(rel):
+    """Simple GitHub-style heading anchors for a Markdown file."""
+    try:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+
+    anchors = set()
+    seen = {}
+    for _lineno, line, in_fence in scan_lines(text):
+        if in_fence:
+            continue
+        match = _HEADING.match(line)
+        if not match:
+            continue
+        base = github_heading_slug(match.group(2))
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        anchors.add(base if count == 0 else f"{base}-{count}")
+    return anchors
+
+
+def dead_markdown_links(doc, text, index):
+    _tops, known = index
+    anchor_cache = {}
+    for lineno, target in markdown_links(text):
+        if target.startswith(("http://", "https://", "mailto:")):
+            continue
+        resolved = _resolve_doc_link(doc, target)
+        if resolved is None:
+            continue
+        rel, anchor, key = resolved
+        if rel.startswith(SKIP_PREFIXES):
+            continue
+        if rel not in known:
+            yield lineno, target, key
+            continue
+        if not anchor:
+            continue
+        if _LINE_ANCHOR.match(anchor) or not _SIMPLE_HEADING_ANCHOR.match(anchor):
+            continue
+        if pathlib.PurePosixPath(rel).suffix.lower() != ".md":
+            continue
+        anchors = anchor_cache.setdefault(rel, markdown_heading_anchors(rel))
+        if anchor not in anchors:
+            yield lineno, target, key
+
+
 # --- reporting ----------------------------------------------------------------
 
 CLASSES = (
@@ -529,6 +667,9 @@ CLASSES = (
     ("go", "names a Go package or symbol that does not exist",
      "point it at the live package/symbol, or add an EXEMPT entry if the "
      "reference is deliberately forward-looking"),
+    ("markdown-link", "links to a Markdown target that does not exist",
+     "point it at the live file, directory, or heading, or add an EXEMPT entry "
+     "if the reference is deliberately forward-looking"),
 )
 
 
@@ -570,7 +711,8 @@ def findings():
         for kind, produce, arg in (("path", dead_paths, index),
                                    ("make", dead_targets, targets),
                                    ("env", unread_env, env_defined),
-                                   ("go", dead_go_symbols, go_packages)):
+                                   ("go", dead_go_symbols, go_packages),
+                                   ("markdown-link", dead_markdown_links, index)):
             for lineno, shown, key in produce(rel, text, arg):
                 if (rel, key) in EXEMPT:
                     continue

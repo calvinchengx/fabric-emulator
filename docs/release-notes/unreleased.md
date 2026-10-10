@@ -4,7 +4,31 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 `v0.41.0.md` (or whichever minor) when tagging. Open pull requests are not
 here.
 
+## Documentation drift catches Markdown links
 
+`scripts/check_doc_drift.py` now checks ordinary Markdown links to tracked repo
+files, directories and simple heading anchors, while still skipping historical
+release notes and non-heading fragments such as line anchors. The first run
+fixed stale links in the medallion PySpark README and old anchors into the real
+compute and notebook capability docs. [docs/10](../10-testing.md#the-failure-this-codebase-keeps-producing)
+
+## Doc drift slugs headings that contain links correctly
+
+A heading such as `## See [Foo](bar.md) now` is slugged by GitHub as
+`see-foo-now`. The Markdown-link check kept the URL in the slug, so a correct
+anchor into such a heading would have been reported as dead.
+
+A heading that contains an image, `## ![logo](l.png) Title`, is slugged as
+`title`: an image contributes no text, so its alt text is no longer part of the
+slug.
+
+## A guard that every item type has a typed collection
+
+Every documented `ItemType` is reachable at a typed REST collection today, but
+nothing pinned it: a type added to the enumeration without a segment would 404
+at the URL the reference prints while the generic surface created it fine. A
+test now fails naming the type, and also fails on an alias whose type is not
+documented.
 
 ## A WITH clause no longer hides a write from Warehouse versioning
 

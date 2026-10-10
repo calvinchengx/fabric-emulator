@@ -139,7 +139,7 @@ them again if you still want them.
 | Profile | Adds | Gives you | Costs |
 |---|---|---|---|
 | `governance` | OpenMetadata + Postgres + OpenSearch | catalog, glossary, lineage over the state your pipelines wrote ([22](22-openmetadata.md)) | ~2.8 GB |
-| `airflow` | `apache/airflow` scheduler + webserver | `ApacheAirflowJob` items run on genuine Airflow ([14](14-real-compute.md#e1)) | ~1.1 GB |
+| `airflow` | `apache/airflow` scheduler + webserver | `ApacheAirflowJob` items run on genuine Airflow ([14](14-real-compute.md#track-e--pipelines-real-orchestration-where-it-exists-real-work-everywhere)) | ~1.1 GB |
 | `rti` | `kustainer` | Microsoft's own KQL engine behind Eventhouse ([25](25-rti-kusto.md)) | 4 GB (its own `mem_limit`) |
 | `eventstream` | `kafka` (`apache/kafka` KRaft) | Fabric Eventstream notebook API, Custom HTTP produce, Lakehouse Delta dest, Reflex job dest ([51](51-eventstream-kafka.md)) | ~400 MB |
 | `terminal` | `ttyd` | a shell in the Flow view, beside the graph ([31](31-flow-observability.md#the-terminal-pane)) | negligible |
