@@ -138,15 +138,20 @@ func TestRoleAssignmentHandlerErrors(t *testing.T) {
 			t.Fatalf("bad grant %q = %d", body, w.Code)
 		}
 	}
-	// Duplicate grant → 409.
-	if w := do(a.createRoleAssignment, admin, "POST",
-		`{"principal":{"id":"viewer-1","type":"User"},"role":"Viewer"}`, wid); w.Code != http.StatusConflict {
-		t.Fatalf("duplicate grant = %d", w.Code)
+	// A non-UUID principal.id is refused (spec: `format: uuid`), and the
+	// refusal names the field rather than the generic missing-field message.
+	w := do(a.createRoleAssignment, admin, "POST",
+		`{"principal":{"id":"viewer-1","type":"User"},"role":"Viewer"}`, wid)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "must be a UUID") {
+		t.Fatalf("non-UUID grant = %d %s", w.Code, w.Body)
 	}
-	// Grant with defaulted principal type.
-	if w := do(a.createRoleAssignment, admin, "POST",
-		`{"principal":{"id":"typed"},"role":"Viewer"}`, wid); w.Code != http.StatusCreated {
+	// Grant with defaulted principal type, then the same principal again → 409.
+	const typed = `{"principal":{"id":"00000000-0000-4000-8000-0000000000aa"},"role":"Viewer"}`
+	if w := do(a.createRoleAssignment, admin, "POST", typed, wid); w.Code != http.StatusCreated {
 		t.Fatalf("defaulted type grant = %d", w.Code)
+	}
+	if w := do(a.createRoleAssignment, admin, "POST", typed, wid); w.Code != http.StatusConflict {
+		t.Fatalf("duplicate grant = %d", w.Code)
 	}
 
 	// Patch: malformed, invalid role, unknown id.

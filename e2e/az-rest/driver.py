@@ -343,7 +343,7 @@ def driver() -> None:
 
     print("-- 4. role assignments: grant Viewer, list, delete")
     grant = az_rest("post", v1(f"workspaces/{wsid}/roleAssignments"),
-                    {"principal": {"id": "az-rest-viewer", "type": "User"}, "role": "Viewer"})
+                    {"principal": {"id": "00000000-0000-4000-8000-00000000a2e5", "type": "User"}, "role": "Viewer"})
     ras = az_rest("get", v1(f"workspaces/{wsid}/roleAssignments")).get("value") or []
     if not any(r.get("id") == grant.get("id") and r.get("role") == "Viewer" for r in ras):
         fail(f"grant missing from list: {ras}")

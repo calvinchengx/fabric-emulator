@@ -209,7 +209,7 @@ func TestEndToEndAgainstEntraEmulator(t *testing.T) {
 	// Grant + patch + revoke a Viewer.
 	var ra struct{ ID string }
 	resp = f.call("POST", "/v1/workspaces/"+ws.ID+"/roleAssignments", f.token,
-		map[string]any{"principal": map[string]string{"id": "user-9", "type": "User"}, "role": "Viewer"}, &ra)
+		map[string]any{"principal": map[string]string{"id": "00000000-0000-4000-8000-000000000009", "type": "User"}, "role": "Viewer"}, &ra)
 	f.mustStatus(resp, http.StatusCreated, "grant viewer")
 	f.mustStatus(f.call("PATCH", "/v1/workspaces/"+ws.ID+"/roleAssignments/"+ra.ID, f.token,
 		map[string]string{"role": "Contributor"}, nil), http.StatusOK, "patch role")
@@ -369,7 +369,7 @@ func TestRBACAcrossPrincipals(t *testing.T) {
 		map[string]any{"principal": map[string]string{"id": entra.BobOID, "type": "User"}, "role": "Contributor"}, nil),
 		http.StatusCreated, "member grants contributor")
 	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/roleAssignments", alice,
-		map[string]any{"principal": map[string]string{"id": "other-user", "type": "User"}, "role": "Admin"}, nil),
+		map[string]any{"principal": map[string]string{"id": "00000000-0000-4000-8000-0000000000ee", "type": "User"}, "role": "Admin"}, nil),
 		http.StatusForbidden, "member grants admin")
 	f.mustStatus(f.call("PATCH", "/v1/workspaces/"+ws.ID, alice,
 		map[string]string{"description": "x"}, nil), http.StatusForbidden, "member patches workspace")

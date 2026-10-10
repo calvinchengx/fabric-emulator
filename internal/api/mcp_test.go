@@ -193,7 +193,7 @@ func TestMCPToolRoundTrip(t *testing.T) {
 		t.Fatalf("capacities = %s", caps)
 	}
 
-	role := mcpText(t, mcpRPC(t, a, "tools/call", `{"name":"add_workspace_role","arguments":{"workspace_id":"`+wid+`","principal_id":"user-9","role":"Contributor"}}`))
+	role := mcpText(t, mcpRPC(t, a, "tools/call", `{"name":"add_workspace_role","arguments":{"workspace_id":"`+wid+`","principal_id":"00000000-0000-4000-8000-000000000009","role":"Contributor"}}`))
 	var ra struct {
 		Body struct{ ID string }
 	}
@@ -201,7 +201,7 @@ func TestMCPToolRoundTrip(t *testing.T) {
 	if ra.Body.ID == "" {
 		t.Fatalf("add role = %s", role)
 	}
-	if list := mcpText(t, mcpRPC(t, a, "tools/call", `{"name":"list_workspace_roles","arguments":{"workspace_id":"`+wid+`"}}`)); !strings.Contains(list, "user-9") {
+	if list := mcpText(t, mcpRPC(t, a, "tools/call", `{"name":"list_workspace_roles","arguments":{"workspace_id":"`+wid+`"}}`)); !strings.Contains(list, "00000000-0000-4000-8000-000000000009") {
 		t.Fatalf("list roles = %s", list)
 	}
 	if got := mcpText(t, mcpRPC(t, a, "tools/call", `{"name":"get_workspace_role","arguments":{"workspace_id":"`+wid+`","role_assignment_id":"`+ra.Body.ID+`"}}`)); !strings.Contains(got, "Contributor") {
