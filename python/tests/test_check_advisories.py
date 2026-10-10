@@ -303,9 +303,14 @@ def test_the_pinned_version_matches_the_composite_action():
 def test_the_real_ledger_parses_and_every_hold_declares_an_exit():
     """Guards against vacuity the way its neighbour does: a ledger read that
     silently returned nothing would make the hold tests above assert about an
-    empty list."""
+    empty list. The ledger may be legitimately empty -- `holds` is `[]` today,
+    both npm holds having been lifted -- so this asserts the declaration and
+    the shape of whatever it carries, not a count."""
+    ledger = json.loads(c.LEDGER.read_text(encoding="utf-8"))
+    assert isinstance(ledger.get("holds"), list), (
+        "the ledger must declare a `holds` list")
     holds = c.read_ledger(c.LEDGER)
-    assert holds, "this repository ships two real holds"
+    assert holds == ledger["holds"]
     assert not c.hold_problems(holds)
     assert {h["lockfile"] for h in holds} <= {"pnpm-lock.yaml"}
 
