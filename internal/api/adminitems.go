@@ -92,7 +92,19 @@ func (a *API) adminListItems(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			State: "Active",
 			// The emulator records creation time, not a separate modified
 			// time, so that is what is reported here.
-			LastUpdatedDate: time.Unix(it.CreatedAt, 0).UTC().Format("2006-01-02T15:04:05"),
+			//
+			// RFC 3339, i.e. WITH the `Z`, because admin/definitions.json marks
+			// this `format: date-time` and a swagger-generated client
+			// deserializes it into a DateTime, which rejects a zone-less string.
+			// This rendered zone-less until check_openapi_conformance learned to
+			// read `format`, and NOTHING defended the old spelling: unlike the
+			// operation timestamps in items.go -- which are zone-less because a
+			// real tenant was measured sending them that way, and so legitimately
+			// contradict the spec -- this field has no tenant sample behind it,
+			// no client that reads it, and no example in the spec suggesting
+			// otherwise. With nothing measured to prefer, the published schema
+			// wins.
+			LastUpdatedDate: time.Unix(it.CreatedAt, 0).UTC().Format(time.RFC3339),
 			WorkspaceID:     it.WorkspaceID, CapacityID: capacity, FolderID: it.FolderID,
 		})
 	}

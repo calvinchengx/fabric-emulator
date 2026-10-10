@@ -268,10 +268,63 @@ path, status, body, and **no headers, ever** (`internal/server/record.go`). The
 e2e suites already generate the traffic; recording is the only new thing, and a
 suite that does not set the variable simply contributes nothing.
 
-Three classes are checked, chosen because they are what a typed client
+Four classes are checked, chosen because they are what a typed client
 stumbles into: an **undocumented status**, a **missing required property**
-(including inside arrays, which is where most of the surface lives), and a
-**wrong primitive type** or non-member enum value.
+(including inside arrays, which is where most of the surface lives), a
+**wrong primitive type** or non-member enum value, and a **wrong string
+format**.
+
+### The fourth class, and why it can be green here and broken there
+
+`type: string` is satisfied by any string at all. The vendored specs carry
+**2,315 `format` annotations** over the four spellings this gate reads — 2,095
+`uuid`, 120 `date-time`, 92 `int32`, 8 `int64` — and `format` is precisely what
+a swagger-generated typed client enforces, at the deserializer and before the
+caller's own code runs: `uuid` becomes a Guid, `date-time` becomes a DateTime,
+`int32` becomes an int. So a zone-less timestamp or a non-UUID id satisfies all
+three classes above and throws inside the generated client. **It is the one
+contract class that could pass every other gate in this repository and still
+break a real caller**, which is why it was worth adding after the other three
+had been green for a long time.
+
+`date-time` is checked as RFC 3339 with a **mandatory** `Z` or ±hh:mm offset,
+which is the whole substance of the check — every disagreement in this tree is
+a timestamp that is otherwise well formed and carries no zone. The fractional
+part is optional and unbounded in width, because a tenant was measured sending
+6 and 7 digits minutes apart. Only these four formats are read; the specs also
+carry `uri`, `double`, `binary` and `duration`, and guessing at those would
+manufacture findings on surfaces nobody has measured.
+
+**The limit, and it is the important half: a measurement outranks a `format`.**
+A `format` is Microsoft's claim about what a route renders, and where this
+repository has a sample from a real tenant that contradicts it, the sample
+wins. `internal/api/items.go` defines the operation timestamps from tenant
+samples taken on 2026-08-11 — ISO 8601, fraction trimmed, no `Z` — and
+matching `format: date-time` there would make the emulator *less* faithful
+than the thing it emulates. That is why this class arrived with pins and not
+only fixes, and why each pin names its evidence.
+
+Its first run surfaced four classes, adjudicated one at a time:
+
+| Finding | Verdict |
+|---|---|
+| `GET /v1/admin/items` → `lastUpdatedDate` rendered zone-less | **Fixed.** Nothing defended it — no tenant sample, no client that reads the field, no example in the spec. With nothing measured to prefer, the published schema wins. |
+| `GET /v1/operations/{operationId}` → `createdTimeUtc`, `lastUpdatedTimeUtc` | **Pinned.** Tenant-measured as zone-less; `fabricOperationTime` in `internal/api/items.go` cites the samples. The spec is wrong for this route. |
+| job schedules → `configuration.startDateTime`, `endDateTime` | **Pinned.** Caller-supplied and echoed verbatim, and Microsoft's own `fabric-cli` sends them zone-less (`e2e/fabric-cli/driver.sh` drives `fab job run-sch --start 2026-01-01T09:00:00`). The schema also makes `localTimeZoneId` a *required sibling*, so the timestamps are local to a named zone — a mandatory UTC offset contradicts the schema's own design. |
+| workspace role assignments → `principal.id` | **Pinned.** A fixture's non-UUID id, stored and echoed rather than invented. The faithful fix is refusing it at authoring time, which is a behaviour change owed its own change — the same call already made for `microsoftEntraMembers.tenantId`. |
+
+So three of the four are the spec or a caller being wrong rather than the
+emulator, and they are written down as such. **The value of the gate is the
+surfaces not yet measured**: a new zone-less timestamp or non-UUID id on one of
+those now fails CI instead of reaching a client.
+
+One reporting detail that is load-bearing: **the finding text names the route,
+the field path and the expected format, and never the offending value.** `KNOWN`
+pins match by substring and the reporting dedups by finding text, so a
+timestamp in the text would turn one rendering rule into one line per distinct
+instant — 17 of them, measured, from a single defect. An example value is
+carried alongside and printed once per finding, so the output stays both short
+and actionable.
 
 **Unexpected properties are deliberately not checked.** Swagger omits
 `additionalProperties` almost everywhere, so "extra field" would fire on nearly

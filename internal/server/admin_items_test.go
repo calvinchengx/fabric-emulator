@@ -53,9 +53,14 @@ func TestAdminListItemsSpansWorkspaces(t *testing.T) {
 		if it.WorkspaceID == "" || it.CapacityID == "" {
 			t.Fatalf("item %s missing workspaceId/capacityId: %+v", it.ID, it)
 		}
-		// lastUpdatedDate is the documented format, without a zone suffix.
-		if _, err := time.Parse("2006-01-02T15:04:05", it.LastUpdatedDate); err != nil {
-			t.Fatalf("lastUpdatedDate %q not in the documented format: %v", it.LastUpdatedDate, err)
+		// lastUpdatedDate is RFC 3339, zone and all. The spec marks it
+		// `format: date-time`, which is what a swagger-generated client turns
+		// into a DateTime, and a zone-less string fails that deserializer --
+		// found by check_openapi_conformance once it learned to read `format`.
+		// time.Parse with RFC3339 REQUIRES the offset, so this assertion fails
+		// if the `Z` is ever dropped again.
+		if _, err := time.Parse(time.RFC3339, it.LastUpdatedDate); err != nil {
+			t.Fatalf("lastUpdatedDate %q is not RFC 3339: %v", it.LastUpdatedDate, err)
 		}
 	}
 	if !seen[nb.ID] || !seen[lh.ID] {
