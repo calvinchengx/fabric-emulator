@@ -467,5 +467,8 @@ def test_the_real_workflow_and_ledger_are_parsed_at_all():
         if job is not None:
             assert job in jobs, f"SCANNERS names {job!r} for {eco}"
     holds = c.read_holds(c.HOLDS)
-    assert holds, "the ledger ships two real holds; an empty read is a bug"
+    ledger = json.loads(c.HOLDS.read_text(encoding="utf-8"))
+    assert isinstance(ledger.get("holds"), list), (
+        "the ledger must declare a `holds` list; an empty read is a bug")
+    assert holds == ledger["holds"]
     assert all(h.get("exit") for h in holds)
