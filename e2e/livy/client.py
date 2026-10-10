@@ -441,7 +441,7 @@ def main():
     # RELATION rather than by rewriting their query.
     print("== OneLake security: row filtering in the engine", flush=True)
 
-    VIEWER = "livy-rls-viewer"
+    VIEWER = "00000000-0000-4000-8000-0000000071e1"
     http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
          {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, token=token)
 

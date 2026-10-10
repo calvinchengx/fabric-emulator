@@ -251,20 +251,6 @@ KNOWN = {
     "configuration.endDateTime: is not RFC 3339":
         "as above, the other half of the same schedule window.",
 
-    # CALLER-SUPPLIED AND ECHOED, exactly like the tenantId pin below, and the
-    # same resolution for the same reason. e2e/az-rest/driver.py assigns a role
-    # to `{"id": "az-rest-viewer", "type": "User"}` and the emulator stores and
-    # returns the principal it was handed. The spec marks `principal.id`
-    # `format: uuid`, so the faithful fix is to REFUSE a non-UUID principal at
-    # authoring time -- which is a behaviour change across several fixtures and
-    # deserves its own change rather than being folded into the one that made it
-    # visible.
-    ".principal.id: is not a canonical 8-4-4-4-12 UUID":
-        "a test fixture's non-UUID principal id, stored and echoed rather than "
-        "invented. The faithful fix is refusing it at authoring time, which is "
-        "a behaviour change owed its own PR -- the same call already made for "
-        "microsoftEntraMembers tenantId below.",
-
     "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
         "NOT the emulator inventing a shape: OneLake roles are stored as the "
         "raw body the caller PUT and echoed back, so this is a test fixture's "

@@ -139,7 +139,7 @@ print(f"DFS sees the Delta table: {len(names)} paths incl _delta_log + parquet")
 # A real Delta reader, not our client. The point is the CONTROL: a Viewer
 # granted one table must fail on the next one, or the grant proves nothing about
 # scope and the surface might simply be open.
-VIEWER = "delta-rs-viewer"
+VIEWER = "00000000-0000-4000-8000-00000000d317"
 post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
           {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, fabric_token)
 

@@ -182,7 +182,7 @@ async def drive(token):
 
             role = wrap_body(await session.call_tool("add_workspace_role", {
                 "workspace_id": wid,
-                "principal_id": "user-9",
+                "principal_id": "00000000-0000-4000-8000-000000000009",
                 "role": "Contributor",
             }))
             raid = role["id"]

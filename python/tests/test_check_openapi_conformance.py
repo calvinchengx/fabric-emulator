@@ -620,11 +620,19 @@ def test_every_class_four_pin_is_matched_by_a_real_finding_shape():
         "schedules.value[0].configuration.startDateTime: is not RFC 3339",
         "POST /v1/workspaces/{workspaceId}/items/{itemId}/jobs/{jobType}/"
         "schedules.configuration.endDateTime: is not RFC 3339",
-        "GET /v1/workspaces/{workspaceId}/roleAssignments.value[1].principal."
-        "id: is not a canonical 8-4-4-4-12 UUID (`format: uuid`)",
     ]
     for finding in produced:
         assert c.is_known(finding), finding
+
+
+def test_a_non_uuid_role_principal_is_no_longer_pinned():
+    """The emulator now refuses it at authoring time, so the pin is gone and a
+    regression surfaces as a finding instead of being silenced."""
+    finding = (
+        "GET /v1/workspaces/{workspaceId}/roleAssignments.value[1].principal."
+        "id: is not a canonical 8-4-4-4-12 UUID (`format: uuid`)"
+    )
+    assert not c.is_known(finding)
 
 
 def test_the_fixed_admin_items_rendering_is_not_pinned():

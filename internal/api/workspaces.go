@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -182,6 +183,8 @@ func (a *API) deleteWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 
 // ---- role assignments ----
 
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func (a *API) listRoleAssignments(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
 	// Members and above see the access list.
@@ -208,6 +211,12 @@ func (a *API) createRoleAssignment(w http.ResponseWriter, r *http.Request, p *au
 	if err := json.NewDecoder(r.Body).Decode(&ra); err != nil ||
 		ra.Principal.ID == "" || store.RoleRank(ra.Role) < 0 {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "principal.id and a valid role are required.")
+		return
+	}
+	// The spec types principal.id `format: uuid`; a swagger-generated client
+	// would never send anything else and the service refuses it.
+	if !uuidRE.MatchString(ra.Principal.ID) {
+		writeErr(w, http.StatusBadRequest, "InvalidInput", "principal.id must be a UUID.")
 		return
 	}
 	if callerRole != store.RoleAdmin && store.RoleRank(ra.Role) > store.RoleRank(store.RoleMember) {

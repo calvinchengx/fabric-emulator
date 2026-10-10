@@ -236,7 +236,7 @@ print(f"event trigger: the SDK's write ran the pipeline, invokeType={runs[0]['in
 # weight — a granted read alone would pass against a surface enforcing nothing.
 from azure.core.exceptions import HttpResponseError  # noqa: E402
 
-VIEWER = "onelake-sec-viewer"
+VIEWER = "00000000-0000-4000-8000-00000000ad15"
 post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
           {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, fabric_token)
 
