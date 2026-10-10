@@ -27,17 +27,13 @@
     "id": "delta.merge_registered",
     "description": "`MERGE INTO` a registered table at a **local path** \u1d43",
     "engine": "sail",
-    "status": "fail",
-    "error_class": "AnalysisException",
-    "error": "attribute ObjectName([Identifier(\"#0\")]) is missing from the schema: cannot resolve attribute"
+    "status": "pass"
   },
   {
     "id": "delta.merge_path",
     "description": "`MERGE INTO delta.`path`` (path target)",
     "engine": "sail",
-    "status": "fail",
-    "error_class": "AnalysisException",
-    "error": "Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_path"
+    "status": "pass"
   },
   {
     "id": "delta.optimize",
@@ -75,7 +71,7 @@
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
-    "error": "No table format found for: kafka"
+    "error": "No data source found for: kafka"
   },
   {
     "id": "streaming.sink_console",
@@ -89,7 +85,7 @@
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
-    "error": "No table format found for: memory"
+    "error": "No data source found for: memory"
   },
   {
     "id": "streaming.sink_parquet",

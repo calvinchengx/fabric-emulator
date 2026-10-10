@@ -140,9 +140,9 @@ buy capabilities most tests never touch.
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |
 | `readStream` (rate source) — schema only ᶜ | ✅ | ✅ | ✅ |
-| `format("kafka")` + bootstrap/subscribe (rows on the engine) ʲ | ❌ `No table format found for: kafka` | ✅ | ✅ |
+| `format("kafka")` + bootstrap/subscribe (rows on the engine) ʲ | ❌ `No data source found for: kafka` | ✅ | ✅ |
 | Streaming sink — console — liveness only ᶜ | ✅ | ✅ | ✅ |
-| Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ✅ | ✅ |
+| Streaming sink — memory (rows readable) | ❌ `No data source found for: memory` | ✅ | ✅ |
 | Streaming sink — parquet (rows readable) | ❌ `cannot write streaming data to listing table` | ✅ | ✅ |
 | Streaming sink — **delta** (rows readable) | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ | ✅ |
 | `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
