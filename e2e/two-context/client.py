@@ -25,7 +25,7 @@ import urllib.request
 sys.path.insert(0, "/")
 import client as c  # noqa: E402, I001 - the livy e2e's helpers, mounted alongside
 
-VIEWER = "two-context-viewer"
+VIEWER = "00000000-0000-4000-8000-0000000007c0"
 
 
 def statements(base, sid, token):

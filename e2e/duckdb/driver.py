@@ -111,7 +111,7 @@ print(f"join + filter: {joined}", flush=True)
 # Every other witness tests our enforcement. This one tests whether the
 # CONTRACT is usable by something we did not write, which is the only way to
 # find out if the seam is real.
-VIEWER = "duckdb-viewer"
+VIEWER = "00000000-0000-4000-8000-00000000d0cb"
 post(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
      {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, ft)
 
