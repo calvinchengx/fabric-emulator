@@ -271,7 +271,7 @@ req_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake_id}/dataAccessRoles", "
     "decisionRules": [{"effect": "Permit", "permission": [
         {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/dbo/Customers"]},
         {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
-    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, fabric_token)
+    "members": {"microsoftEntraMembers": [{"tenantId": "00000000-0000-4000-8000-0000000000aa", "objectId": VIEWER}]}}]}, fabric_token)
 
 assert viewer_status(granted_blob) == 200, "the granted path was still refused"
 # THE CONTROL: the sibling table was never granted, and must stay refused.

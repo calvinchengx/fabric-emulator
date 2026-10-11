@@ -494,7 +494,7 @@ def main():
                  "permission": [
                      {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
                      {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
-             "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]},
+             "members": {"microsoftEntraMembers": [{"tenantId": "00000000-0000-4000-8000-0000000000aa", "objectId": VIEWER}]}}]},
          token=token)
 
     # A session opened BY the viewer: the principal travels with the statement,
