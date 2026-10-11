@@ -161,19 +161,55 @@ including two published to GHCR and pulled family-wide. Both were found through
 a stale alert naming a directory deleted months earlier.
 
 So `scripts/check_dependency_risk.py` runs offline in `make check` and in CI,
-and enforces five things. The first three are about Dependabot still matching
+and enforces seven things. The first three are about Dependabot still matching
 the tree: every tracked manifest is covered by some entry (with deliberate
 exclusions written out as data with their reason, never as silence), every
 watched directory still exists and still holds a manifest, and every `ignore:`
 hold declares its exit condition — either the upstream change that retires it,
 or an explicit statement that it is policy rather than delay.
 
-The last two are about whether anything *scans* what Dependabot watches, which
+The next two are about whether anything *scans* what Dependabot watches, which
 is a different question with the same symptom when the answer is no: every
 ecosystem with tracked manifests is reached by a named scanner job in
 `security.yml` (or is recorded as deliberately on Dependabot alone, with the
 reason), and every hold in `docs/advisory-holds.json` declares its exit
 condition under the same rule.
+
+**The last two are about the manifests themselves, and they close a gap the
+first five could not see.** This repository can decide to live with a known
+risk in four places, and until recently only three of them had any
+bookkeeping: a Dependabot `ignore:` entry is checked by the third invariant, a
+dismissed alert by `check_dismissed_advisories.py`, and an `advisory-holds.json`
+record by the fifth. **The fourth is an `==` pin in a `pyproject.toml`, and it
+is both the strongest hold available and the only one with none.** It is an
+`ignore:` with no entry, no comment and no review: the package receives no
+bump, security or otherwise, until a human edits the file, and not one of the
+three checks above can see it. A grep for `LIFT THIS` or `PERMANENT HOLD`
+across all eleven tracked `pyproject.toml` files returned **zero** against
+eight exact pins. Seven turned out to be policy — the `pyspark-client` and
+`pysail` versions are one number, a fidelity claim about which Spark the
+shipped engine *is*, the same class as `apache/spark` in `dependabot.yml` — and
+one, `dbt-databricks`, was not. Being made to write the marker down is what
+separated them.
+
+The seventh asks whether a constraint an example shares with the root agrees
+with it, or records why not. That is a maintenance risk precisely **because
+examples are what people copy out** — the same reason seven example `uv.lock`
+files going unwatched mattered more than the root one would have.
+
+**The honest gap that invariant found, and is now data rather than silence.**
+The two advanced medallion examples pin `great-expectations>=0.18,<1` under a
+comment that claimed the pin was there *"to match the emulator's own
+great-expectations extra, so the two demonstrations cannot drift onto different
+major versions of the API"* — while the root declares `>=0.18,<2` and its
+lockfile resolves **1.23.2** against the examples' **0.18.22**. The comment
+predicted the failure and was wrong about it being prevented. The divergence is
+real and, for now, correct: `contract_gate.py` is written against the 0.18
+fluent API that 1.0 removed, so raising the ceiling breaks both examples at
+runtime rather than bumping a version. **The port of those gates to the 1.x
+API is outstanding work, not a closed question**, and it is now recorded with a
+`LIFT THIS` naming it rather than asserted away by a comment that had already
+stopped being true.
 
 **That ledger is the maintenance-risk half, and `cryptography` is why it is
 shaped this way.** The hold above was written because mlflow's `requires_dist`

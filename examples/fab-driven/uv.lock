@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -218,7 +218,7 @@ source = { editable = "../../python/fabric-target" }
 [package.metadata]
 requires-dist = [
     { name = "azure-identity", marker = "extra == 'real'", specifier = ">=1.17" },
-    { name = "requests", marker = "extra == 'sessions'", specifier = ">=2.31" },
+    { name = "requests", marker = "extra == 'sessions'", specifier = ">=2.32" },
 ]
 provides-extras = ["real", "sessions"]
 

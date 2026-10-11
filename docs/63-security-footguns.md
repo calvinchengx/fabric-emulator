@@ -32,7 +32,7 @@ gate the class rather than the instances.
 | osv-scanner (`python-advisories`) | `security.yml`, 9 tracked `uv.lock` | a vulnerable locked *version* — **not** reachability-filtered | no — lockfiles |
 | osv-scanner (`js-advisories`) | `security.yml`, root `pnpm-lock.yaml` | the same question for the pnpm workspace | no — lockfiles |
 | `check_dismissed_advisories.py` | `security.yml` | a dismissal whose justification expired | no — alert state |
-| `check_dependency_risk.py` | `make check` + `ci.yml` | is every manifest watched, and is every ecosystem *scanned* | no — config vs tree |
+| `check_dependency_risk.py` | `make check` + `ci.yml` | is every manifest watched, is every ecosystem *scanned*, and does any manifest hold a dependency back silently — an `==` pin or a root-diverging range with no declared exit | no — config and manifests vs tree |
 | golangci-lint | `ci.yml` | errcheck, govet, ineffassign, staticcheck, unused | yes, but **no gosec** |
 | ruff | `ci.yml` | E, W, F, I, UP, B, SIM, RUF | yes, but **no `S` (flake8-bandit)** |
 

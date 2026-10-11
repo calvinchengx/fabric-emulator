@@ -106,6 +106,56 @@ jobs:
       - run: python3 scripts/check_advisories.py --ecosystem npm
 """
 
+# The root manifest invariants 6 and 7 read. Two exact pins, one declared
+# `PERMANENT HOLD` and one `LIFT THIS`, because both are legitimate answers and
+# the checker must accept each; plus one ordinary range that an example below
+# shares with it.
+ROOT_PYPROJECT = """\
+[build-system]
+# NOT a project requirement, and reading it as one would fail the real root
+# manifest for its own `setuptools>=68` and its sqlparse override.
+requires = ["setuptools>=68"]
+
+[project]
+name = "root"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.32,<3",
+    "great-expectations>=0.18,<2",
+]
+
+[dependency-groups]
+engine = [
+    # PERMANENT HOLD: the client version is a fidelity claim about which Spark
+    # the shipped engine IS, not a dependency kept current.
+    "pyspark-client==4.2.0",
+    { include-group = "adapter" },
+]
+adapter = [
+    # LIFT THIS when dbt-databricks raises its databricks-sdk ceiling.
+    "dbt-databricks==1.12.6",
+]
+
+[tool.uv]
+override-dependencies = ["sqlparse>=0.6.0"]
+"""
+
+# WHITESPACE-ONLY DIFFERENCE from the root's `>=2.32,<3`, deliberately: the two
+# are the same constraint and a checker that reported it would cry wolf.
+EXAMPLE_PYPROJECT = """\
+[project]
+name = "example"
+version = "0.1.0"
+dependencies = [
+    "requests>=2.32, <3",
+]
+"""
+
+PYPROJECTS = {
+    "pyproject.toml": ROOT_PYPROJECT,
+    "examples/alpha/pyproject.toml": EXAMPLE_PYPROJECT,
+}
+
 HOLD = {
     "id": "GHSA-xxxx-yyyy-zzzz",
     "ecosystem": "npm",
@@ -120,7 +170,7 @@ HOLD = {
 def repo(tmp_path, monkeypatch):
     """Build a small tree and point the checker at it instead of this repo."""
     def build(config=GOOD, files=FILES, excluded=(), workflow=GOOD_WORKFLOW,
-              holds=None):
+              holds=None, pyprojects=None):
         (tmp_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".github" / "dependabot.yml").write_text(config, encoding="utf-8")
         for rel in files:
@@ -128,6 +178,15 @@ def repo(tmp_path, monkeypatch):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(WORKSPACE if rel == "pnpm-workspace.yaml" else "",
                             encoding="utf-8")
+        # The manifests invariants 6 and 7 read. Written to disk AND added to
+        # the tracked list, because the checker discovers them from
+        # `git ls-files` rather than a walk -- the same discipline it enforces
+        # on the scan jobs in security.yml.
+        manifests = PYPROJECTS if pyprojects is None else pyprojects
+        for rel, body in manifests.items():
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
         security = tmp_path / ".github" / "workflows" / "security.yml"
         security.write_text(workflow, encoding="utf-8")
         # The ledger is ABSENT unless a test asks for one, which is the real
@@ -141,7 +200,8 @@ def repo(tmp_path, monkeypatch):
         monkeypatch.setattr(c, "CONFIG", tmp_path / ".github" / "dependabot.yml")
         monkeypatch.setattr(c, "WORKFLOW", security)
         monkeypatch.setattr(c, "HOLDS", ledger)
-        monkeypatch.setattr(c, "tracked_files", lambda root: list(files))
+        tracked = [*files, *manifests]
+        monkeypatch.setattr(c, "tracked_files", lambda root: list(tracked))
         monkeypatch.setattr(c, "EXCLUDED", tuple(excluded))
         return tmp_path
     return build
@@ -472,3 +532,250 @@ def test_the_real_workflow_and_ledger_are_parsed_at_all():
         "the ledger must declare a `holds` list; an empty read is a bug")
     assert holds == ledger["holds"]
     assert all(h.get("exit") for h in holds)
+
+
+# --- INVARIANT 6: every exact pin declares its exit condition ----------------
+#
+# The gap these close is the one invariants 3 and 5 cannot reach. A Dependabot
+# `ignore:` entry, a dismissed alert and an `advisory-holds.json` record all
+# had bookkeeping; the fourth and strongest hold -- an `==` in a manifest --
+# had none, and a grep for the two exit markers across all eleven tracked
+# pyproject.toml files in this repository returned zero when they landed.
+
+def test_an_exact_pin_with_no_exit_condition_fails(repo, capsys):
+    """An `==` is a Dependabot `ignore:` with no entry, no comment and no
+    review: the package receives no bump, security or otherwise, until a human
+    edits the file, and neither invariant 3 nor invariant 5 can see it."""
+    repo(pyprojects={**PYPROJECTS, "pyproject.toml": ROOT_PYPROJECT.replace(
+        "    # PERMANENT HOLD: the client version is a fidelity claim about which Spark\n"
+        "    # the shipped engine IS, not a dependency kept current.\n", "")})
+    assert c.main([]) == 1
+    err = capsys.readouterr().err
+    assert "pyproject.toml" in err, "the message must name the manifest"
+    assert "pyspark-client==4.2.0" in err, "...and the pin it is about"
+    assert "LIFT THIS" in err and "PERMANENT HOLD" in err
+
+
+def test_a_justification_detached_from_its_pin_does_not_count(repo, capsys):
+    """The comment run must be the one DIRECTLY above the requirement, which is
+    the reading parse_config already applies to dependabot.yml's ignores. A
+    blank line breaks the run, because a justification one line away from the
+    constraint it justifies is not attached to it -- and a reader skimming for
+    'is this pin explained' would say yes to both shapes."""
+    repo(pyprojects={**PYPROJECTS, "pyproject.toml": ROOT_PYPROJECT.replace(
+        "    # the shipped engine IS, not a dependency kept current.\n",
+        "    # the shipped engine IS, not a dependency kept current.\n\n")})
+    assert c.main([]) == 1
+    assert "pyspark-client==4.2.0" in capsys.readouterr().err
+
+
+def test_a_group_header_breaks_the_comment_run(repo, capsys):
+    """The real root pyproject's `spark-client` group is exactly this shape:
+    thirty lines explaining why the client and server versions are one number,
+    then `spark-client = [`, then the pin. The explanation is excellent and it
+    is not attached -- so the marker has to go INSIDE the group, which is what
+    this repository now does."""
+    repo(pyprojects={**PYPROJECTS, "pyproject.toml": ROOT_PYPROJECT.replace(
+        """engine = [
+    # PERMANENT HOLD: the client version is a fidelity claim about which Spark
+    # the shipped engine IS, not a dependency kept current.
+    "pyspark-client==4.2.0",""",
+        """# PERMANENT HOLD: the client version is a fidelity claim about which Spark
+# the shipped engine IS, not a dependency kept current.
+engine = [
+    "pyspark-client==4.2.0",""")})
+    assert c.main([]) == 1
+    assert "pyspark-client==4.2.0" in capsys.readouterr().err
+
+
+def test_both_exit_markers_satisfy_the_invariant(repo, capsys):
+    """`PERMANENT HOLD` on the pyspark-client pin and `LIFT THIS` on the
+    dbt-databricks one, in the same manifest. Both are legitimate answers and
+    the difference between them is the whole value of being made to write one:
+    seven of this repository's eight exact pins turned out to be policy and the
+    eighth did not."""
+    repo()
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+def test_a_marker_in_an_environment_marker_is_not_an_exact_pin(repo, capsys):
+    """`python_version == "3.12"` is a marker, not a version specifier. A
+    reader that found `==` anywhere in the requirement would demand an exit
+    condition for an ordinary range, and a checker that cries wolf is a checker
+    someone deletes."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace(
+                         '    "requests>=2.32, <3",',
+                         '    "requests>=2.32,<3 ; python_version == \'3.12\'",')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+def test_a_build_requirement_is_not_a_project_requirement(repo, capsys):
+    """`[build-system] requires` and `[tool.uv] override-dependencies` are not
+    dependencies, and reading them as such would fail the real root manifest
+    for its own deliberate sqlparse override. tomllib decides WHAT counts; the
+    line pass only decides what it says."""
+    repo(pyprojects={**PYPROJECTS, "pyproject.toml": ROOT_PYPROJECT.replace(
+        'requires = ["setuptools>=68"]', 'requires = ["setuptools==68.0.0"]')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+# --- INVARIANT 7: a shared constraint agrees with the root, or says why ------
+
+def test_a_silent_divergence_from_the_root_fails(repo, capsys):
+    """The live finding, in miniature. Both advanced medallion examples pinned
+    `great-expectations>=0.18,<1` under a comment asserting the pin existed so
+    the two demonstrations `cannot drift onto different major versions of the
+    API`, while the root declared `<2` and resolved 1.23.2 against their
+    0.18.22. The drift the comment forbade had already happened, in the files
+    whose whole purpose is being copied out."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace(
+                         '    "requests>=2.32, <3",',
+                         '    "great-expectations>=0.18,<1",')})
+    assert c.main([]) == 1
+    err = capsys.readouterr().err
+    assert "examples/alpha/pyproject.toml" in err, "must name the manifest"
+    assert "great-expectations" in err, "...and the package"
+    assert ">=0.18,<1" in err and ">=0.18,<2" in err, "...and BOTH ranges"
+
+
+def test_a_recorded_divergence_passes(repo, capsys):
+    """A divergence may be right -- these gates are written against an API 1.0
+    removed, so raising the ceiling breaks the example at runtime rather than
+    bumping a version. What it may not be is silent. Data with a reason, the
+    way EXCLUDED and SCANNERS are."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace(
+                         '    "requests>=2.32, <3",',
+                         '    # DIVERGES FROM ROOT: contract_gate.py is written against the 0.18\n'
+                         '    # fluent API, which 1.0 removed.\n'
+                         '    #\n'
+                         '    # LIFT THIS when contract_gate.py is ported to the 1.x API.\n'
+                         '    "great-expectations>=0.18,<1",')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+def test_a_divergence_record_with_no_exit_condition_fails(repo, capsys):
+    """The marker alone is not the record. `DIVERGES FROM ROOT` says the
+    difference was noticed; the exit marker says whether anyone decided what
+    happens next, which is the same thing invariants 3 and 5 ask of the two
+    weaker holds."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace(
+                         '    "requests>=2.32, <3",',
+                         '    # DIVERGES FROM ROOT: the gates need the old API.\n'
+                         '    "great-expectations>=0.18,<1",')})
+    assert c.main([]) == 1
+    err = capsys.readouterr().err
+    assert "great-expectations" in err
+    assert "LIFT THIS" in err and "PERMANENT HOLD" in err
+
+
+def test_a_whitespace_only_difference_is_not_a_divergence(repo, capsys):
+    """`>=2.32, <3` and `>=2.32,<3` are the same constraint. The default
+    fixture carries this shape deliberately, so the rule cannot be tightened
+    into reporting formatting."""
+    repo()
+    assert c.main([]) == 0, capsys.readouterr().err
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace('">=2.32, <3"', '">=2.32,  <  3"')
+                     .replace('"requests>=2.32, <3"', '"requests>=2.32,  <  3"')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+def test_an_unconstrained_requirement_is_not_compared(repo, capsys):
+    """A bare name is not a constraint, so there is nothing to disagree with.
+    Every example here depends on `contoso-fixtures` that way."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace('    "requests>=2.32, <3",',
+                                               '    "requests",')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+def test_a_package_the_root_does_not_constrain_is_not_compared(repo, capsys):
+    """Invariant 7 is about a constraint SHARED with the root. An example is
+    free to depend on things the emulator does not."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml":
+                     EXAMPLE_PYPROJECT.replace('    "requests>=2.32, <3",',
+                                               '    "pyodbc>=5.2,<6",')})
+    assert c.main([]) == 0, capsys.readouterr().err
+
+
+# --- the manifest invariants hold themselves to account ----------------------
+
+def test_a_closed_divergence_still_recorded_fails_under_strict(repo, capsys):
+    """EXCLUDED's discipline, and the rule docs/advisory-holds.json states in
+    both directions. A record that no longer corresponds to a divergence
+    excuses nothing, and would go on excusing the next real divergence of the
+    same package -- silently, since the message it suppresses is the one a
+    reader would never think to look for."""
+    agreeing = EXAMPLE_PYPROJECT.replace(
+        '    "requests>=2.32, <3",',
+        '    # DIVERGES FROM ROOT: no longer true -- the two now agree.\n'
+        '    #\n'
+        '    # LIFT THIS when the ranges are reconciled.\n'
+        '    "requests>=2.32,<3",')
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml": agreeing})
+    assert c.main([]) == 0, capsys.readouterr().err
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml": agreeing})
+    assert c.main(["--strict"]) == 1
+    err = capsys.readouterr().err
+    assert "DIVERGES FROM ROOT" in err
+    assert "examples/alpha/pyproject.toml" in err
+
+
+def test_no_discovered_manifests_fails_under_strict(repo, capsys):
+    """A reader that found no pyproject.toml would report every exact pin
+    declared and every shared constraint agreeing, which is the shape of a
+    pass. The same vacuity rule invariant 1 and the SCANNERS table already
+    get."""
+    repo(pyprojects={})
+    assert c.main([]) == 0, capsys.readouterr().err
+    repo(pyprojects={})
+    assert c.main(["--strict"]) == 1
+    assert "pyproject.toml" in capsys.readouterr().err
+
+
+def test_a_manifest_that_does_not_parse_fails(repo, capsys):
+    """Present-but-broken is not absent. Read as 'no requirements', a broken
+    manifest would report every pin in it declared."""
+    repo(pyprojects={**PYPROJECTS, "examples/alpha/pyproject.toml": "[project\n"})
+    assert c.main([]) == 1
+    err = capsys.readouterr().err
+    assert "cannot read" in err
+    assert "examples/alpha/pyproject.toml" in err
+
+
+def test_the_real_manifests_are_parsed_at_all():
+    """Guards the two new passes against the same vacuity the dependabot and
+    workflow readers are guarded against: a reader that silently matched
+    nothing would make every assertion above pass against this repository
+    whatever its manifests said."""
+    tracked = [p for p in c.tracked_files(c.ROOT)
+               if p == c.MANIFEST or p.endswith("/" + c.MANIFEST)]
+    assert len(tracked) >= 11, tracked
+    manifests = c.read_manifests(c.ROOT, tracked)
+
+    # The line pass must have LOCATED every requirement tomllib found. A
+    # `line: 0` entry is the reader admitting it could not, which is safe for
+    # invariant 6 and would quietly weaken this guard.
+    located = [r for reqs in manifests.values() for r in reqs if r["line"]]
+    assert len(located) == sum(len(r) for r in manifests.values()), (
+        "every declared requirement must be located in the file text")
+
+    # The eight exact pins the invariant was written about, each carrying a
+    # marker now, and the comment runs must be ATTACHED -- a reader that
+    # collected no comments at all would report them all undeclared.
+    pins = [r for reqs in manifests.values() for r in reqs if c.is_exact(r["spec"])]
+    assert len(pins) >= 8, pins
+    assert all(c.declares_exit(r["comments"]) for r in pins), [
+        r["requirement"] for r in pins if not c.declares_exit(r["comments"])]
+
+    # And the live divergence record, so the worked example in the docstring
+    # cannot be lost without this failing.
+    recorded = [(path, r["name"]) for path, reqs in manifests.items()
+                for r in reqs
+                if c.declares(r["comments"], c.DIVERGENCE_MARKER)]
+    assert ("examples/medallion-advanced-pyspark/pyproject.toml",
+            "great-expectations") in recorded, recorded

@@ -27,8 +27,11 @@ MANIFESTS NOBODY IS WATCHING.** That is worse than no scanner, because it
 produces a green check. Adding a sixth scanner would not help; asking whether
 the five already here are still pointed at the repository is what was missing.
 
-THE FIVE INVARIANTS. The first three ask whether Dependabot still matches
-the tree; the last two ask whether anything SCANS what it finds there.
+THE SEVEN INVARIANTS, in three groups. The first three ask whether Dependabot
+still matches the tree. The next two ask whether anything SCANS what it finds
+there, and whether every tolerated risk declares how it ends. The last two ask
+the question none of those five can reach: whether THE MANIFESTS THEMSELVES
+hold a dependency back silently.
 
 1. **EVERY TRACKED MANIFEST IS COVERED BY SOME ENTRY.** Every `go.mod`,
    `uv.lock`, `package.json` and `Dockerfile*` that `git ls-files` reports maps
@@ -87,9 +90,51 @@ the tree; the last two ask whether anything SCANS what it finds there.
    invariant 4 started looking. mlflow 3.16.1 has since raised the ceiling to
    `<51`, which is that hold's `LIFT THIS` condition met.
 
+6. **EVERY EXACT `==` PIN DECLARES ITS EXIT CONDITION.** Invariants 3 and 5
+   govern the two weak holds -- a Dependabot `ignore:` entry and an
+   `advisory-holds.json` record -- and `check_dismissed_advisories.py` governs
+   the third, a dismissed alert. **An `==` in a manifest is the STRONGEST hold
+   this repository can place on a dependency and the only one with no
+   bookkeeping at all.** It is a Dependabot `ignore:` with no entry, no comment
+   and no review: the package receives no bump, security or otherwise, until a
+   human edits the file, and not one of the three checks above can see it. So
+   the comment run directly above an exact pin must say `LIFT THIS` and name
+   what retires it, or `PERMANENT HOLD` when the exactness IS the claim.
+
+   A grep for those two markers across all eleven tracked `pyproject.toml`
+   files returned **zero** when this invariant landed, against eight exact
+   pins: `pyspark-client==4.2.0` at five sites, `pysail==0.7.2` at two, and
+   `dbt-databricks==1.12.6`. The first seven turned out to be `PERMANENT HOLD`
+   -- client and server version are one number, a fidelity claim about which
+   Spark the shipped engine IS, the same class as `apache/spark` in
+   `.github/dependabot.yml`. The eighth was not: nothing here needs
+   dbt-databricks 1.12.6 specifically, and being made to write the marker down
+   is what separated the two.
+
+7. **A CONSTRAINT SHARED WITH THE ROOT MUST AGREE WITH IT, OR SAY WHY NOT.**
+   A package constrained in both the root `pyproject.toml` and a tracked
+   non-root one must declare the same range, or record the divergence with
+   `DIVERGES FROM ROOT` plus an exit marker -- data with a reason, the way
+   `EXCLUDED` and `SCANNERS` are, rather than silence.
+
+   `great-expectations` is the worked example, and it is this repository's own
+   documented failure mode one mechanism over. The two advanced medallion
+   examples pin `great-expectations>=0.18,<1` under a comment that claimed the
+   pin was there *"to match the emulator's own great-expectations extra, so the
+   two demonstrations cannot drift onto different major versions of the API"* --
+   while the root declares `>=0.18,<2` and `uv.lock` resolves **1.23.2**
+   against the examples' **0.18.22**. The comment predicted the failure and was
+   wrong about it being prevented: the drift it forbade had already happened,
+   in the files whose whole purpose is being copied out. Recorded now with the
+   real reason -- `contract_gate.py` is written against the 0.18 fluent API
+   that 1.0 removed, so raising the ceiling breaks the example at runtime
+   rather than bumping a version -- and a `LIFT THIS` naming the port.
+
 OFFLINE AND STDLIB-ONLY, like its neighbours: `make check` is deliberately
 runnable with nothing but Python, so `.github/dependabot.yml` is read with
-regexes rather than PyYAML. The file list comes from `git ls-files` rather
+regexes rather than PyYAML and `pyproject.toml` with `tomllib` rather than a
+requirements parser -- which is why invariants 6 and 7 compare specifier TEXT
+and never a resolved version. A resolved version would need the network. The file list comes from `git ls-files` rather
 than a filesystem walk, which keeps `node_modules/`, `.venv/`, `third_party/`,
 `_site/` and `.claude/worktrees/` out without a hand-maintained deny list.
 
@@ -106,6 +151,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG = ROOT / ".github" / "dependabot.yml"
@@ -114,6 +160,18 @@ HOLDS = ROOT / "docs" / "advisory-holds.json"
 
 # A hold is temporary or it is policy. Either is fine; an undeclared one is not.
 EXIT_MARKERS = ("LIFT THIS", "PERMANENT HOLD")
+
+# Invariant 7's second half. A manifest may disagree with the root -- the two
+# advanced medallion examples genuinely must, because their contract gates are
+# written against a great-expectations API that 1.0 removed -- but the
+# disagreement has to be a RECORD rather than a difference nobody declared.
+# Same shape as EXCLUDED and SCANNERS below: data with a reason.
+DIVERGENCE_MARKER = "DIVERGES FROM ROOT"
+
+# The manifest invariants 6 and 7 read. `uv.lock` is what Dependabot watches
+# and what osv-scanner scans; this is the file a HUMAN edits, and the only
+# place where a constraint can be written down and then never re-read.
+MANIFEST = "pyproject.toml"
 
 # WHICH JOB IN security.yml ADVISORY-SCANS EACH ECOSYSTEM. Dependabot gives
 # every ecosystem version currency plus GitHub's advisory graph; this table is
@@ -459,6 +517,136 @@ def read_holds(path: pathlib.Path) -> list[dict]:
     return holds
 
 
+# --- reading a tracked pyproject.toml -----------------------------------------
+#
+# TWO PASSES OVER THE SAME FILE, because neither alone can answer invariants 6
+# and 7. `tomllib` knows WHICH strings are requirements -- `[build-system]
+# requires` and `[tool.uv] override-dependencies` are not, and reading them as
+# such would fail the root for its own sqlparse override. A line pass knows
+# WHERE each one sits and what comment run is attached to it, which is where
+# the exit condition has to be. So tomllib decides what counts and the line
+# pass decides what it says, with the same comment-run discipline `parse_config`
+# applies to dependabot.yml: a blank line or an intervening non-comment line
+# breaks the run, because a justification one key away from the constraint it
+# justifies is not attached to it.
+
+# PEP 508 shape, loosely: a name, optional extras, and whatever specifier
+# follows. Environment markers are cut at the `;` before the specifier is read,
+# so `python_version == "3.12"` is never mistaken for an exact pin.
+_REQUIREMENT = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?P<spec>.*)$")
+_QUOTED = re.compile(r"""["'](?P<value>[^"']+)["']""")
+
+
+def normalise(name: str) -> str:
+    """PEP 503 name normalisation, so `dbt_fabric` and `dbt-fabric` are one."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def split_requirement(requirement: str) -> tuple[str, str] | None:
+    """(normalised name, specifier set) -- or None when it is not one.
+
+    The specifier is kept as TEXT and only whitespace-normalised: `>=2.32, <3`
+    and `>=2.32,<3` are the same constraint and must not read as a divergence,
+    while `>=0.18,<1` and `>=0.18,<2` differ and must.
+    """
+    found = _REQUIREMENT.match(requirement.split(";", 1)[0].strip())
+    if not found:
+        return None
+    return normalise(found.group("name")), found.group("spec").replace(" ", "")
+
+
+def declared_requirements(data: dict) -> list[str]:
+    """Every requirement STRING a pyproject declares, from all three places.
+
+    `dependency-groups` may hold `{include-group = "..."}` tables, which are
+    pointers to other groups rather than requirements; they are skipped here
+    and reached through the group they name, which is already in this list.
+    """
+    requirements: list[str] = []
+    project = data.get("project") or {}
+    requirements += [r for r in (project.get("dependencies") or [])
+                     if isinstance(r, str)]
+    for group in (project.get("optional-dependencies") or {}).values():
+        requirements += [r for r in group if isinstance(r, str)]
+    for group in (data.get("dependency-groups") or {}).values():
+        requirements += [r for r in group if isinstance(r, str)]
+    return requirements
+
+
+def parse_manifest(text: str) -> list[dict]:
+    """[{name, spec, requirement, line, comments}] for one pyproject.toml.
+
+    A requirement tomllib found but the line pass did not is still returned,
+    with `line: 0` and no comments -- so an exact pin written in some shape
+    this reader cannot locate FAILS invariant 6 rather than passing unseen. The
+    safe direction for a parser is to report what it could not read.
+    """
+    data = tomllib.loads(text)
+    pending: dict[str, int] = {}
+    for requirement in declared_requirements(data):
+        pending[requirement] = pending.get(requirement, 0) + 1
+
+    found: list[dict] = []
+    comments: list[str] = []
+    for number, line in enumerate(text.split("\n"), 1):
+        comment = _COMMENT.match(line)
+        if comment:
+            comments.append(comment.group("text").strip())
+            continue
+        if not line.strip():
+            comments = []
+            continue
+        for quoted in _QUOTED.finditer(line):
+            value = quoted.group("value")
+            if not pending.get(value):
+                continue
+            pending[value] -= 1
+            parts = split_requirement(value)
+            if parts:
+                found.append({"name": parts[0], "spec": parts[1],
+                              "requirement": value, "line": number,
+                              "comments": list(comments)})
+        comments = []
+
+    for requirement, remaining in pending.items():
+        parts = split_requirement(requirement)
+        if not parts:
+            continue
+        for _ in range(remaining):
+            found.append({"name": parts[0], "spec": parts[1],
+                          "requirement": requirement, "line": 0,
+                          "comments": []})
+    return found
+
+
+def read_manifests(root: pathlib.Path, paths: list[str]) -> dict[str, list[dict]]:
+    """{repo-relative path: its requirements}, skipping nothing silently."""
+    manifests: dict[str, list[dict]] = {}
+    for path in paths:
+        try:
+            text = (root / path).read_text(encoding="utf-8")
+            manifests[path] = parse_manifest(text)
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise WorkflowUnreadable(f"cannot read {path}: {exc}") from exc
+    return manifests
+
+
+def is_exact(spec: str) -> bool:
+    """Does this specifier set pin one version? `==` or PEP 440's `===`."""
+    return "==" in spec
+
+
+def declares(comments: list[str], *markers: str) -> bool:
+    """Is every marker present in this comment run?"""
+    joined = " ".join(comments)
+    return all(marker in joined for marker in markers)
+
+
+def declares_exit(comments: list[str]) -> bool:
+    return any(marker in " ".join(comments) for marker in EXIT_MARKERS)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -639,6 +827,86 @@ def main(argv: list[str] | None = None) -> int:
                 "decision on the strength of that fact unless something "
                 "re-asks the question")
 
+    # --- INVARIANTS 6 AND 7: the manifests themselves ----------------------
+    #
+    # Invariants 1-5 all read a CONFIGURATION -- dependabot.yml, security.yml,
+    # advisory-holds.json -- and ask whether it still matches the tree. These
+    # two read the tree itself. A constraint in a pyproject.toml is the one
+    # place a dependency can be held back with no entry anywhere, no comment
+    # required and nothing re-asking the question.
+    pyprojects = [p for p in tracked_files(root)
+                  if p == MANIFEST or p.endswith("/" + MANIFEST)]
+    try:
+        requirements = read_manifests(root, pyprojects)
+    except WorkflowUnreadable as exc:
+        problems.append(f"{exc}")
+        requirements = {}
+
+    exact_pins = 0
+    for path in sorted(requirements):
+        for req in requirements[path]:
+            if not is_exact(req["spec"]):
+                continue
+            exact_pins += 1
+            if declares_exit(req["comments"]):
+                continue
+            where = f"{path}:{req['line']}" if req["line"] else path
+            problems.append(
+                f"{where}: the exact pin {req['requirement']!r} declares no "
+                f"exit condition. The comment run directly above it must say "
+                f"{EXIT_MARKERS[0]!r} and name what retires the pin, or "
+                f"{EXIT_MARKERS[1]!r} when the exact version IS the claim. An "
+                f"`==` in a manifest is the STRONGEST hold this repository can "
+                f"place on a dependency and the only one with no bookkeeping: "
+                f"it is a Dependabot `ignore:` with no entry, no comment and "
+                f"no review, so {normalise(req['name'])} receives no bump -- "
+                f"security or otherwise -- until a human edits this file. "
+                f"Invariant 3 reads {CONFIG.name} and invariant 5 reads "
+                f"{HOLDS.name}; neither can see this")
+
+    # Invariant 7 compares against the root, so the root is the reference and
+    # never a subject. A package may be constrained more than once there (the
+    # `test` group asks pandas `>=2,<3` and the great-expectations group
+    # `>=2.2,<4`), so agreeing with the root means matching ANY range it
+    # declares -- the root's own internal disagreements are not an example's
+    # problem to answer for.
+    root_specs: dict[str, set[str]] = {}
+    for req in requirements.get(MANIFEST, []):
+        if req["spec"]:
+            root_specs.setdefault(req["name"], set()).add(req["spec"])
+
+    shared_agreeing, divergences_recorded = 0, 0
+    closed_records: list[str] = []
+    for path in sorted(requirements):
+        if path == MANIFEST:
+            continue
+        for req in requirements[path]:
+            if not req["spec"] or req["name"] not in root_specs:
+                continue
+            recorded = declares(req["comments"], DIVERGENCE_MARKER)
+            if req["spec"] in root_specs[req["name"]]:
+                shared_agreeing += 1
+                if recorded:
+                    closed_records.append(
+                        f"{path}:{req['line']} ({req['name']})")
+                continue
+            if recorded and declares_exit(req["comments"]):
+                divergences_recorded += 1
+                continue
+            ranges = ", ".join(sorted(root_specs[req["name"]]))
+            where = f"{path}:{req['line']}" if req["line"] else path
+            problems.append(
+                f"{where}: {req['name']} is constrained {req['spec']!r} here "
+                f"and {ranges!r} in {MANIFEST} at the root, and nothing "
+                f"declares the difference. Either make the two agree, or say "
+                f"why not in the comment run directly above: "
+                f"{DIVERGENCE_MARKER!r} plus {EXIT_MARKERS[0]!r} naming what "
+                f"closes the gap, or {EXIT_MARKERS[1]!r} if the divergence is "
+                f"policy. A silent divergence in an example is the sharpest "
+                f"case, because an example is what people copy out -- and the "
+                f"one this invariant found had a comment above it asserting "
+                f"the drift could not happen while it already had")
+
     if args.strict:
         if not manifests:
             problems.append(
@@ -662,6 +930,24 @@ def main(argv: list[str] | None = None) -> int:
                 "these SCANNERS rows name an ecosystem with no tracked "
                 "manifest, so they describe coverage of nothing and would "
                 f"make the next real gap look decided: {orphans}")
+        # And the same for invariants 6 and 7. A reader that found no
+        # pyproject.toml at all would report every exact pin declared and
+        # every shared constraint agreeing, which is the shape of a pass.
+        if not pyprojects:
+            problems.append(
+                f"no tracked {MANIFEST} was discovered at all, so invariants "
+                "6 and 7 inspected nothing and would report every exact pin "
+                "declared and every shared constraint agreeing")
+        # A divergence record outliving the divergence, which is EXCLUDED's
+        # discipline and the rule docs/advisory-holds.json states in both
+        # directions: a closed hold left recorded goes on excusing the next
+        # real one, and this one would excuse it silently.
+        if closed_records:
+            problems.append(
+                f"these requirements declare {DIVERGENCE_MARKER!r} and no "
+                f"longer diverge from {MANIFEST} at the root, so the record "
+                "excuses nothing and would cover the next real divergence of "
+                f"the same package: {closed_records}")
 
     if problems:
         print("check_dependency_risk:\n  " + "\n\n  ".join(problems),
@@ -689,7 +975,12 @@ def main(argv: list[str] | None = None) -> int:
           f"(discovering lockfiles from git, naming none), {len(unscanned)} "
           f"ecosystem(s) deliberately on Dependabot alone with a reason "
           f"({', '.join(unscanned)}); all {len(holds)} advisory holds in "
-          f"{HOLDS.name} declare an exit condition")
+          f"{HOLDS.name} declare an exit condition; across "
+          f"{len(pyprojects)} tracked {MANIFEST} files all {exact_pins} exact "
+          f"pins declare an exit condition and all "
+          f"{shared_agreeing + divergences_recorded} constraints shared with "
+          f"the root either agree with it ({shared_agreeing}) or record the "
+          f"divergence with a reason ({divergences_recorded})")
     return 0
 
 

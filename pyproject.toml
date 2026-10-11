@@ -151,9 +151,22 @@ runtime = []
 # thing that makes `ty` able to see pyspark — no compiled extras — which is why
 # the lint job installs exactly this and nothing more.
 spark-client = [
+    # PERMANENT HOLD. Everything above is the justification, and this is the
+    # marker that makes it legible to check_dependency_risk.py's sixth
+    # invariant -- which cannot read it from up there, because the group header
+    # between them breaks the comment run. The pin is a FIDELITY CLAIM about
+    # which client the shipped Sail server was built against, not a dependency
+    # kept current: it moves when pysail does, or not at all. The same class as
+    # `apache/spark` in .github/dependabot.yml.
     "pyspark-client==4.2.0",
 ]
 sail = [
+    # PERMANENT HOLD, for the reason written out above: the server version and
+    # the client version are ONE number, and this is the server half. Read them
+    # together and move them together. A `pysail` bump is a Spark-version
+    # change in the engine this repository ships, so it is a measurement (the
+    # three combinations above) rather than a version bump -- there is no
+    # upstream release to wait for, which is what makes it policy and not delay.
     "pysail==0.7.2",
     { include-group = "spark-client" },
 ]
@@ -193,6 +206,22 @@ sail-delta = [
 # task fails naming this image, which is honest and still unusable.
 spark-agent-dbt = [
     { include-group = "sail-delta" },
+    # NOT a fidelity claim, unlike the `pysail` pin below and the client pin
+    # in `spark-client`:
+    # nothing here needs 1.12.6 specifically. The agent image needs *a* dbt
+    # Databricks adapter, and the exact pin arrived with the adapter in #321
+    # and has been bumped as one ever since. What the exactness buys today is a
+    # STABLE `requires_dist`, because this package's own
+    # `databricks-sdk<0.118.0,>=0.68.0` is the reason two other pieces of
+    # bookkeeping exist: the `spark-agent-dbt`/`databricks-sdk` conflict
+    # declared in [tool.uv] below, and the `databricks-sdk` hold in
+    # .github/dependabot.yml. All three move together.
+    #
+    # LIFT THIS -- relax to a range -- when dbt-databricks raises its
+    # databricks-sdk ceiling past this repository's own `>=0.130,<1`, which is
+    # the same condition the dependabot hold already names. At that point the
+    # conflict declaration goes too, and there is nothing left for an exact pin
+    # to hold still.
     "dbt-databricks==1.12.6",
     # The engine, in the AGENT image. Fabric starts a Spark session per notebook
     # and shares one only within a single-user boundary, so the agent needs to
@@ -200,6 +229,11 @@ spark-agent-dbt = [
     # one shared server (docs/54). Same pin as the `sail` group: two Sails of
     # different versions in one stack would make a parity result depend on which
     # one answered.
+    #
+    # PERMANENT HOLD, on the justification already given in the sentence above:
+    # the pin is what makes "the same Sail everywhere" true, so it is policy
+    # rather than a deferred upgrade. It moves with the `sail` group or not at
+    # all.
     "pysail==0.7.2",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP

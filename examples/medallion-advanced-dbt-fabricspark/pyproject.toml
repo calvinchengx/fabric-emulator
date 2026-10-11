@@ -37,12 +37,45 @@ dependencies = [
     # because examples are what people copy.
     "pyarrow>=23.0.1,<26",
     "pyodbc>=5.2,<6",
+    # PERMANENT HOLD. The exact version is a FIDELITY CLAIM, not a dependency
+    # kept current: 4.2.0 is the client pysail 0.7.2 is built and tested
+    # against, and the root pyproject's `spark-client` group records the
+    # measurement behind it -- an old server cannot take a new client (0.6.6 +
+    # 4.2.0 dies in `createDataFrame`). Moving this number alone breaks the
+    # engine; it moves when the server does, or not at all. The same class as
+    # `apache/spark` in .github/dependabot.yml, whose tag is a claim about
+    # Fabric Runtime 1.3 rather than something to keep current.
     "pyspark-client==4.2.0",
     "requests>=2.32,<3",
     # contract_gates.py compiles the ODCS `library` rules in contracts/ into
-    # Expectation Suites. Pinned <1 to match the emulator's own
-    # great-expectations extra, so the two demonstrations cannot drift onto
-    # different major versions of the API.
+    # Expectation Suites.
+    #
+    # DIVERGES FROM ROOT, deliberately and with the reason, because the comment
+    # that used to sit here claimed the opposite and was wrong. It said this
+    # was `pinned <1 to match the emulator's own great-expectations extra, so
+    # the two demonstrations cannot drift onto different major versions of the
+    # API` -- while the root pyproject's `great-expectations` group declares
+    # `>=0.18,<2` and the root uv.lock resolves 1.23.2 against the 0.18.22
+    # locked here. The drift the comment forbade had already happened.
+    #
+    # The root moved on purpose: e2e/great-expectations/driver.py is written
+    # against the 1.x API (`ctx.data_sources`, `add_batch_definition_*`,
+    # `batch.validate(gxe....)`). `contract_gate.py` in this example is still
+    # on the 0.18 fluent API -- `ctx.sources.add_pandas`,
+    # `asset.build_batch_request`,
+    # `ctx.get_validator(create_expectation_suite_with_name=...)` -- all of
+    # which 1.0 REMOVED. Raising the ceiling here does not bump a version, it
+    # breaks the example at runtime, which is measured: the widening to `<2`
+    # failed both advanced medallion e2es with
+    # `AttributeError: 'EphemeralDataContext' object has no attribute
+    # 'sources'`. .github/dependabot.yml holds the major for the same reason.
+    #
+    # LIFT THIS when contract_gate.py is ported to the 1.x
+    # `data_sources`/`batch_definition`/`ValidationDefinition` API, with the
+    # deliberate-failure case re-proved on the new result objects -- these
+    # gates are a witness surface, so how they assert must not change as a
+    # side effect of a dependency bump. There is no upstream change to wait
+    # for; the work is the exit condition.
     "great-expectations>=0.18,<1",
     # contract_gate.py reads the ODCS YAML.
     "pyyaml>=6,<7",

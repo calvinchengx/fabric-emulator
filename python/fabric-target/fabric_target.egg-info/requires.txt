@@ -3,4 +3,4 @@
 azure-identity>=1.17
 
 [sessions]
-requests>=2.31
+requests>=2.32
