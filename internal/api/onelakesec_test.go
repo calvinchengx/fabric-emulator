@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -17,7 +18,7 @@ import (
 const roleBody = `{"name":"readers","decisionRules":[{"effect":"Permit","permission":[
   {"attributeName":"Path","attributeValueIncludedIn":["Tables/dbo/Customers"]},
   {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
-  "members":{"microsoftEntraMembers":[{"objectId":"11111111-1111-1111-1111-111111111111"}]}}`
+  "members":{"microsoftEntraMembers":[{"tenantId":"00000000-0000-4000-8000-0000000000aa","objectId":"11111111-1111-1111-1111-111111111111"}]}}`
 
 func secItem(t *testing.T, a *API, st *store.Store) (*store.Workspace, *store.Item) {
 	t.Helper()
@@ -74,6 +75,32 @@ func TestDataAccessRolesRoundTrip(t *testing.T) {
 	// would look like a policy that simply does not work.
 	if len(back.Value[0].Members.Entra) != 1 {
 		t.Fatalf("members were dropped: %s", get.Body)
+	}
+}
+
+// The spec marks tenantId and objectId required on MicrosoftEntraMember. A
+// member missing either confers nothing, so the PUT refuses it rather than
+// storing a role that looks granted and is not. The refusal must leave the
+// existing roles untouched.
+func TestPutRefusesAnEntraMemberMissingAnId(t *testing.T) {
+	a, st := newAPI(t)
+	ws, it := secItem(t, a, st)
+	if w := do(a.putDataAccessRoles, admin, "PUT", `{"value":[`+roleBody+`]}`, secPV(ws, it)); w.Code != http.StatusOK {
+		t.Fatalf("seed PUT = %d %s", w.Code, w.Body)
+	}
+	for _, m := range []string{
+		`{"objectId":"11111111-1111-1111-1111-111111111111"}`,
+		`{"tenantId":"00000000-0000-4000-8000-0000000000aa"}`,
+	} {
+		body := `{"value":[{"name":"bad","decisionRules":[],"members":{"microsoftEntraMembers":[` + m + `]}}]}`
+		w := do(a.putDataAccessRoles, admin, "PUT", body, secPV(ws, it))
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "microsoftEntraMembers[0] requires both tenantId and objectId") {
+			t.Fatalf("member %s = %d %s", m, w.Code, w.Body)
+		}
+	}
+	get := do(a.listDataAccessRoles, admin, "GET", "", secPV(ws, it))
+	if !strings.Contains(get.Body.String(), `"readers"`) || strings.Contains(get.Body.String(), `"bad"`) {
+		t.Fatalf("a refused PUT changed the stored roles: %s", get.Body)
 	}
 }
 

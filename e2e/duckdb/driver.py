@@ -135,7 +135,7 @@ req(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake_id}/dataAccessRoles", "PUT",
         "permission": [
             {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
             {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
-    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, ft)
+    "members": {"microsoftEntraMembers": [{"tenantId": "00000000-0000-4000-8000-0000000000aa", "objectId": VIEWER}]}}]}, ft)
 
 # STEP 2: the engine asks what this user may see. It uses its OWN privileged
 # token -- the user never authenticates to OneLake at all.

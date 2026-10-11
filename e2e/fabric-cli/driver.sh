@@ -301,7 +301,7 @@ LHID=$(fab get "$WS/lake.Lakehouse" -q id | guid); [ -n "$LHID" ] || fail "lakeh
 ROLES='{"value":[{"name":"readers","decisionRules":[{"effect":"Permit","permission":[
   {"attributeName":"Path","attributeValueIncludedIn":["Tables/dbo/Customers"]},
   {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
-  "members":{"microsoftEntraMembers":[{"objectId":"11111111-1111-1111-1111-111111111111"}]}}]}'
+  "members":{"microsoftEntraMembers":[{"tenantId":"00000000-0000-4000-8000-0000000000aa","objectId":"11111111-1111-1111-1111-111111111111"}]}}]}'
 
 fab api "workspaces/$WSID1/items/$LHID/dataAccessRoles" -X put -i "$ROLES" >/dev/null \
   || fail "put dataAccessRoles"

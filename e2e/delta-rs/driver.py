@@ -169,7 +169,7 @@ req_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lh['id']}/dataAccessRoles", 
     "decisionRules": [{"effect": "Permit", "permission": [
         {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/events"]},
         {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
-    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, fabric_token)
+    "members": {"microsoftEntraMembers": [{"tenantId": "00000000-0000-4000-8000-0000000000aa", "objectId": VIEWER}]}}]}, fabric_token)
 
 assert viewer_can_read(guid_url), "the granted Delta table was still refused"
 assert not viewer_can_read(other_url), "a grant on one table let delta-rs read another"

@@ -20,6 +20,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
@@ -35,7 +36,13 @@ type dataAccessRolesBody struct {
 // layer needs in order to key it. Everything else is the evaluator's business
 // and is stored verbatim.
 type roleName struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Members struct {
+		MicrosoftEntraMembers []struct {
+			TenantID string `json:"tenantId"`
+			ObjectID string `json:"objectId"`
+		} `json:"microsoftEntraMembers"`
+	} `json:"members"`
 }
 
 // onelakeSecItems is the set of item types that carry OneLake security roles.
@@ -124,6 +131,16 @@ func (a *API) putDataAccessRoles(w http.ResponseWriter, r *http.Request, p *auth
 		if err := json.Unmarshal(raw, &n); err != nil || n.Name == "" {
 			writeErr(w, http.StatusBadRequest, "InvalidInput", "Each role requires a name.")
 			return
+		}
+		// MicrosoftEntraMember requires both tenantId and objectId in the spec.
+		// A member without one cannot be matched to a principal, so accepting it
+		// would store a role that silently confers nothing.
+		for i, m := range n.Members.MicrosoftEntraMembers {
+			if m.TenantID == "" || m.ObjectID == "" {
+				writeErr(w, http.StatusBadRequest, "InvalidInput", fmt.Sprintf(
+					"Role %s: microsoftEntraMembers[%d] requires both tenantId and objectId.", n.Name, i))
+				return
+			}
 		}
 		// The name is the identity of a role. Two rules under one name is a
 		// payload whose author disagrees with itself about what the role is;

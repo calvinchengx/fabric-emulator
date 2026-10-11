@@ -250,15 +250,6 @@ KNOWN = {
         "field. See internal/schedule/schedule.go parseLocalTime.",
     "configuration.endDateTime: is not RFC 3339":
         "as above, the other half of the same schedule window.",
-
-    "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
-        "NOT the emulator inventing a shape: OneLake roles are stored as the "
-        "raw body the caller PUT and echoed back, so this is a test fixture's "
-        "omission reflected. The spec marks tenantId required on "
-        "MicrosoftEntraMember, so the faithful fix is to REFUSE a member "
-        "without one at authoring time -- which is a behaviour change across "
-        "several fixtures and deserves its own change rather than being "
-        "folded into the one that made this visible.",
 }
 
 
