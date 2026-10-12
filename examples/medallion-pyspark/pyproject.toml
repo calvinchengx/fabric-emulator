@@ -25,6 +25,15 @@ dependencies = [
     "pyodbc>=5.2,<6",
     # Drives notebook cells and the silver transform onto Sail over Spark
     # Connect (no JVM).
+    #
+    # PERMANENT HOLD. The exact version is a FIDELITY CLAIM, not a dependency
+    # kept current: 4.2.0 is the client pysail 0.7.2 is built and tested
+    # against, and the root pyproject's `spark-client` group records the
+    # measurement behind it -- an old server cannot take a new client (0.6.6 +
+    # 4.2.0 dies in `createDataFrame`). Moving this number alone breaks the
+    # engine; it moves when the server does, or not at all. The same class as
+    # `apache/spark` in .github/dependabot.yml, whose tag is a claim about
+    # Fabric Runtime 1.3 rather than something to keep current.
     "pyspark-client==4.2.0",
     "requests>=2.32,<3",
 ]

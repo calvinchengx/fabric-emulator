@@ -219,6 +219,26 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# that has stopped matching the tree reports clean on exactly the
 	@# manifests nobody is watching, which is worse than no scanner
 	@# because it produces a green check.
+	@#
+	@# Invariants 6 and 7 turn that question on the manifests themselves,
+	@# which the five above cannot reach. This repository can decide to
+	@# live with a known risk in four places and only three had any
+	@# bookkeeping: a dependabot `ignore:` (invariant 3), a dismissed
+	@# alert (check_dismissed_advisories.py) and an advisory-holds.json
+	@# record (invariant 5). The fourth is an `==` in a pyproject.toml --
+	@# the STRONGEST hold available and the only one with none, an
+	@# `ignore:` with no entry, no comment and no review -- and a grep for
+	@# the two exit markers across all eleven tracked pyproject.toml files
+	@# returned 0 against 8 exact pins. Seven were policy (the
+	@# pyspark-client/pysail versions are one number, a fidelity claim
+	@# about which Spark the shipped engine IS); one was not. Invariant 7
+	@# then asks whether a constraint an example SHARES with the root
+	@# agrees with it, which matters because examples are what people copy
+	@# out: both advanced medallions pinned `great-expectations<1` under a
+	@# comment asserting they could not drift from the root, while the
+	@# root had already moved to `<2` and resolves 1.23.2 against their
+	@# 0.18.22. Both invariants read COMMENT RUNS, so
+	@# check_comment_drift.py --strict above reads these too.
 	@$(PY) scripts/check_dependency_risk.py --strict
 	@$(PY) scripts/check_cron_workflow_freshness.py
 	@$(PY) scripts/gen_event_kinds.py --check

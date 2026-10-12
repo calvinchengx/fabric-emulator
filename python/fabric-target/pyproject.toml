@@ -13,7 +13,24 @@ dependencies = []
 
 [project.optional-dependencies]
 real = ["azure-identity>=1.17"]
-sessions = ["requests>=2.31"]
+# FLOOR RAISED FROM 2.31 TO 2.32, and this extra is exactly what the advisory
+# is about: requests below 2.32.0 lets a `Session` keep `verify=False` from the
+# FIRST request onwards (GHSA-9wx4-h78v-vm56 / CVE-2024-35195), and `session()`
+# is the only thing in this package that builds one -- against real Fabric,
+# with a real bearer token on it. A floor below the fix is not a range, it is a
+# licence for a resolver to pick the affected version.
+#
+# DIVERGES FROM ROOT on the ceiling, deliberately: the root pyproject declares
+# `requests>=2.32,<3` for its own locked tooling, where capping a major is free
+# because nothing downstream resolves against it. This package is PUBLISHED and
+# a consumer installs it beside their own pins, so a `<3` here would cap theirs
+# too and the cap would be this repository's opinion travelling into somebody
+# else's resolution.
+#
+# PERMANENT HOLD: a published library does not choose its consumer's major.
+# The floor is the security claim and tracks the root's; the absent ceiling is
+# the policy, and it is not waiting on anything.
+sessions = ["requests>=2.32"]
 
 [project.urls]
 Homepage = "https://github.com/calvinchengx/fabric-emulator"

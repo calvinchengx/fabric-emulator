@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -638,7 +638,6 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyodbc", specifier = ">=5.2,<6" },
     { name = "pyspark-client", specifier = "==4.2.0" },
-    { name = "pyspark-client", specifier = ">=4.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 
@@ -655,7 +654,7 @@ source = { editable = "../../python/fabric-target" }
 [package.metadata]
 requires-dist = [
     { name = "azure-identity", marker = "extra == 'real'", specifier = ">=1.17" },
-    { name = "requests", marker = "extra == 'sessions'", specifier = ">=2.31" },
+    { name = "requests", marker = "extra == 'sessions'", specifier = ">=2.32" },
 ]
 provides-extras = ["real", "sessions"]
 

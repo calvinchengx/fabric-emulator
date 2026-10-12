@@ -8,4 +8,4 @@ Requires-Python: >=3.9
 Provides-Extra: real
 Requires-Dist: azure-identity>=1.17; extra == "real"
 Provides-Extra: sessions
-Requires-Dist: requests>=2.31; extra == "sessions"
+Requires-Dist: requests>=2.32; extra == "sessions"
