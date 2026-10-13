@@ -75,6 +75,23 @@ WHAT THIS IS NOT.
     it properly wants `go/types`, which is a Go program rather than a line in
     this file -- a deliberate increment, named so it is a gap and not an
     oversight.
+  * THE PARSER READS LINE COMMENTS AND NOT STRING LITERALS, which bounds the
+    guard above in one named direction. Comments ARE handled -- stripped by
+    `_braced` and `_struct_fields` alike, because an unbalanced brace in one
+    swallowed six live functions out of the ledger without `unparsed_exports`
+    saying a word, which is precisely the silent shrink this gate exists to
+    make impossible. A raw backtick string is not: one whose lines begin at
+    column 0 with Go-like declaration text would inject a PHANTOM id. Nothing
+    in `pkg/` writes that today, and the failure direction is the forgiving
+    one -- a phantom reads as a STALE LEDGER, which fails until a reader looks
+    at the --update diff, and never as a removal nobody may launder. A real
+    lexer is where this ends, and it is the same increment `go/types` is.
+  * IDS ARE KEYED BY PACKAGE NAME, not by directory path, because `pkg` plus
+    the clause is exactly how an importer writes one down. Two directories
+    under `pkg/` declaring the SAME package name would therefore collide into
+    one row and the second's unique ids would read as a removal. Go convention
+    makes that unlikely and the glob here is explicitly built for packages
+    that do not exist yet, so it is stated rather than guarded.
   * `internal/` is deliberately out of scope, and for once the language does
     the work: Go's own internal rule makes those packages unimportable by any
     other module, so there is no downstream importer to break. Ledgering them
@@ -276,8 +293,21 @@ def _braced(lines, start):
     reason: a nested struct and a one-line `struct{ Msg string }` both get
     their real extent, where a line window reads one of them wrong. This tree
     has one of each.
+
+    COMMENTS ARE STRIPPED FIRST, and that is not tidiness. _struct_fields
+    below strips them per line, so without it the two disagree about where a
+    body ENDS: one unbalanced brace inside a comment in an exported type's
+    body swallows the declarations after it, and because each is then SKIPPED
+    rather than misread, unparsed_exports() has nothing to name. Driven over
+    the real tree, one `// {` line inside AccessEntry took extraction from 51
+    ids to 45 with no surprises reported -- a false BREAKING CHANGE for six
+    live functions whose printed remedy is to write them into `removed`, and,
+    once that comment is already in the baseline, a brand-new export that is
+    never extracted at all. rowfilter.go already carries brace-bearing
+    comments, so the trigger is one wrapped line away. Stripping preserves
+    newlines (_LINE_COMMENT stops at one), so the end line is unchanged.
     """
-    text = "\n".join(lines[start:])
+    text = "\n".join(_LINE_COMMENT.sub("", line) for line in lines[start:])
     opened = text.index("{")
     depth, index = 1, opened + 1
     while index < len(text) and depth:

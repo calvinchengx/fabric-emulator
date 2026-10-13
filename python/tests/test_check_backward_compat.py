@@ -329,6 +329,49 @@ def test_a_declaration_form_the_parser_cannot_read_is_named_not_dropped(tree,
     assert "teach go_api()" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("comment", [
+    # A wrapped sentence that happens to end on an opening brace: the body
+    # never closes, so everything after it was swallowed.
+    "\t// a note about the shape it carries: {\n",
+    # …and the other direction, which closes the body early.
+    "\t// a note about the shape it carries: }\n",
+    # A trailing comment on a field line, not a line of its own.
+    "\tTrailing string // shapes like map[string]int{\n",
+])
+def test_a_brace_inside_a_comment_does_not_swallow_the_rest_of_the_file(tree,
+                                                                       comment):
+    """THE SILENT SHRINK, asserted rather than hoped for.
+
+    `_braced` counts braces and `_struct_fields` strips comments, so if only
+    one of them does the two disagree about where a type's body ENDS and an
+    unbalanced brace in a comment extends it over the declarations that
+    follow. Those declarations are then SKIPPED rather than misread, so
+    unparsed_exports() has nothing to name -- the exact shape that guard
+    exists to prevent, arriving through the guard's own blind spot.
+
+    Driven over the real tree before the fix, one such comment inside
+    AccessEntry took extraction from 51 ids to 45 and reported no surprises:
+    a false BREAKING CHANGE for six live functions, whose printed remedy is to
+    write them into `removed` and launder real API; and, with the comment
+    already in the baseline, a new export that is never extracted at all --
+    no STALE LEDGER, no report, exit 0. `pkg/onelakesec/rowfilter.go` already
+    carries brace-bearing comments, so this is one wrapped line away.
+
+    A whole-list equality, because the interesting failure is a MISSING id and
+    an `in` check cannot see one.
+    """
+    (tree / "pkg" / "widgets" / "widgets.go").write_text(
+        PKG_GO.replace("\tName  string\n", "\tName  string\n" + comment),
+        encoding="utf-8")
+    # The trailing-comment leg declares a field of its own, so it is one id
+    # LARGER rather than equal: a comment must cost nothing, and the line it
+    # rides on must still count.
+    expected = sorted(PKG_IDS + (["widgets.Widget.Trailing"]
+                                 if "Trailing string" in comment else []))
+    assert bc.go_api() == expected
+    assert bc.unparsed_exports() == []
+
+
 def test_an_empty_pkg_tree_names_the_directory_it_read(tree, monkeypatch, capsys):
     """The dangerous failure, and the report has to say WHERE it looked.
 
