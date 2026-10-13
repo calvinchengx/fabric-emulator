@@ -179,10 +179,15 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# there yesterday is there today. check_route_coverage comes
 	@# closest and stores `registered` as a COUNT, so deleting a served
 	@# route reads in review as `174 -> 173` and never names itself.
-	@# Below HTTP nothing looked at all: 28 CLI flags, 2 subcommands and
-	@# 37 FABRIC_* knobs that every compose file, CI job and README
+	@# Below HTTP nothing looked at all: 30 CLI flags, 2 subcommands and
+	@# 41 FABRIC_* knobs that every compose file, CI job and README
 	@# snippet here is written against, and a rename would break all of
-	@# them while every check above stayed green. Offline like its
+	@# them while every check above stayed green. The fifth surface it
+	@# holds is served over no wire: the 51 exported ids of `pkg/`,
+	@# which is a COMPILE-TIME contract -- that directory exists so
+	@# another module CAN import it, where Go's internal rule would
+	@# forbid it, so dropping `AccessEntry.Why` breaks a downstream
+	@# BUILD while every gate here stays green. Offline like its
 	@# neighbour -- the Go source and nothing else -- so it answers
 	@# before a push. Asymmetric on purpose: an addition is a stale
 	@# ledger you fix with --update, a removal fails until someone
