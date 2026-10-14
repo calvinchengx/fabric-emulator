@@ -45,8 +45,9 @@ concatenated packets until one set the EOM status bit, with no cap on the total.
 Each `ReadPacket` is self-limiting at 64 KiB because the length field is a
 uint16, which is exactly why the loop read as bounded and was not: a peer that
 never sets EOM chose how much the emulator allocated. Repaired in the same
-change by `tds.MaxMessageBytes`, so this kind too ships at zero entries rather
-than as a recorded allowance.
+change by `tds.DefaultMaxMessageBytes` (settable at start-up through
+`tds.SetMaxMessageBytes`, wired to FABRIC_MAX_TDS_MESSAGE_BYTES), so this kind
+too ships at zero entries rather than as a recorded allowance.
 
 The 68 decoder sites are the exposure: a streaming decoder allocates as it
 reads, so before the outer bound landed any client could make the emulator

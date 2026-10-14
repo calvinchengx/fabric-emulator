@@ -321,6 +321,27 @@ pair are:
   recognised serve sites is itself a finding: a sweep that covers nothing passes
   vacuously.
 
+**The links the checker cannot reach, and what holds them instead.** Both kinds
+above read Go source under the scan roots, so the four links they verify all live
+*inside* `internal/tds/packet.go`. The bound has three more beyond it — the
+environment is read by `config.FromEnvPartial`, carried on `Config`, and
+installed into `internal/tds` by `server.New` — and none of them is a shape a
+static sweep can judge: `maxBytesEnv(key, def)` is an ordinary function call, and
+whether its `def` argument is the right number is arithmetic, not structure. That
+gap was real and not hypothetical. Dropping the default from `FromEnvPartial`, or
+replacing `tds.SetMaxMessageBytes(cfg.MaxTDSMessageBytes)` with a discard, left
+`go test`, this checker and `check_backward_compat.py --strict` all green while
+every released binary with a TDS endpoint ran an **unbounded** listener and the
+documented `0` became a no-op — the permissive direction, reached by deleting a
+line rather than by adding one. It is held by two Go tests, each covering the end
+the other cannot see: `config_test.go`'s `TestMaxTDSMessageBytesFromEnv` reads the
+environment and never builds a `Server`, and
+`internal/server/tdsmaxmessage_test.go` builds a configured `Server` and then
+proves, through a real read, that the number it was given is the number that
+refuses — and that a configured `0` lifts a ceiling that was demonstrably in
+force a moment earlier, which is what tells *installed* apart from *already
+installed by `init()`*.
+
 **Why not a generic `append-in-loop` heuristic**, which is the first thing one
 reaches for after fixing this. 643 `append(` sites under the scan roots, 540 of
 them inside a loop by the same crude brace walk §5 rejects `defer-in-loop` on.
@@ -362,7 +383,8 @@ the smaller, honest half: the regressions that are decidable from source, decide
 | `python/tests/test_check_perf_regressions.py` | pytest | 55 tests, each driving a violation the checker must catch, or a near-miss it must not |
 | `internal/tds/maxmessage_test.go` | `go test` | a multi-packet message under the ceiling is joined intact, an EOM-less stream is refused *at* the bound, the refusal is distinguishable from a malformed frame, the value clears real traffic, the knob reaches the read loop, `0` means unlimited, and the default is installed without anyone setting it |
 | `internal/server/maxbody_test.go` | `go test` | 413 fires, traffic under the bound is untouched, `0` means unlimited, ordering holds, the data plane is included |
-| `internal/config/config_test.go` | `go test` | unset / `0` / explicit / garbage read three different ways |
+| `internal/server/tdsmaxmessage_test.go` | `go test` | a configured server *installs* the ceiling it was given, the configured value is the one that refuses, ordinary multi-packet traffic still reads, and a configured `0` reaches the read loop as no limit |
+| `internal/config/config_test.go` | `go test` | unset / empty / `0` / explicit / garbage read for **both** ceilings — `FABRIC_MAX_REQUEST_BYTES` and `FABRIC_MAX_TDS_MESSAGE_BYTES` — with the default-taking cases guarded against a zero default, which would make them assert nothing |
 | `internal/httpx/guard_test.go` | `go test` | the pre-existing truncation ban, unchanged |
 
 The checker was proven non-vacuous by driving it against a real violation of each

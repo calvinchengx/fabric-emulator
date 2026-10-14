@@ -22,7 +22,7 @@
   "counts": {
     "subcommands": 2,
     "cliFlags": 30,
-    "envVars": 41,
+    "envVars": 42,
     "routes": 1071
   },
   "subcommands": [

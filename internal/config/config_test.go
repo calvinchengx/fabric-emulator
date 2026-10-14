@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/httpx"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
 
 func fromEnvForTest(t *testing.T) (*Config, error) {
@@ -357,6 +358,82 @@ func TestMaxRequestBytesFromEnv(t *testing.T) {
 			if got := FromEnvPartial().MaxRequestBytes; got != httpx.DefaultMaxRequestBody {
 				t.Fatalf("%q = %d, want the %d default (never unlimited)",
 					bad, got, int64(httpx.DefaultMaxRequestBody))
+			}
+		})
+	}
+}
+
+// TestMaxTDSMessageBytesFromEnv is the same three-way reading for the SECOND
+// listener's ceiling, and it is here for a sharper reason than symmetry.
+//
+// The TDS bound is three links long: a default in internal/tds, resolved here
+// from FABRIC_MAX_TDS_MESSAGE_BYTES, then installed into package-level state by
+// internal/server.New. internal/tds/maxmessage_test.go cannot see any of that —
+// it tests the read loop in-package and never goes through a Config — so
+// without this test the default could be dropped from FromEnvPartial and every
+// Go test, the perf checker and the compat checker would still pass while every
+// released binary with a TDS endpoint ran an UNBOUNDED listener. That is the
+// permissive direction, and it is the exact failure this change exists to
+// close, one link further out: declared, derived, routed, and then not applied.
+func TestMaxTDSMessageBytesFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+
+	// The assertions below are only meaningful because the default is NOT 0: 0
+	// is the documented way to ask for no limit, so a zero default would make
+	// every "takes the default" case below pass on an unbounded listener.
+	if tds.DefaultMaxMessageBytes == 0 {
+		t.Fatal("tds.DefaultMaxMessageBytes is 0, which means UNLIMITED; the " +
+			"default-taking cases in this test would then assert nothing")
+	}
+
+	cases := []struct {
+		name string
+		set  bool
+		env  string
+		want int64
+		why  string
+	}{
+		{name: "unset takes the default", set: false,
+			want: tds.DefaultMaxMessageBytes,
+			why:  "a binary nobody configured must still bound its TDS listener"},
+		{name: "empty takes the default", set: true, env: "",
+			want: tds.DefaultMaxMessageBytes,
+			why:  "an exported-but-empty variable is not an instruction"},
+		{name: "zero means unlimited", set: true, env: "0", want: 0,
+			why: "the escape hatch for a sidecar already returning a larger " +
+				"result set than the default; it must not be read as the default"},
+		{name: "an explicit value is honoured", set: true, env: "1048576",
+			want: 1 << 20, why: "the knob has to actually set the ceiling"},
+	}
+	// A typo must read as the DEFAULT, never as unlimited: falling back to
+	// unlimited would restore the exposure the bound exists to close while the
+	// configuration looked set.
+	for _, bad := range []string{"not-a-number", "-1", "320MiB", " ", "0x10"} {
+		cases = append(cases, struct {
+			name string
+			set  bool
+			env  string
+			want int64
+			why  string
+		}{
+			name: "garbage " + bad + " falls back to the default",
+			set:  true, env: bad, want: tds.DefaultMaxMessageBytes,
+			why: "an unparseable value must never be read as unlimited",
+		})
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.set {
+				t.Setenv("FABRIC_MAX_TDS_MESSAGE_BYTES", c.env)
+			} else {
+				// t.Setenv cannot unset, and the surrounding process may have
+				// the variable exported.
+				t.Setenv("FABRIC_MAX_TDS_MESSAGE_BYTES", "")
+			}
+			if got := FromEnvPartial().MaxTDSMessageBytes; got != c.want {
+				t.Fatalf("FABRIC_MAX_TDS_MESSAGE_BYTES=%q gave %d, want %d — %s",
+					c.env, got, c.want, c.why)
 			}
 		})
 	}
