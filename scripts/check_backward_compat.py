@@ -105,12 +105,16 @@ _CASE = re.compile(r"\bcase\s+([^:\n]+):")
 # internal/config's own typed helpers.
 _ENV_READ = re.compile(
     r"\b(?:os\.Getenv|os\.LookupEnv|envOr|envDefault|boolEnv|intEnv|durationEnv"
-    r"|maxRequestBytesEnv)"
+    r"|maxBytesEnv)"
     r'\(\s*"(FABRIC_[A-Z0-9_]+)"\s*[,)]')
 # …and every FABRIC_* string literal at all, so a read form this parser does
 # NOT know gets NAMED instead of silently dropping a knob out of the surface.
 # The reader list above is five function names in one file; this guard is what
-# makes renaming one of them a failure rather than a quietly shrinking ledger.
+# makes renaming one of them a failure rather than a quietly shrinking ledger --
+# and it has now done so once for real: `maxRequestBytesEnv` was generalised to
+# `maxBytesEnv(key, default)` when the TDS listener needed the same escape-hatch
+# shape, and this line is what reported the two knobs it reads as missing from
+# the surface rather than letting them drop out of it.
 _ENV_LITERAL = re.compile(r'"(FABRIC_[A-Z0-9_]+)"')
 _LINE_COMMENT = re.compile(r"//[^\n]*")
 

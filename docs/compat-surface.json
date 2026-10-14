@@ -22,7 +22,7 @@
   "counts": {
     "subcommands": 2,
     "cliFlags": 30,
-    "envVars": 41,
+    "envVars": 42,
     "routes": 1071
   },
   "subcommands": [
@@ -86,6 +86,7 @@
     "FABRIC_KQL_URL",
     "FABRIC_LIST_PAGE_SIZE",
     "FABRIC_MAX_REQUEST_BYTES",
+    "FABRIC_MAX_TDS_MESSAGE_BYTES",
     "FABRIC_MLFLOW_URL",
     "FABRIC_NAME_RESERVATION",
     "FABRIC_ONELAKE_TRACE",
