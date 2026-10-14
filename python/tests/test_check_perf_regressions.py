@@ -53,15 +53,38 @@ func (s *Server) boundBodies(next http.Handler) http.Handler {
 }
 """
 
-# A packet.go that is correct: the ceiling declared with a readable value, and
-# ReadMessage consulting it. Both halves are needed — see
-# `test_a_declared_but_unconsulted_ceiling_is_flagged`.
+# A packet.go that is correct, in all four of the links the kind checks: the
+# default DECLARED with a readable value, the effective ceiling DERIVED from it,
+# the entry point ROUTING it, and the function that joins payloads COMPARING
+# against the bound it was handed, before the append. Written out in full rather
+# than abbreviated, because the abbreviation is what hid the defect — see
+# `test_the_join_moved_into_a_helper_without_the_comparison_is_flagged`.
 GOOD_PACKET_GO = """package tds
 
-const MaxMessageBytes = 320 << 20
+const DefaultMaxMessageBytes = 320 << 20
+
+var maxMessageBytes atomic.Int64
+
+func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }
 
 func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
-\treturn readMessageBounded(r, MaxMessageBytes)
+\treturn readMessageBounded(r, maxMessageBytes.Load())
+}
+
+func readMessageBounded(r io.Reader, limit int64) (typ byte, data []byte, err error) {
+\tfor {
+\t\tp, err := ReadPacket(r)
+\t\tif err != nil {
+\t\t\treturn 0, nil, err
+\t\t}
+\t\tif total := int64(len(data)) + int64(len(p.Data)); total > limit {
+\t\t\treturn 0, nil, fmt.Errorf("too big")
+\t\t}
+\t\tdata = append(data, p.Data...)
+\t\tif p.EOM() {
+\t\t\treturn typ, data, nil
+\t\t}
+\t}
 }
 """
 
@@ -394,19 +417,30 @@ def test_a_missing_packet_file_is_flagged(tree):
     assert any("does not exist" in f["snippet"] for f in found)
 
 
-def test_a_declared_but_unconsulted_ceiling_is_flagged(tree):
-    """THE FAILURE A PRESENCE GREP WOULD MISS, and the reason this kind reads
-    the function body rather than the file.
+def test_the_join_moved_into_a_helper_without_the_comparison_is_flagged(tree):
+    """THE REGRESSION TEST FOR THIS KIND'S OWN FIRST VERSION, and the reason it
+    now locates the accumulation from the join rather than from a function name.
 
-    A refactor that moves the join into a helper and forgets the comparison
-    leaves `MaxMessageBytes` sitting in the file, fully documented, enforcing
-    nothing. `grep MaxMessageBytes internal/tds/packet.go` would say yes.
+    The first version asked whether `ReadMessage` mentioned the ceiling. By the
+    time it shipped, `ReadMessage` was a one-line delegation to a helper — so it
+    mentioned the ceiling, the check passed, and deleting the comparison from the
+    HELPER changed nothing it could see. This fixture is that tree: the constant
+    declared, derived and passed in, and then never compared against. Everything
+    a presence grep looks for is present.
     """
     tree({c.TDS_PACKET_FILE: """package tds
 
-const MaxMessageBytes = 320 << 20
+const DefaultMaxMessageBytes = 320 << 20
+
+var maxMessageBytes atomic.Int64
+
+func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }
 
 func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\treturn readMessageBounded(r, maxMessageBytes.Load())
+}
+
+func readMessageBounded(r io.Reader, limit int64) (typ byte, data []byte, err error) {
 \tfor {
 \t\tp, err := ReadPacket(r)
 \t\tif err != nil {
@@ -421,77 +455,211 @@ func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
 """})
     found = c.scan()
     assert kinds(found) == ["unbounded-frame-accumulation"]
-    assert (f"{c.TDS_PACKET_FILE}:{c.TDS_ACCUM_FUNC}:unbounded-frame-accumulation"
+    # Attributed to the HELPER, not to the entry point: the line that needs the
+    # comparison back is the one that joins.
+    assert (f"{c.TDS_PACKET_FILE}:readMessageBounded:unbounded-frame-accumulation"
             in keys(found))
-    assert any("documents a bound" in f["snippet"] for f in found)
+    assert any("never compared against" in f["snippet"] for f in found)
+
+
+def test_a_comparison_the_join_happens_before_is_flagged(tree):
+    """"Bounded" and "bounded before the allocation that would cross the bound"
+    are different claims, and packet.go's comment makes the second one.
+
+    Checking after the append means the worst case held in memory is the ceiling
+    plus whatever the peer had queued, not the ceiling plus the one packet that
+    tripped it — and a test that only asserts "an endless stream is eventually
+    refused" passes either way.
+    """
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const DefaultMaxMessageBytes = 320 << 20
+
+var maxMessageBytes atomic.Int64
+
+func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\treturn readMessageBounded(r, maxMessageBytes.Load())
+}
+
+func readMessageBounded(r io.Reader, limit int64) (typ byte, data []byte, err error) {
+\tfor {
+\t\tp, err := ReadPacket(r)
+\t\tdata = append(data, p.Data...)
+\t\tif int64(len(data)) > limit {
+\t\t\treturn 0, nil, fmt.Errorf("too big")
+\t\t}
+\t\tif p.EOM() {
+\t\t\treturn typ, data, nil
+\t\t}
+\t}
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert any("AFTER the join" in f["snippet"] for f in found)
+
+
+def test_an_equality_check_is_not_a_ceiling_check(tree):
+    """`total == limit` is not a bound: it refuses one exact size and admits
+    every larger one. Only the ORDERING operators count, which is why the
+    comparison regex excludes `==` rather than looking for the bound's name near
+    any operator at all."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace("total > limit",
+                                                    "total == limit")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert any("never compared against" in f["snippet"] for f in found)
+
+
+def test_a_shift_is_not_mistaken_for_a_comparison(tree):
+    """The near-miss on the other side: `<<` contains `<`. A helper that shifts
+    its bound and never compares it would read as guarded by a regex that looked
+    for the name next to a `<`, so shifts are blanked before matching."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "if total := int64(len(data)) + int64(len(p.Data)); total > limit {",
+        "if words := limit << 3; words == 0 {")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert any("never compared against" in f["snippet"] for f in found)
+
+
+def test_the_bound_may_be_a_grouped_int_parameter(tree):
+    """The near-miss that would make this kind noisy: `func f(a, b int64)` gives
+    `b` the type and leaves `a` bare, so a parameter-type walk that required each
+    piece to name its own type would miss half the bounds a helper could be
+    handed and flag a correctly-guarded loop."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "func readMessageBounded(r io.Reader, limit int64)",
+        "func readMessageBounded(r io.Reader, limit, other int64)")})
+    assert c.scan() == []
+
+
+def test_the_join_inside_the_entry_point_itself_is_accepted(tree):
+    """A helper is not required. If the join moves back into ReadMessage and the
+    comparison comes with it, the invariant holds and this must stay silent —
+    otherwise the kind would be enforcing a code layout rather than a bound."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const DefaultMaxMessageBytes = 320 << 20
+
+var maxMessageBytes atomic.Int64
+
+func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\tlimit := maxMessageBytes.Load()
+\tfor {
+\t\tp, err := ReadPacket(r)
+\t\tif err != nil {
+\t\t\treturn 0, nil, err
+\t\t}
+\t\tif int64(len(data)+len(p.Data)) > limit {
+\t\t\treturn 0, nil, fmt.Errorf("too big")
+\t\t}
+\t\tdata = append(data, p.Data...)
+\t\tif p.EOM() {
+\t\t\treturn typ, data, nil
+\t\t}
+\t}
+}
+"""})
+    assert c.scan() == []
+
+
+def test_an_effective_ceiling_that_no_longer_derives_from_the_default_is_flagged(tree):
+    """Link 2. The constant can stay in the file, correct and documented, while
+    the ceiling actually in force is some other number — and then lowering the
+    constant lowers nothing. `grep DefaultMaxMessageBytes` says yes; the bound
+    the listener enforces is 1 MiB."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }",
+        "func init() { maxMessageBytes.Store(1 << 20) }")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert (f"{c.TDS_PACKET_FILE}:{c.TDS_EFFECTIVE}:unbounded-frame-accumulation"
+            in keys(found))
+    assert any("no longer derives" in f["snippet"] for f in found)
+
+
+def test_an_entry_point_passing_a_literal_is_flagged(tree):
+    """Link 3. A number spelled at the call site is a bound that neither the
+    documented constant nor FABRIC_MAX_TDS_MESSAGE_BYTES can move, so the knob
+    silently stops working while the loop still looks guarded."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "readMessageBounded(r, maxMessageBytes.Load())",
+        "readMessageBounded(r, 1<<20)")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert (f"{c.TDS_PACKET_FILE}:{c.TDS_ENTRY_FUNC}:unbounded-frame-accumulation"
+            in keys(found))
+    assert any("passes on neither" in f["snippet"] for f in found)
 
 
 def test_a_ceiling_named_only_in_a_comment_does_not_consult_it(tree):
     """A bound in a comment is not a bound — the same thing
     `test_a_commented_out_maxbytesreader_does_not_satisfy_the_check` pins for
     the HTTP half. The strip runs first, so prose cannot hold this open."""
-    tree({c.TDS_PACKET_FILE: """package tds
-
-const MaxMessageBytes = 320 << 20
-
-func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
-\t// TODO: compare against MaxMessageBytes here.
-\treturn readMessage(r)
-}
-"""})
-    assert kinds(c.scan()) == ["unbounded-frame-accumulation"]
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "if total := int64(len(data)) + int64(len(p.Data)); total > limit {",
+        "if false { // TODO: compare the total against limit here.")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert any("never compared against" in f["snippet"] for f in found)
 
 
-def test_a_vanished_readmessage_is_flagged_rather_than_assumed_fine(tree):
-    """A renamed accumulation point means the guard is pointing at nothing. That
-    wants re-pointing, and the only way anyone learns it needs re-pointing is if
-    the checker says so."""
-    tree({c.TDS_PACKET_FILE: """package tds
-
-const MaxMessageBytes = 320 << 20
-
-func readFrames(r io.Reader) ([]byte, error) {
-\treturn nil, nil
-}
-"""})
+def test_a_vanished_entry_point_is_flagged_rather_than_assumed_fine(tree):
+    """A renamed entry point means the guard is pointing at nothing. That wants
+    re-pointing, and the only way anyone learns it needs re-pointing is if the
+    checker says so."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace("func ReadMessage(",
+                                                    "func ReadMsg(")})
     found = c.scan()
     assert "unbounded-frame-accumulation" in kinds(found)
-    assert any("needs re-pointing" in f["snippet"] for f in found)
+    assert any("re-point this check" in f["snippet"] for f in found)
+
+
+def test_a_join_this_cannot_locate_is_flagged_rather_than_passing_vacuously(tree):
+    """Zero recognised joins is itself a finding, the same
+    covers-nothing-passes-vacuously direction `unbounded-serve-root` takes for
+    zero serve sites. A kind that locates its subject by pattern passes silently
+    and permanently once the pattern stops matching."""
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "data = append(data, p.Data...)", "data = joinInto(data, p)")})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert f"{c.TDS_PACKET_FILE}:<join>:unbounded-frame-accumulation" in keys(found)
+    assert any("teach _TDS_JOIN" in f["snippet"] for f in found)
 
 
 def test_a_message_ceiling_this_cannot_read_is_reported_rather_than_passed(tree):
     """Same reasoning as the httpx ceilings: a value the checker cannot read is
     a ceiling whose size nobody is checking, and silence there is the quiet
     direction."""
-    tree({c.TDS_PACKET_FILE: """package tds
-
-const MaxMessageBytes = someOtherConst * 2
-
-func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
-\treturn readMessageBounded(r, MaxMessageBytes)
-}
-"""})
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "const DefaultMaxMessageBytes = 320 << 20",
+        "const DefaultMaxMessageBytes = someOtherConst * 2")})
     found = c.scan()
     assert "unbounded-frame-accumulation" in kinds(found)
     assert any("cannot read" in f["snippet"] for f in found)
 
 
-def test_a_consulted_ceiling_inside_a_const_block_is_accepted(tree):
+def test_a_declared_ceiling_inside_a_const_block_is_accepted(tree):
     """The declaration form the real file does not use today but may tomorrow.
     The HTTP half shipped a defect of exactly this shape — a regex that read one
     declaration style and silently missed the other."""
-    tree({c.TDS_PACKET_FILE: """package tds
-
-const (
-\theaderLen = 8
-\tMaxMessageBytes = 320 << 20
-)
-
-func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
-\treturn readMessageBounded(r, MaxMessageBytes)
-}
-"""})
+    tree({c.TDS_PACKET_FILE: GOOD_PACKET_GO.replace(
+        "const DefaultMaxMessageBytes = 320 << 20",
+        "const (\n\theaderLen = 8\n\tDefaultMaxMessageBytes = 320 << 20\n)")})
     assert c.scan() == []
+
+
+def test_the_real_tree_satisfies_every_link_of_the_chain(tree):
+    """The real packet.go, read by the real checker, with nothing stubbed. The
+    fixtures above all derive from GOOD_PACKET_GO, so without this nothing here
+    would notice the fixture drifting away from the file it stands in for."""
+    assert c._tds_findings(pathlib.Path(__file__).resolve().parents[2]) == []
 
 
 # --------------------------------------------------------------------------

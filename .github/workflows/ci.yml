@@ -804,6 +804,18 @@ jobs:
       # looking obviously correct. In `make check` too, which
       # python/tests/test_make_check_runs_in_ci.py requires of anything in
       # that target.
+      #
+      # AND THE SECOND LISTENER, which all of the above is blind to by
+      # construction: it anchors on `r.Body`, and the SQL/TDS endpoint is a raw
+      # net.Listener with no `r.Body` for MaxBytesReader to wrap. There,
+      # tds.ReadMessage joined packets until one set the EOM status bit with no
+      # cap on the total. Bounded by tds.DefaultMaxMessageBytes behind
+      # FABRIC_MAX_TDS_MESSAGE_BYTES, and held by a kind that checks the whole
+      # chain the bound travels -- declared, derived, routed, and compared
+      # against in the function that joins -- because checking only that
+      # ReadMessage named the constant is satisfied by a one-line delegation to
+      # a helper that compares against nothing. That was this kind's own first
+      # version, and it reported a tree with the comparison deleted as healthy.
       - run: uv run --frozen --no-sync python scripts/check_perf_regressions.py --strict
       # AND THE SHAPE OF THIS SOURCE ITSELF. The gate above measures cost;
       # this one asks whether the code here is written in a way that leaks a

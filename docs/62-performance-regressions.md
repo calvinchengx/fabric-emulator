@@ -160,7 +160,7 @@ still applies.
 | `missing-outer-bound` | 0 | asserts the root handler still installs `MaxBytesReader` |
 | `ceiling-above-outer-bound` | 0 | asserts the ordering in §3.1 |
 | `recompiled-regexp` | 0 | all 9 sites are package-level |
-| `unbounded-frame-accumulation` | 0 | asserts `internal/tds/packet.go` declares `MaxMessageBytes` **and** `ReadMessage` consults it (§6) |
+| `unbounded-frame-accumulation` | 0 | asserts the whole chain the TDS bound travels — declared, derived, routed, **and compared against where the join happens** (§6) |
 | `unbounded-serve-root` | 0 | asserts every serve site is handed `Server.Handler()` (§6) |
 
 Four of the six are **absence-shaped**, and absence is what a per-line sweep
@@ -228,14 +228,20 @@ that change could not see. Measured before the fix:
 `grep -c 'MaxMessageBytes\|maxMessageBytes' internal/tds/*.go` returned **0**
 across all 40 files of the package.
 
+All eight TDS read sites — three in `server.go`, two in `client.go`, two in
+`splice.go`, and the loop in `packet.go` itself — funnel through `ReadMessage`, so
+**one** ceiling there covers the whole listener rather than one path of it.
+
 **The repair**, same precedent as §3 — repair rather than ledger, so the kind
-ships at zero entries: `tds.MaxMessageBytes`, checked *before* the append that
-would cross it, so the worst case held in memory is the ceiling plus the single
-packet that tripped it rather than the ceiling plus whatever else the peer had
-queued. The refusal names the constant, which keeps it distinguishable from the
-pre-existing `packet length %d < header length` refusal — a malformed frame means
-the peer is not speaking TDS, an oversized message means it is speaking TDS and
-asking for too much, and those want opposite responses from whoever reads the log.
+ships at zero entries: `tds.DefaultMaxMessageBytes`, checked *before* the append
+that would cross it, so the worst case held in memory is the ceiling plus the
+single packet that tripped it rather than the ceiling plus whatever else the peer
+had queued. The bound is **inclusive**: a message of exactly the ceiling is a
+message, not a refusal. The refusal names the constant *and* the env knob, which
+keeps it distinguishable from the pre-existing `packet length %d < header length`
+refusal — a malformed frame means the peer is not speaking TDS, an oversized
+message means it is speaking TDS and asking for too much, and those want opposite
+responses from whoever reads the log.
 
 **The value is 320 MiB**, and it is picked from the traffic rather than from
 taste. The largest SQL batch literal anywhere in `e2e/`, `internal/tds/` and
@@ -246,16 +252,63 @@ ceiling has to clear a real `SELECT`, not a batch. 320 MiB is
 `httpx.DefaultMaxRequestBody`, the HTTP listener's default outer bound (§3.2),
 which leaves neither listener the narrower surface and neither unbounded.
 
+### 6.1 Why it is a knob too, and what it narrows
+
+The TDS bound **narrows what a released binary accepts**, on a surface that
+accepted anything before it, so §3.2's principle applies unchanged:
+`FABRIC_MAX_TDS_MESSAGE_BYTES` is documented in
+[04-configuration.md](04-configuration.md), carried in
+`docs/compat-surface.json`, and **`0` means unlimited**.
+
+The direction that narrows is worth naming precisely, because it is *not* the
+adversarial one. `splice.go:51` reads the sidecar's result sets through the same
+`ReadMessage`, so **a `SELECT` returning more than 320 MiB from a real SQL Server
+is now refused where it previously worked** — and this very checker exempts that
+direction everywhere else, on the stated grounds that an engine we relayed to is
+not an untrusted caller choosing a size (which is why `resp.Body` reads are not
+`unbounded-body-read`). It is bounded here anyway because the TDS frame format
+gives the two directions one read loop and there is nothing in a packet header to
+tell them apart; the honest consequence is that the escape hatch is aimed at the
+relay path, not at a hostile client.
+
+The ceiling lives in `internal/tds` as process-wide state, installed once by
+`internal/server` through `tds.SetMaxMessageBytes` — the same shape, and for the
+same reason, as the `tds.SetTraceFunc` hook beside it: the TDS read path is
+package-level functions reached from every session's goroutine. As with
+`FABRIC_MAX_REQUEST_BYTES`, the default is applied by `config.FromEnvPartial` and
+**not** by `Finish()`, because `0` is both the zero value and the documented
+escape hatch, and `atomic.Int64`'s zero value cannot double as "unset" for the
+same reason.
+
 **Two new checker kinds hold it**, both absence-shaped for the same reason §4's
 pair are:
 
-- `unbounded-frame-accumulation` — `internal/tds/packet.go` must declare
-  `MaxMessageBytes` **and** `ReadMessage` must consult it. Both halves, because
-  *declared-but-unused* is the failure a presence grep reports as healthy: a
-  refactor that moves the join into a helper and forgets the comparison leaves
-  the constant sitting there, documented, enforcing nothing. A value the checker
-  cannot read is reported rather than passed, the same way an unreadable `httpx`
-  ceiling is.
+- `unbounded-frame-accumulation` — the whole **chain** the bound travels through
+  `internal/tds/packet.go`, in four links: `DefaultMaxMessageBytes` is declared
+  with a value the checker can read; the effective ceiling is initialised *from*
+  it; `ReadMessage` routes it; and the function holding the packet join **orders
+  something against the bound it was handed, at or before the append that would
+  cross it**. A value the checker cannot read is reported rather than passed, the
+  same way an unreadable `httpx` ceiling is.
+
+  Four links because each is separately satisfiable while the bound does nothing
+  — and because **this kind's own first version shipped with exactly that
+  defect.** It asked only whether `ReadMessage` mentioned the constant. By the
+  time it landed, `ReadMessage` was a one-line delegation to `readMessageBounded`,
+  so it *did* mention the constant: deleting the comparison from the **helper**
+  left the ceiling declared, derived, passed around, never compared against, and
+  the checker reported the tree healthy while claiming in four places to guard
+  against precisely that. The accumulating function is therefore located from the
+  join itself rather than named in the checker — a name stays satisfied by a
+  function that merely still exists, while the join is satisfied only by the line
+  that grows the buffer. Zero recognised joins is itself a finding.
+
+  What it does **not** claim, so a green run is not read for more than it says:
+  that the comparison is arithmetically right — that the accumulated length is
+  what sits on the other side of it, and that the bound is inclusive. Those are
+  held by `internal/tds/maxmessage_test.go`. The checker holds the half no test
+  can: that the comparison is still *there*, after a refactor nothing would fail
+  on.
 - `unbounded-serve-root` — every `http.Serve` / `http.ListenAndServe` /
   `http.ListenAndServeTLS` / `&http.Server{…}` site under the scan roots must be
   handed an expression that calls `.Handler()`, the single place the outer bound
@@ -292,6 +345,11 @@ complete:
   unbounded; it is still 320 MiB of legitimate allocation if a caller sends it,
   and the same is true of a 320 MiB TDS message (§6). A ceiling bounds the worst
   case; it does not make the worst case cheap.
+- **Whether a bound is the RIGHT size.** Both checker kinds that read a ceiling
+  verify it is declared, derived, routed and compared against; neither can know
+  that 320 MiB clears the largest result set a given sidecar returns. That is why
+  §6.1's escape hatch exists and why the value's arithmetic is pinned by a Go
+  test rather than by the checker.
 
 Closing §1 properly means benchmarks and a comparison harness. This document is
 the smaller, honest half: the regressions that are decidable from source, decided.
@@ -301,8 +359,8 @@ the smaller, honest half: the regressions that are decidable from source, decide
 | Guard | Where | Holds |
 | --- | --- | --- |
 | `scripts/check_perf_regressions.py --strict` | `make check` + the `witnesses` CI job | all six kinds, ledger both directions |
-| `python/tests/test_check_perf_regressions.py` | pytest | 46 tests, each driving a violation the checker must catch, or a near-miss it must not |
-| `internal/tds/maxmessage_test.go` | `go test` | a multi-packet message under the ceiling is joined intact, an EOM-less stream is refused *at* the bound, the refusal is distinguishable from a malformed frame, the value clears real traffic |
+| `python/tests/test_check_perf_regressions.py` | pytest | 55 tests, each driving a violation the checker must catch, or a near-miss it must not |
+| `internal/tds/maxmessage_test.go` | `go test` | a multi-packet message under the ceiling is joined intact, an EOM-less stream is refused *at* the bound, the refusal is distinguishable from a malformed frame, the value clears real traffic, the knob reaches the read loop, `0` means unlimited, and the default is installed without anyone setting it |
 | `internal/server/maxbody_test.go` | `go test` | 413 fires, traffic under the bound is untouched, `0` means unlimited, ordering holds, the data plane is included |
 | `internal/config/config_test.go` | `go test` | unset / `0` / explicit / garbage read three different ways |
 | `internal/httpx/guard_test.go` | `go test` | the pre-existing truncation ban, unchanged |

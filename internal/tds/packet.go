@@ -14,6 +14,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
+	"sync/atomic"
 )
 
 // Packet types (MS-TDS 2.2.3.1.1 — the type byte of the packet header).
@@ -41,8 +43,9 @@ const headerLen = 8
 // messages larger than this span multiple packets; login/prelogin never do.
 const maxPacketData = 4096 - headerLen
 
-// MaxMessageBytes bounds the payload ReadMessage will accumulate for a SINGLE
-// TDS message, which is the one thing the frame format does not bound itself.
+// DefaultMaxMessageBytes is the DEFAULT bound on the payload ReadMessage will
+// accumulate for a SINGLE TDS message, the one thing the frame format does not
+// bound itself.
 //
 // Each ReadPacket is self-limiting at 64 KiB because the length field is a
 // uint16, so the per-frame read looks bounded and is. The MESSAGE loop was not:
@@ -64,7 +67,60 @@ const maxPacketData = 4096 - headerLen
 // emulator's two listeners the narrower surface and neither unbounded. Spelled
 // as a literal rather than imported, because internal/tds has no other reason
 // to depend on internal/httpx; the equality is pinned in maxmessage_test.go.
-const MaxMessageBytes = 320 << 20
+//
+// WHY IT IS A DEFAULT AND NOT THE WHOLE STORY. It NARROWS what a released
+// binary accepts, on a surface that accepted anything before it, and no
+// released binary's accepted inputs may shrink unremarked — the same principle
+// that made the HTTP bound FABRIC_MAX_REQUEST_BYTES rather than a constant. The
+// effective ceiling is therefore settable once at start-up through
+// SetMaxMessageBytes, wired to FABRIC_MAX_TDS_MESSAGE_BYTES in internal/config,
+// with 0 meaning no limit at all: someone whose sidecar already returns a result
+// set larger than this is doing so successfully today, and the honest migration
+// is a documented way to keep doing it rather than a number we guess is enough.
+const DefaultMaxMessageBytes = 320 << 20
+
+// noMessageCeiling is what "no limit" is stored AS, rather than being a second
+// branch inside the read loop. That keeps `total > limit` the ONLY comparison
+// the accumulation loop makes against its bound, which matters twice: the loop
+// gets no unlimited-mode path that could drift from the bounded one, and the
+// static guard over this file (`unbounded-frame-accumulation` in
+// scripts/check_perf_regressions.py) gets no second comparison it could mistake
+// for the real one. MaxInt64 bytes is not reachable by any peer — this is
+// "unbounded" expressed as a bound.
+const noMessageCeiling = math.MaxInt64
+
+// maxMessageBytes is the EFFECTIVE accumulated-message ceiling.
+//
+// An atomic, and package-level, for exactly the reasons traceFunc is (trace.go):
+// the read path is package-level functions called from the goroutine of every
+// session — eight call sites across server.go, client.go and splice.go, all
+// funnelling through ReadMessage — it is written once at server start, and a
+// test replaces it while other tests' sessions are still open.
+//
+// Initialised in init rather than at its declaration because atomic.Int64 has no
+// literal form, and its zero value cannot double as "unset": 0 is the documented
+// way to ask for NO limit, so a lazy "0 means use the default" here would make
+// FABRIC_MAX_TDS_MESSAGE_BYTES=0 mean 320 MiB — the one value it must not mean.
+// Same trap, and the same resolution, as Config.Finish and
+// FABRIC_MAX_REQUEST_BYTES (internal/config/config.go).
+var maxMessageBytes atomic.Int64
+
+func init() { maxMessageBytes.Store(DefaultMaxMessageBytes) }
+
+// SetMaxMessageBytes installs the effective accumulated-message ceiling. n <= 0
+// removes it, which is FABRIC_MAX_TDS_MESSAGE_BYTES=0: the documented escape
+// hatch for a peer that legitimately sends, or a sidecar that legitimately
+// returns, more than the default.
+//
+// Safe to call while messages are being read, like SetTraceFunc. It is called
+// once, from internal/server, when the TDS endpoint is configured.
+func SetMaxMessageBytes(n int64) {
+	if n <= 0 {
+		maxMessageBytes.Store(noMessageCeiling)
+		return
+	}
+	maxMessageBytes.Store(n)
+}
 
 // Packet is one TDS message frame (header + payload).
 type Packet struct {
@@ -105,19 +161,26 @@ func ReadPacket(r io.Reader) (*Packet, error) {
 
 // ReadMessage reads a full TDS message, concatenating packets until EOM. It
 // returns the message type and the joined payload. The accumulated payload is
-// bounded by MaxMessageBytes: a peer that never sets EOM is refused rather than
-// allowed to grow the buffer without limit.
+// bounded by the effective accumulated-message ceiling (DefaultMaxMessageBytes,
+// or whatever SetMaxMessageBytes was given): a peer that never sets EOM is
+// refused rather than allowed to grow the buffer without limit.
+//
+// This is the single entry point for every TDS read in the package — server.go,
+// client.go and splice.go have no other — so the ceiling resolved here is the
+// ceiling the whole listener gets.
 func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
-	return readMessageBounded(r, MaxMessageBytes)
+	return readMessageBounded(r, maxMessageBytes.Load())
 }
 
 // readMessageBounded is ReadMessage with the ceiling as an argument, which is
-// what makes the refusal testable: proving it through the real 320 MiB constant
+// what makes the refusal testable: proving it through the real 320 MiB default
 // would mean allocating 320 MiB in a unit test to learn nothing the same
-// assertion at 4 KiB does not already prove. That ReadMessage passes
-// MaxMessageBytes and not some other number is held statically instead, by the
-// `unbounded-frame-accumulation` kind in scripts/check_perf_regressions.py.
-func readMessageBounded(r io.Reader, limit int) (typ byte, data []byte, err error) {
+// assertion at 4 KiB does not already prove. That the effective ceiling actually
+// derives from DefaultMaxMessageBytes, and that this loop actually compares the
+// accumulated length against it, are held statically instead — by the
+// `unbounded-frame-accumulation` kind in scripts/check_perf_regressions.py,
+// which reads THIS function rather than its caller for the comparison.
+func readMessageBounded(r io.Reader, limit int64) (typ byte, data []byte, err error) {
 	for {
 		p, err := ReadPacket(r)
 		if err != nil {
@@ -130,10 +193,11 @@ func readMessageBounded(r io.Reader, limit int) (typ byte, data []byte, err erro
 		// in memory is the ceiling plus the one packet that tripped it — not the
 		// ceiling plus however much more the peer had queued. The bound is
 		// inclusive: a message of exactly max bytes is a message, not a refusal.
-		if total := len(data) + len(p.Data); total > limit {
+		if total := int64(len(data)) + int64(len(p.Data)); total > limit {
 			return 0, nil, fmt.Errorf(
 				"tds: message exceeds MaxMessageBytes=%d (%d bytes accumulated "+
-					"with no EOM packet)", limit, total)
+					"with no EOM packet); raise or remove the bound with "+
+					"FABRIC_MAX_TDS_MESSAGE_BYTES (0 disables it)", limit, total)
 		}
 		data = append(data, p.Data...)
 		if p.EOM() {

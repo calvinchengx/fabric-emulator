@@ -315,13 +315,24 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# uint16, which is exactly why the loop around it read as bounded and
 	@# was not. Measured when this landed: 1 http.Serve site in the tree, 1
 	@# TDS listener beside it, and 0 accumulated-length checks across all 40
-	@# files of internal/tds. Repaired by tds.MaxMessageBytes (320 MiB, the
-	@# HTTP listener's own default, so neither listener is the narrower
-	@# surface) and held by two more kinds: the ceiling must be DECLARED and
-	@# CONSULTED by ReadMessage, since declared-but-unused is what a presence
-	@# grep calls healthy, and every serve site must be handed
-	@# Server.Handler(), so a future second HTTP listener handed the bare mux
-	@# lands as a finding rather than as a silent bypass.
+	@# files of internal/tds -- against 8 TDS read sites, all funnelling
+	@# through ReadMessage, so one ceiling there covers the whole listener.
+	@# Repaired by tds.DefaultMaxMessageBytes (320 MiB, the HTTP listener's
+	@# own default, so neither listener is the narrower surface), behind
+	@# FABRIC_MAX_TDS_MESSAGE_BYTES with 0 meaning unlimited for the same
+	@# released-binary reason the HTTP knob has one -- and the direction it
+	@# narrows is the RELAY one, since splice.go reads the sidecar's result
+	@# sets through the same function.
+	@#
+	@# Held by two more kinds. The first asserts the whole CHAIN the bound
+	@# travels -- declared, derived from the default, routed by ReadMessage,
+	@# and COMPARED against in the function that joins, before the append
+	@# that would cross it -- because its own first version checked only
+	@# that ReadMessage named the constant, which a one-line delegation to a
+	@# helper satisfies while the helper compares against nothing. The
+	@# second requires every serve site to be handed Server.Handler(), so a
+	@# future second HTTP listener handed the bare mux lands as a finding
+	@# rather than as a silent bypass.
 	@$(PY) scripts/check_perf_regressions.py --strict
 	@# ...and the dimension none of the guards above can see either: whether
 	@# this repository's own source is WRITTEN in a shape that leaks a

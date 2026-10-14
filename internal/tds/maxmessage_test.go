@@ -1,11 +1,11 @@
 package tds
 
-// The accumulated-message ceiling (MaxMessageBytes), asserted in the three
-// directions that matter — the same shape internal/server/maxbody_test.go uses
-// for the HTTP outer bound, because this is the same defect on the other
-// listener: traffic under the bound is joined intact, a sender that never sets
-// EOM is refused rather than accumulated, and the refusal is distinguishable
-// from the malformed-frame refusal that already existed.
+// The accumulated-message ceiling, asserted in the directions that matter — the
+// same shape internal/server/maxbody_test.go uses for the HTTP outer bound,
+// because this is the same defect on the other listener: traffic under the bound
+// is joined intact, a sender that never sets EOM is refused rather than
+// accumulated, the refusal is distinguishable from the malformed-frame refusal
+// that already existed, and the bound has a documented way back out.
 //
 // WHY THE FIRST ONE IS HERE. ReadMessage exists BECAUSE messages span packets:
 // the negotiated payload is 4088 bytes and go-mssqldb genuinely sends batches
@@ -14,13 +14,16 @@ package tds
 // to a test that only checks that something huge is refused.
 //
 // WHY THE OVER-CEILING DIRECTION DRIVES readMessageBounded RATHER THAN
-// ReadMessage. Proving the refusal through the real 320 MiB constant means
+// ReadMessage. Proving the refusal through the real 320 MiB default means
 // allocating 320 MiB inside a unit test to learn nothing the same assertion at
-// 4 KiB does not already prove. The wiring — that ReadMessage passes
-// MaxMessageBytes and not some other number — is pinned statically instead, by
-// the `unbounded-frame-accumulation` kind in scripts/check_perf_regressions.py,
-// which fails if ReadMessage's body stops naming the constant. The value itself
-// is pinned below by TestTheMessageCeilingSitsFarAboveRealTraffic.
+// 4 KiB does not already prove. The wiring — that the limit readMessageBounded
+// compares against derives from DefaultMaxMessageBytes, and that the comparison
+// is in the function that does the joining — is pinned statically instead, by
+// the `unbounded-frame-accumulation` kind in scripts/check_perf_regressions.py.
+// The value itself is pinned by TestTheMessageCeilingSitsFarAboveRealTraffic,
+// and the escape hatch by TestTheMessageCeilingIsSettableAndZeroMeansUnlimited —
+// which is the direction that drives ReadMessage, so the resolution step
+// readMessageBounded is given a limit by is exercised too.
 
 import (
 	"bytes"
@@ -174,23 +177,97 @@ func TestTheMessageCeilingSitsFarAboveRealTraffic(t *testing.T) {
 	// internal/tsql/ is 149 bytes, i.e. ~300 bytes on the wire as UCS-2: a
 	// single packet. 1 MiB is already thousands of times that, so a ceiling
 	// below it could only have been chosen by accident.
-	if MaxMessageBytes < 1<<20 {
-		t.Errorf("MaxMessageBytes=%d is below 1 MiB; a multi-packet result set "+
-			"relayed from the sidecar would be refused", MaxMessageBytes)
+	if DefaultMaxMessageBytes < 1<<20 {
+		t.Errorf("DefaultMaxMessageBytes=%d is below 1 MiB; a multi-packet result "+
+			"set relayed from the sidecar would be refused", DefaultMaxMessageBytes)
 	}
-	if MaxMessageBytes > 1<<30 {
-		t.Errorf("MaxMessageBytes=%d is above 1 GiB, which is not a bound on "+
-			"anything a dev-loop emulator should buffer", MaxMessageBytes)
+	if DefaultMaxMessageBytes > 1<<30 {
+		t.Errorf("DefaultMaxMessageBytes=%d is above 1 GiB, which is not a bound "+
+			"on anything a dev-loop emulator should buffer", DefaultMaxMessageBytes)
 	}
 	// A reader who sees this constant should be able to recompute it: it is the
 	// HTTP listener's default outer bound (httpx.DefaultMaxRequestBody, 320
 	// MiB), so neither of the emulator's two listeners is the narrower surface.
 	// Asserted as a literal rather than by importing internal/httpx, which the
 	// TDS package has no other reason to depend on.
-	if MaxMessageBytes != 320<<20 {
-		t.Errorf("MaxMessageBytes=%d no longer matches the HTTP listener's "+
+	if DefaultMaxMessageBytes != 320<<20 {
+		t.Errorf("DefaultMaxMessageBytes=%d no longer matches the HTTP listener's "+
 			"default outer bound (320 MiB); if that was deliberate, say so in "+
 			"docs/62-performance-regressions.md and update this test",
-			MaxMessageBytes)
+			DefaultMaxMessageBytes)
+	}
+}
+
+// TestTheMessageCeilingIsSettableAndZeroMeansUnlimited covers the half of this
+// change that is NOT about the exposure: the way back out.
+//
+// The bound narrows what a released binary accepts on a surface that accepted
+// anything before it, and the direction that can legitimately be large is the
+// one nobody is adversarial about — splice.go reads the sidecar's result sets
+// through the same ReadMessage, so a >320 MiB SELECT relayed from a real SQL
+// Server is refused by default where it previously worked. That is why
+// FABRIC_MAX_TDS_MESSAGE_BYTES exists, and 0 has to mean UNLIMITED rather than
+// "fall back to the default" — the one value a bound's escape hatch must not
+// quietly reinterpret.
+//
+// This is also the only test that drives the resolution step: the other
+// over-ceiling assertions call readMessageBounded directly, so without this one
+// nothing here would notice ReadMessage being handed the wrong number.
+func TestTheMessageCeilingIsSettableAndZeroMeansUnlimited(t *testing.T) {
+	// Package-level state, shared with every other test in this package that
+	// reads a message. Restored rather than left set, or an unrelated splice
+	// test running after this one would inherit a 4 KiB TDS listener.
+	restore := maxMessageBytes.Load()
+	t.Cleanup(func() { maxMessageBytes.Store(restore) })
+
+	// Lowered: ReadMessage must pick the new value up, which is what proves the
+	// knob reaches the loop rather than only the variable.
+	SetMaxMessageBytes(4 << 10)
+	if _, _, err := ReadMessage(&endlessPackets{}); err == nil {
+		t.Fatal("after SetMaxMessageBytes(4 KiB), ReadMessage accepted an endless " +
+			"EOM-less stream; the effective ceiling is not reaching the read loop")
+	}
+
+	// 0 means no limit, so the same stream must now be read past the lowered
+	// bound. A single 64 KiB frame is enough to prove it: under the 4 KiB
+	// ceiling above it was refused, and an EOM-terminated one is finite so the
+	// test cannot hang if the bound is wrongly still in force.
+	SetMaxMessageBytes(0)
+	if got := maxMessageBytes.Load(); got != noMessageCeiling {
+		t.Fatalf("SetMaxMessageBytes(0) stored %d, want noMessageCeiling=%d; 0 is "+
+			"the documented way to ask for no limit and must not be read as "+
+			"\"use the default\"", got, int64(noMessageCeiling))
+	}
+	big := make([]byte, 65535-headerLen)
+	wire := append(frame(PktSQLBatch, statusNormal, big),
+		frame(PktSQLBatch, statusEOM, big)...)
+	if _, data, err := ReadMessage(bytes.NewReader(wire)); err != nil {
+		t.Errorf("with the ceiling disabled, a %d-byte message was refused: %v",
+			2*len(big), err)
+	} else if len(data) != 2*len(big) {
+		t.Errorf("joined %d bytes with the ceiling disabled, want %d",
+			len(data), 2*len(big))
+	}
+
+	// A negative value is the same instruction as 0, not a ceiling of -1 that
+	// would refuse every message including an empty one.
+	SetMaxMessageBytes(-1)
+	if got := maxMessageBytes.Load(); got != noMessageCeiling {
+		t.Errorf("SetMaxMessageBytes(-1) stored %d, want noMessageCeiling=%d",
+			got, int64(noMessageCeiling))
+	}
+}
+
+// TestTheDefaultCeilingIsInstalledWithoutAnyoneSettingIt. The package default
+// has to hold for a process that never calls SetMaxMessageBytes at all — a
+// `go test ./internal/tds/...` run, or any embedder of this package — because
+// atomic.Int64's zero value is 0 and 0 is the documented way to ask for NO
+// limit. Forgetting init() here would leave the surface exactly as unbounded as
+// it was before this change, while the constant sat in the file looking like a
+// repair.
+func TestTheDefaultCeilingIsInstalledWithoutAnyoneSettingIt(t *testing.T) {
+	if got := maxMessageBytes.Load(); got != DefaultMaxMessageBytes {
+		t.Errorf("the effective ceiling is %d before anything sets it, want the "+
+			"default %d (0 would mean unlimited)", got, int64(DefaultMaxMessageBytes))
 	}
 }
