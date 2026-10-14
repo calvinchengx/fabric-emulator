@@ -23,6 +23,27 @@ WHAT WAS MEASURED, at the commit that added this:
     streaming it through a DECODER went through none.
   * 0 benchmarks, and 9 `regexp.MustCompile` sites, all 9 at package scope.
 
+WHAT WAS MEASURED when the TDS half was added, which is the surface everything
+above could not see:
+
+  * TWO listeners, not one. cmd/fabric-emulator/main.go serves HTTP on one
+    (`http.Serve(ln, srv.Handler())` -- the ONLY serve site in the tree) and the
+    SQL/TDS endpoint on a second net.Listener of its own, `srv.TDS.Serve(tln)`.
+  * 0 checks on the accumulated length of a TDS message:
+    `grep -c 'MaxMessageBytes|maxMessageBytes' internal/tds/*.go` returned 0
+    across all 40 files of that package.
+
+Everything above anchors on `r.Body`, `http.MaxBytesReader` and
+internal/httpx/body.go, so it is HTTP-only BY CONSTRUCTION -- there is no
+`r.Body` on a raw TCP listener for an outer bound to wrap. And the TDS side held
+the same shape the HTTP side spent a whole change closing: `tds.ReadMessage`
+concatenated packets until one set the EOM status bit, with no cap on the total.
+Each `ReadPacket` is self-limiting at 64 KiB because the length field is a
+uint16, which is exactly why the loop read as bounded and was not: a peer that
+never sets EOM chose how much the emulator allocated. Repaired in the same
+change by `tds.MaxMessageBytes`, so this kind too ships at zero entries rather
+than as a recorded allowance.
+
 The 68 decoder sites are the exposure: a streaming decoder allocates as it
 reads, so before the outer bound landed any client could make the emulator
 allocate whatever it chose to send, on any of them, and a 69th added tomorrow
@@ -31,7 +52,7 @@ would inherit that invisibly. That is closed by ONE bound at the root handler
 checker's ledger ships nearly empty instead of 70 entries deep -- a ledger with
 70 accepted entries would document the problem rather than close it.
 
-WHAT IS FLAGGED. Four kinds, and two of them are about the repair rather than
+WHAT IS FLAGGED. Six kinds, and four of them are about the repair rather than
 the original shape, because a bound that exists is not the same as a bound that
 still applies:
 
@@ -64,6 +85,27 @@ still applies:
     package-level today, so this ships empty; the kind is defined so a future
     per-call compile lands as a decision recorded here rather than an unnoticed
     cost, the same precedent `long-sleep` set in check_vitest_test_flakiness.py.
+  * `unbounded-frame-accumulation` -- internal/tds/packet.go must declare
+    `MaxMessageBytes` AND `ReadMessage` must consult it. Both halves, because
+    declared-but-unused is the failure a presence grep would miss entirely: a
+    refactor that moves the join into a helper and forgets the check leaves the
+    constant sitting there, documented and enforcing nothing. A value this
+    cannot read is reported rather than passed, the same way `ceilings_of`
+    already treats an unreadable ceiling.
+  * `unbounded-serve-root` -- every `http.Serve` / `http.ListenAndServe` /
+    `http.ListenAndServeTLS` / `&http.Server{...}` site under the scan roots
+    must be handed an expression that calls `.Handler()`, which is the single
+    place the outer HTTP bound is installed. Exactly one such site exists today
+    (cmd/fabric-emulator/main.go, handed `srv.Handler()`), so the kind ships
+    empty; its purpose is that a SECOND HTTP listener handed `s.mux`, a bare
+    `http.HandlerFunc` or no Handler field at all (which means
+    http.DefaultServeMux) lands as a finding rather than as an unnoticed bypass
+    of the 68 decoder sites' only ceiling. The check is that the root handler is
+    in the chain, not that it is the outermost wrapper -- `middleware(
+    srv.Handler())` is fine, because the bound is still installed. Zero
+    recognised serve sites is itself a finding: a sweep that covers nothing
+    passes vacuously, and a serve call moved behind a helper this regex does not
+    know would do exactly that.
 
 WHAT IS DELIBERATELY NOT FLAGGED, with the false-positive rate that ruled it
 out. The loop-shaped heuristics one reaches for first were probed over this tree
@@ -76,6 +118,15 @@ and are too noisy to gate on:
     POSITIVE: the defer is inside a goroutine closure, not the loop body, so it
     runs per connection exactly as intended. A brace-depth walk cannot tell those
     apart, which is the whole problem with the class.
+  * `append-in-loop` -- the generic form of the TDS defect, and the most
+    tempting one to add after fixing it. 643 `append(` sites under the scan
+    roots, 540 of them inside a loop by the same crude walk. Nearly all
+    accumulate a bounded, already-read collection, and a heuristic that cannot
+    tell "grow a slice per item of a list I already have" from "grow a slice per
+    frame a peer chooses to send" would bury the one case that matters under
+    five hundred that do not. So the TDS bound is held by the two anchored kinds
+    above -- the two listeners this emulator actually exposes -- rather than by
+    loop shape.
 
 Gating on any of them would mean a ledger of dozens of accepted entries that
 nobody reads, which is how a guard becomes decoration. They are recorded here so
@@ -119,6 +170,31 @@ CEILINGS_FILE = "internal/httpx/body.go"
 ROOT_HANDLER_FILE = "internal/server/server.go"
 OUTER_CONST = "DefaultMaxRequestBody"
 
+# The SECOND listener's ceiling, and the function that must consult it. A raw
+# TCP listener has no r.Body, so nothing above can reach this surface: the
+# assertion has to name the file and the function directly.
+TDS_PACKET_FILE = "internal/tds/packet.go"
+TDS_CEILING = "MaxMessageBytes"
+TDS_ACCUM_FUNC = "ReadMessage"
+
+# Where the zero-serve-sites finding is reported, which is the file that holds
+# the one real site. Named so the finding has somewhere to point rather than
+# being attributed to the whole tree.
+SERVE_ROOT_ANCHOR = "cmd/fabric-emulator/main.go"
+
+# The one handler expression a serve site may be handed: `srv.Handler()` is
+# where boundBodies is installed. Matched as a CALL, because a field or variable
+# named `handler` proves nothing about the bound.
+_HANDLER_CALL = re.compile(r"\.Handler\(\s*\)")
+# `http.Serve(` / `http.ListenAndServe(` / `http.ListenAndServeTLS(` and the
+# `http.Server{...}` composite literal. ListenAndServeTLS is listed before
+# ListenAndServe so the longer name wins the alternation, and `Serve` requires
+# the open paren so `http.ServeContent(`, `http.ServeFile(` and `http.ServeMux`
+# -- none of which install a handler -- do not match.
+_SERVE_SITE = re.compile(
+    r"\bhttp\.(?:ListenAndServeTLS|ListenAndServe|Serve)\s*\(|\bhttp\.Server\s*\{")
+_HANDLER_FIELD = re.compile(r"\bHandler\s*:\s*(.+)")
+
 # A request body read as bytes with no ceiling. Anchored on the RECEIVER name --
 # `r`, `req`, `request` -- because that is what distinguishes a body a caller
 # chose the size of from `resp.Body`, which is an engine we relayed to answering
@@ -128,6 +204,8 @@ _UNBOUNDED_READ = re.compile(rf"\bio\.ReadAll\(\s*{_REQ}\.Body\s*\)")
 _UNBOUNDED_COPY = re.compile(rf"\bio\.Copy\([^,]+,\s*{_REQ}\.Body\s*\)")
 
 _REGEXP = re.compile(r"\bregexp\.(?:MustCompile|Compile)\s*\(")
+_TDS_CEILING_DECL = re.compile(
+    rf"^\s*(?:const\s+)?{TDS_CEILING}\s*=\s*(.+?)\s*$", re.M)
 _FUNC = re.compile(r"^func\b")
 # `MaxFoo = 100 << 20` inside a const block, or a standalone
 # `const DefaultMaxRequestBody = 320 << 20`. The optional `const ` is not
@@ -235,6 +313,104 @@ def _func_name(line):
     return m.group(1) if m else "<anonymous>"
 
 
+def _func_body(clean_lines, name):
+    """The lines of `func <name>(...)`, header included, or None if it is gone.
+
+    Brace-counted forward from the `func` line, in the same crude tradition as
+    `_enclosing_func`: enough of Go's syntax to tell where a function ends, not
+    a parse. Used by the TDS kind, which has to distinguish a ceiling that is
+    DECLARED from a ceiling that is CONSULTED -- `MaxMessageBytes` sitting in
+    the file while the accumulation loop ignores it is the failure a
+    presence-only grep reports as healthy.
+    """
+    pat = re.compile(rf"^func\s+{re.escape(name)}\s*\(")
+    for start, line in enumerate(clean_lines):
+        if not pat.match(line):
+            continue
+        depth = 0
+        for j in range(start, len(clean_lines)):
+            depth += clean_lines[j].count("{") - clean_lines[j].count("}")
+            if depth <= 0 and "{" in "".join(clean_lines[start:j + 1]):
+                return clean_lines[start:j + 1]
+        return clean_lines[start:]
+    return None
+
+
+def _balanced_from(text, start):
+    """The text inside the `(` or `{` at text[start], to its matching close.
+
+    Returns the remainder if it never closes, which is the safe direction: an
+    unterminated call reads as "everything after it" and so is checked for a
+    handler rather than silently skipped.
+    """
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "([{":
+            depth += 1
+        elif text[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+    return text[start + 1:]
+
+
+def _split_args(text):
+    """Comma-separated pieces at the TOP level of `text`.
+
+    `http.Serve(ln, mw(srv.Handler(), opts))` has two arguments, not three; a
+    naive split on commas would read the handler as `opts` and report a correct
+    site as unbounded.
+    """
+    out, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return [a.strip() for a in out if a.strip()]
+
+
+def serve_sites(path, source=None, root=None):
+    """Every HTTP serve site in one file, with the handler it is handed.
+
+    `handler` is "" when the site names none at all -- `http.Serve(ln, nil)`, or
+    an `&http.Server{...}` with no Handler field. Both mean
+    http.DefaultServeMux, which means no outer bound, so "" must read as a
+    finding rather than as "nothing to check".
+    """
+    text = source if source is not None else path.read_text(encoding="utf-8")
+    raw_lines = text.split("\n")
+    clean_lines = _strip_noise(text).split("\n")
+    rel = relkey(path, root)
+    out = []
+    for i, line in enumerate(clean_lines):
+        m = _SERVE_SITE.search(line)
+        if not m:
+            continue
+        # The call or composite literal may span lines, so the walk starts at
+        # the opening delimiter -- always the last character of the match -- and
+        # runs over the rest of the file rather than this line alone.
+        window = "\n".join(clean_lines[i:])
+        inner = _balanced_from(window, m.end() - 1)
+        if m.group(0).rstrip().endswith("{"):
+            field = _HANDLER_FIELD.search(inner)
+            pieces = _split_args(field.group(1)) if field else []
+            handler = pieces[0] if pieces else ""
+        else:
+            args = _split_args(inner)
+            handler = args[-1] if args else ""
+        out.append({"file": rel, "symbol": _enclosing_func(clean_lines, i),
+                    "line": i + 1, "handler": handler,
+                    "snippet": raw_lines[i].strip()})
+    return out
+
+
 def _value_of(expr):
     """`256 << 20` or a plain integer, as an int. None if it is neither.
 
@@ -296,16 +472,96 @@ def findings_for(path, source=None, root=None):
     return out
 
 
-def structural_findings(root=None):
-    """The two findings that are about the REPAIR rather than the original shape.
+def _tds_findings(base):
+    """The second listener's ceiling: declared, AND consulted where it matters.
 
-    Both are absence-shaped, and absence is what a sweep cannot report: no line
-    anywhere says "the outer bound is missing". Without these the checker would
-    pass, in perpetuity, on a tree whose one ceiling had been refactored away --
-    reporting zero unbounded reads, which would be true and beside the point.
+    Two halves because either alone is satisfiable without the bound existing. A
+    ceiling nobody reads is a comment; a loop that reads something is not
+    reading THIS something unless the name is in its body.
+    """
+    def finding(symbol, snippet):
+        return {"file": TDS_PACKET_FILE, "symbol": symbol, "line": 0,
+                "kind": "unbounded-frame-accumulation", "snippet": snippet}
+
+    path = base / TDS_PACKET_FILE
+    if not path.exists():
+        return [finding(TDS_CEILING, f"{TDS_PACKET_FILE} does not exist")]
+    clean = _strip_noise(path.read_text(encoding="utf-8"))
+    decl = _TDS_CEILING_DECL.search(clean)
+    if not decl:
+        return [finding(
+            TDS_CEILING,
+            f"{TDS_CEILING} is not declared; {TDS_ACCUM_FUNC} joins packets "
+            "until one sets EOM, so with no ceiling a peer that never sets it "
+            "chooses how much the emulator accumulates")]
+    out = []
+    if _value_of(decl.group(1)) is None:
+        out.append(finding(
+            TDS_CEILING,
+            f"{TDS_CEILING} has a value this checker cannot read, so the "
+            "ceiling is unverified"))
+    body = _func_body(clean.split("\n"), TDS_ACCUM_FUNC)
+    if body is None:
+        out.append(finding(
+            TDS_ACCUM_FUNC,
+            f"{TDS_ACCUM_FUNC} is gone from {TDS_PACKET_FILE}; the "
+            "accumulation point this ceiling guards cannot be found, so the "
+            "guard needs re-pointing rather than deleting"))
+    elif TDS_CEILING not in "\n".join(body):
+        out.append(finding(
+            TDS_ACCUM_FUNC,
+            f"{TDS_ACCUM_FUNC} never consults {TDS_CEILING}; a declared but "
+            "unused ceiling documents a bound instead of enforcing one"))
+    return out
+
+
+def _serve_findings(base, files=None):
+    """Every serve site not handed the root handler -- plus zero sites at all.
+
+    The outer HTTP bound lives in exactly one place, so a listener handed
+    anything else is a listener with no ceiling on any of the 68 decoder sites
+    behind it. That is not visible as a line in internal/server: the bypass is
+    written somewhere else entirely, which is why this sweeps rather than
+    asserts.
+    """
+    paths = files if files is not None else go_files(base)
+    out, total = [], 0
+    for path in paths:
+        for site in serve_sites(path, root=base):
+            total += 1
+            if _HANDLER_CALL.search(site["handler"]):
+                continue
+            named = site["handler"] or "no handler named, i.e. http.DefaultServeMux"
+            out.append({"file": site["file"], "symbol": site["symbol"],
+                        "line": site["line"],
+                        "kind": "unbounded-serve-root",
+                        "snippet": f"serves {named}, not Server.Handler(): the "
+                                   "outer request-body bound is installed there "
+                                   "and nowhere else"})
+    if total == 0:
+        out.append({"file": SERVE_ROOT_ANCHOR, "symbol": "<none>", "line": 0,
+                    "kind": "unbounded-serve-root",
+                    "snippet": "no http.Serve/ListenAndServe/http.Server site "
+                               f"anywhere under {', '.join(SCAN_ROOTS)}; a sweep "
+                               "that covers nothing passes vacuously, so teach "
+                               "_SERVE_SITE about whatever replaced it"})
+    return out
+
+
+def structural_findings(root=None, files=None):
+    """The findings that are about the REPAIR rather than the original shape.
+
+    All four are absence-shaped, and absence is what a sweep cannot report: no
+    line anywhere says "the outer bound is missing". Without these the checker
+    would pass, in perpetuity, on a tree whose one ceiling had been refactored
+    away -- reporting zero unbounded reads, which would be true and beside the
+    point. `files`, when given, is the sweep's file list, reused so the serve
+    sweep does not walk the tree a second time.
     """
     base = ROOT if root is None else pathlib.Path(root)
     out = []
+    out.extend(_tds_findings(base))
+    out.extend(_serve_findings(base, files))
 
     handler = base / ROOT_HANDLER_FILE
     if not handler.exists():
@@ -353,10 +609,11 @@ def structural_findings(root=None):
 
 def scan(files=None, root=None):
     """Every finding across the tree -- sweep kinds plus structural ones."""
+    paths = files if files is not None else go_files(root)
     out = []
-    for path in (files if files is not None else go_files(root)):
+    for path in paths:
         out.extend(findings_for(path, root=root))
-    out.extend(structural_findings(root))
+    out.extend(structural_findings(root, files=paths))
     return out
 
 
@@ -456,8 +713,9 @@ def main(argv):
             f"repaired nor recorded in {relkey(LEDGER)}:\n    {listing}\n"
             "  Per-request work whose size the caller chooses needs a ceiling: "
             "read bytes through httpx.ReadBounded, keep the root handler's "
-            "http.MaxBytesReader in place, hoist a regexp to package scope, or "
-            "record the site with its reason.")
+            "http.MaxBytesReader in place, hoist a regexp to package scope, "
+            f"keep {TDS_CEILING} consulted by tds.{TDS_ACCUM_FUNC}, hand every "
+            "serve site Server.Handler(), or record the site with its reason.")
     if stale:
         problems.append(
             f"{len(stale)} ledger entr(y/ies) name a site that is no longer "

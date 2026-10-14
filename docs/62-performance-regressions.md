@@ -150,7 +150,7 @@ which is the one thing it must not mean.
 
 ## 4. What the checker flags
 
-Four kinds. Two are about the *original shape*; two are about whether the
+Six kinds. Two are about the *original shape*; four are about whether the
 *repair still holds*, because a bound that exists is not the same as a bound that
 still applies.
 
@@ -160,12 +160,13 @@ still applies.
 | `missing-outer-bound` | 0 | asserts the root handler still installs `MaxBytesReader` |
 | `ceiling-above-outer-bound` | 0 | asserts the ordering in §3.1 |
 | `recompiled-regexp` | 0 | all 9 sites are package-level |
+| `unbounded-frame-accumulation` | 0 | asserts `internal/tds/packet.go` declares `MaxMessageBytes` **and** `ReadMessage` consults it (§6) |
+| `unbounded-serve-root` | 0 | asserts every serve site is handed `Server.Handler()` (§6) |
 
-`missing-outer-bound` and `ceiling-above-outer-bound` are **absence-shaped**, and
-absence is what a per-line sweep cannot report: no line anywhere says "the bound
-is gone". Without them the checker would pass in perpetuity on a tree whose one
-ceiling had been refactored away, reporting zero unbounded reads — which would be
-true, and beside the point.
+Four of the six are **absence-shaped**, and absence is what a per-line sweep
+cannot report: no line anywhere says "the bound is gone". Without them the
+checker would pass in perpetuity on a tree whose one ceiling had been refactored
+away, reporting zero unbounded reads — which would be true, and beside the point.
 
 `recompiled-regexp` ships empty on purpose, the precedent `long-sleep` set in
 [`docs/vitest-test-flakiness.json`](60-test-flakiness.md): the kind is defined so
@@ -183,6 +184,7 @@ and rejected. They are recorded here so the next person does not re-litigate the
 | `string-concat-in-loop` | 6 | rejected — too noisy to gate on |
 | `sort-in-loop` | 4 | rejected — too noisy to gate on |
 | `defer-in-loop` | 1 | rejected — **the one hit is a false positive** |
+| `append-in-loop` | 643 / 540 in a loop | rejected — see §6 |
 
 The `defer-in-loop` hit is `internal/tds/server.go:100`, and it is worth naming
 because it is the clearest case: the `defer` is inside a **goroutine closure**,
@@ -196,7 +198,86 @@ A list response that marshals each of its elements is not a defect. Gating on 45
 such sites would mean a ledger of dozens of accepted entries nobody reads, which
 is how a guard becomes decoration.
 
-## 6. What this cannot see
+## 6. The second listener, which none of the above could reach
+
+Everything in §2–§5 anchors on `r.Body`, `http.MaxBytesReader` and
+`internal/httpx/body.go`. That makes it **HTTP-only by construction** — and the
+emulator serves two listeners, not one:
+
+```go
+go func() { _ = srv.TDS.Serve(tln) }()   // cmd/fabric-emulator/main.go:178
+err = http.Serve(ln, srv.Handler())      // cmd/fabric-emulator/main.go:198
+```
+
+The second line is bounded by §3's repair. The first could not be: a raw TCP
+listener has no `r.Body`, so there is nothing for `MaxBytesReader` to wrap and
+nothing for `Server.boundBodies` to sit in front of.
+
+**What was on it.** `tds.ReadMessage` joined packets until one set the EOM status
+bit, with no cap on the accumulated total:
+
+```go
+data = append(data, p.Data...)   // until p.EOM()
+```
+
+Each individual `ReadPacket` *is* self-limiting at 64 KiB — the TDS length field
+is a `uint16` — which is precisely why this read as bounded and was not. A client
+that simply never sets EOM makes the emulator accumulate without limit: the exact
+shape §3 spent a whole change closing for the 68 decoder sites, on the one surface
+that change could not see. Measured before the fix:
+`grep -c 'MaxMessageBytes\|maxMessageBytes' internal/tds/*.go` returned **0**
+across all 40 files of the package.
+
+**The repair**, same precedent as §3 — repair rather than ledger, so the kind
+ships at zero entries: `tds.MaxMessageBytes`, checked *before* the append that
+would cross it, so the worst case held in memory is the ceiling plus the single
+packet that tripped it rather than the ceiling plus whatever else the peer had
+queued. The refusal names the constant, which keeps it distinguishable from the
+pre-existing `packet length %d < header length` refusal — a malformed frame means
+the peer is not speaking TDS, an oversized message means it is speaking TDS and
+asking for too much, and those want opposite responses from whoever reads the log.
+
+**The value is 320 MiB**, and it is picked from the traffic rather than from
+taste. The largest SQL batch literal anywhere in `e2e/`, `internal/tds/` and
+`internal/tsql/` is **149 bytes** — about 300 on the wire as UCS-2, a single
+packet. The direction that can legitimately be large is the *other* one:
+`splice.go` reads the sidecar's result sets through this same function, so the
+ceiling has to clear a real `SELECT`, not a batch. 320 MiB is
+`httpx.DefaultMaxRequestBody`, the HTTP listener's default outer bound (§3.2),
+which leaves neither listener the narrower surface and neither unbounded.
+
+**Two new checker kinds hold it**, both absence-shaped for the same reason §4's
+pair are:
+
+- `unbounded-frame-accumulation` — `internal/tds/packet.go` must declare
+  `MaxMessageBytes` **and** `ReadMessage` must consult it. Both halves, because
+  *declared-but-unused* is the failure a presence grep reports as healthy: a
+  refactor that moves the join into a helper and forgets the comparison leaves
+  the constant sitting there, documented, enforcing nothing. A value the checker
+  cannot read is reported rather than passed, the same way an unreadable `httpx`
+  ceiling is.
+- `unbounded-serve-root` — every `http.Serve` / `http.ListenAndServe` /
+  `http.ListenAndServeTLS` / `&http.Server{…}` site under the scan roots must be
+  handed an expression that calls `.Handler()`, the single place the outer bound
+  is installed. Exactly one site exists today, so this ships empty **and should
+  never gain an entry**: a listener handed `s.mux`, a bare `http.HandlerFunc`, or
+  no `Handler` field at all (which means `http.DefaultServeMux`) is a bypass of
+  the 68 decoder sites' only ceiling, and that wants fixing rather than
+  exempting. The check is that the root handler is in the *chain*, not that it is
+  the outermost wrapper — `withTracing(srv.Handler(), opts)` is fine. Zero
+  recognised serve sites is itself a finding: a sweep that covers nothing passes
+  vacuously.
+
+**Why not a generic `append-in-loop` heuristic**, which is the first thing one
+reaches for after fixing this. 643 `append(` sites under the scan roots, 540 of
+them inside a loop by the same crude brace walk §5 rejects `defer-in-loop` on.
+Nearly all accumulate a bounded, already-read collection, and no heuristic of
+that shape can tell "grow a slice per item of a list I already have" from "grow a
+slice per frame a peer chooses to send". It would bury the one case that matters
+under five hundred that do not. So the bound is anchored on the two listeners the
+emulator actually exposes instead of on loop shape.
+
+## 7. What this cannot see
 
 Stated plainly, because a document that lists only what it covers reads as
 complete:
@@ -208,24 +289,27 @@ complete:
 - **Anything needing a baseline.** Wall time, allocation counts, p99 latency —
   §1's gap is unclosed and this checker does not pretend otherwise.
 - **The cost of a bounded read.** A 320 MiB body is now refused rather than
-  unbounded; it is still 320 MiB of legitimate allocation if a caller sends it.
+  unbounded; it is still 320 MiB of legitimate allocation if a caller sends it,
+  and the same is true of a 320 MiB TDS message (§6). A ceiling bounds the worst
+  case; it does not make the worst case cheap.
 
 Closing §1 properly means benchmarks and a comparison harness. This document is
 the smaller, honest half: the regressions that are decidable from source, decided.
 
-## 7. Guards
+## 8. Guards
 
 | Guard | Where | Holds |
 | --- | --- | --- |
-| `scripts/check_perf_regressions.py --strict` | `make check` + the `witnesses` CI job | all four kinds, ledger both directions |
-| `python/tests/test_check_perf_regressions.py` | pytest | 26 tests, each driving a violation the checker must catch |
+| `scripts/check_perf_regressions.py --strict` | `make check` + the `witnesses` CI job | all six kinds, ledger both directions |
+| `python/tests/test_check_perf_regressions.py` | pytest | 46 tests, each driving a violation the checker must catch, or a near-miss it must not |
+| `internal/tds/maxmessage_test.go` | `go test` | a multi-packet message under the ceiling is joined intact, an EOM-less stream is refused *at* the bound, the refusal is distinguishable from a malformed frame, the value clears real traffic |
 | `internal/server/maxbody_test.go` | `go test` | 413 fires, traffic under the bound is untouched, `0` means unlimited, ordering holds, the data plane is included |
 | `internal/config/config_test.go` | `go test` | unset / `0` / explicit / garbage read three different ways |
 | `internal/httpx/guard_test.go` | `go test` | the pre-existing truncation ban, unchanged |
 
 The checker was proven non-vacuous by driving it against a real violation of each
-of its four kinds and against a stale ledger entry, confirming all five failure
-directions fire before reverting. Writing its test module found **a real defect in
+of its six kinds and against a stale ledger entry, confirming every failure
+direction fires before reverting. Writing its test module found **a real defect in
 the checker itself**: the ceiling regex anchored at `^\s*<name>`, which matches a
 name indented inside a `const (...)` block and *not* the standalone
 `const DefaultMaxRequestBody =` at column zero — so every inner ceiling was read,

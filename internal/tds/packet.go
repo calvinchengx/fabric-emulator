@@ -41,6 +41,31 @@ const headerLen = 8
 // messages larger than this span multiple packets; login/prelogin never do.
 const maxPacketData = 4096 - headerLen
 
+// MaxMessageBytes bounds the payload ReadMessage will accumulate for a SINGLE
+// TDS message, which is the one thing the frame format does not bound itself.
+//
+// Each ReadPacket is self-limiting at 64 KiB because the length field is a
+// uint16, so the per-frame read looks bounded and is. The MESSAGE loop was not:
+// it concatenates packets until one sets the EOM status bit, so a peer that
+// simply never sets EOM chooses how much the emulator allocates — the same
+// unbounded-by-construction shape the HTTP listener closed with one outer
+// ceiling at the root handler (internal/server.Server.boundBodies), here on the
+// second listener that bound cannot reach: cmd/fabric-emulator/main.go hands
+// the TDS port its own net.Listener, and there is no r.Body there for
+// http.MaxBytesReader to wrap.
+//
+// THE VALUE, so the next reader can recompute it rather than delete it. The
+// largest SQL batch literal anywhere in e2e/, internal/tds/ and internal/tsql/
+// is 149 bytes — roughly 300 on the wire as UCS-2, i.e. a single packet. The
+// direction that can legitimately be large is the other one: splice.go reads
+// the sidecar's result sets through this same function, so the ceiling has to
+// clear a real SELECT rather than a batch. 320 MiB is httpx.DefaultMaxRequestBody,
+// the HTTP listener's default outer bound, which leaves neither of the
+// emulator's two listeners the narrower surface and neither unbounded. Spelled
+// as a literal rather than imported, because internal/tds has no other reason
+// to depend on internal/httpx; the equality is pinned in maxmessage_test.go.
+const MaxMessageBytes = 320 << 20
+
 // Packet is one TDS message frame (header + payload).
 type Packet struct {
 	Type     byte
@@ -79,8 +104,20 @@ func ReadPacket(r io.Reader) (*Packet, error) {
 }
 
 // ReadMessage reads a full TDS message, concatenating packets until EOM. It
-// returns the message type and the joined payload.
+// returns the message type and the joined payload. The accumulated payload is
+// bounded by MaxMessageBytes: a peer that never sets EOM is refused rather than
+// allowed to grow the buffer without limit.
 func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+	return readMessageBounded(r, MaxMessageBytes)
+}
+
+// readMessageBounded is ReadMessage with the ceiling as an argument, which is
+// what makes the refusal testable: proving it through the real 320 MiB constant
+// would mean allocating 320 MiB in a unit test to learn nothing the same
+// assertion at 4 KiB does not already prove. That ReadMessage passes
+// MaxMessageBytes and not some other number is held statically instead, by the
+// `unbounded-frame-accumulation` kind in scripts/check_perf_regressions.py.
+func readMessageBounded(r io.Reader, limit int) (typ byte, data []byte, err error) {
 	for {
 		p, err := ReadPacket(r)
 		if err != nil {
@@ -88,6 +125,15 @@ func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
 		}
 		if typ == 0 {
 			typ = p.Type
+		}
+		// Checked BEFORE the append that would cross it, so the worst case held
+		// in memory is the ceiling plus the one packet that tripped it — not the
+		// ceiling plus however much more the peer had queued. The bound is
+		// inclusive: a message of exactly max bytes is a message, not a refusal.
+		if total := len(data) + len(p.Data); total > limit {
+			return 0, nil, fmt.Errorf(
+				"tds: message exceeds MaxMessageBytes=%d (%d bytes accumulated "+
+					"with no EOM packet)", limit, total)
 		}
 		data = append(data, p.Data...)
 		if p.EOM() {

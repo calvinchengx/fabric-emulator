@@ -53,21 +53,45 @@ func (s *Server) boundBodies(next http.Handler) http.Handler {
 }
 """
 
+# A packet.go that is correct: the ceiling declared with a readable value, and
+# ReadMessage consulting it. Both halves are needed — see
+# `test_a_declared_but_unconsulted_ceiling_is_flagged`.
+GOOD_PACKET_GO = """package tds
+
+const MaxMessageBytes = 320 << 20
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\treturn readMessageBounded(r, MaxMessageBytes)
+}
+"""
+
+# A main.go that is correct: the one serve site, handed the root handler.
+GOOD_MAIN_GO = """package main
+
+func run() error {
+\treturn http.Serve(ln, srv.Handler())
+}
+"""
+
 
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     """Write a fake Go tree and point the checker's module constants at it.
 
-    `files` maps repo-relative paths to source text. The two structural kinds
-    read fixed paths (internal/httpx/body.go, internal/server/server.go), so a
-    healthy pair is written unless the caller overrides them — otherwise every
-    test would trip those two kinds and drown the one it is about.
+    `files` maps repo-relative paths to source text. The structural kinds read
+    fixed paths (internal/httpx/body.go, internal/server/server.go,
+    internal/tds/packet.go) and the serve sweep fails on a tree with no serve
+    site at all, so a healthy set of all four is written unless the caller
+    overrides them — otherwise every test would trip those kinds and drown the
+    one it is about.
     """
     def build(files, ledger=None):
         root = tmp_path / "repo"
         base = {
             c.CEILINGS_FILE: GOOD_BODY_GO,
             c.ROOT_HANDLER_FILE: GOOD_SERVER_GO,
+            c.TDS_PACKET_FILE: GOOD_PACKET_GO,
+            c.SERVE_ROOT_ANCHOR: GOOD_MAIN_GO,
         }
         base.update(files)
         for rel, text in base.items():
@@ -330,6 +354,318 @@ def test_a_missing_outer_bound_constant_is_flagged(tree):
 
 
 # --------------------------------------------------------------------------
+# unbounded-frame-accumulation — the SECOND listener, which every kind above
+# is blind to by construction: a raw TCP listener has no r.Body to wrap
+# --------------------------------------------------------------------------
+
+def test_a_missing_message_ceiling_is_flagged(tree):
+    """The shape as it stood: packets joined until EOM, with no cap on the
+    total. Each ReadPacket is self-limiting at 64 KiB (the length field is a
+    uint16), which is exactly why the loop around it read as bounded."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\tfor {
+\t\tp, err := ReadPacket(r)
+\t\tif err != nil {
+\t\t\treturn 0, nil, err
+\t\t}
+\t\tdata = append(data, p.Data...)
+\t\tif p.EOM() {
+\t\t\treturn typ, data, nil
+\t\t}
+\t}
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert (f"{c.TDS_PACKET_FILE}:{c.TDS_CEILING}:unbounded-frame-accumulation"
+            in keys(found))
+    assert any("never sets it" in f["snippet"] for f in found)
+
+
+def test_a_missing_packet_file_is_flagged(tree):
+    """A moved or deleted file must not read as "nothing to check" — the same
+    direction `missing_scan_roots` guards for the sweep."""
+    tree({})
+    (c.ROOT / c.TDS_PACKET_FILE).unlink()
+    found = c.scan()
+    assert "unbounded-frame-accumulation" in kinds(found)
+    assert any("does not exist" in f["snippet"] for f in found)
+
+
+def test_a_declared_but_unconsulted_ceiling_is_flagged(tree):
+    """THE FAILURE A PRESENCE GREP WOULD MISS, and the reason this kind reads
+    the function body rather than the file.
+
+    A refactor that moves the join into a helper and forgets the comparison
+    leaves `MaxMessageBytes` sitting in the file, fully documented, enforcing
+    nothing. `grep MaxMessageBytes internal/tds/packet.go` would say yes.
+    """
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const MaxMessageBytes = 320 << 20
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\tfor {
+\t\tp, err := ReadPacket(r)
+\t\tif err != nil {
+\t\t\treturn 0, nil, err
+\t\t}
+\t\tdata = append(data, p.Data...)
+\t\tif p.EOM() {
+\t\t\treturn typ, data, nil
+\t\t}
+\t}
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-frame-accumulation"]
+    assert (f"{c.TDS_PACKET_FILE}:{c.TDS_ACCUM_FUNC}:unbounded-frame-accumulation"
+            in keys(found))
+    assert any("documents a bound" in f["snippet"] for f in found)
+
+
+def test_a_ceiling_named_only_in_a_comment_does_not_consult_it(tree):
+    """A bound in a comment is not a bound — the same thing
+    `test_a_commented_out_maxbytesreader_does_not_satisfy_the_check` pins for
+    the HTTP half. The strip runs first, so prose cannot hold this open."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const MaxMessageBytes = 320 << 20
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\t// TODO: compare against MaxMessageBytes here.
+\treturn readMessage(r)
+}
+"""})
+    assert kinds(c.scan()) == ["unbounded-frame-accumulation"]
+
+
+def test_a_vanished_readmessage_is_flagged_rather_than_assumed_fine(tree):
+    """A renamed accumulation point means the guard is pointing at nothing. That
+    wants re-pointing, and the only way anyone learns it needs re-pointing is if
+    the checker says so."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const MaxMessageBytes = 320 << 20
+
+func readFrames(r io.Reader) ([]byte, error) {
+\treturn nil, nil
+}
+"""})
+    found = c.scan()
+    assert "unbounded-frame-accumulation" in kinds(found)
+    assert any("needs re-pointing" in f["snippet"] for f in found)
+
+
+def test_a_message_ceiling_this_cannot_read_is_reported_rather_than_passed(tree):
+    """Same reasoning as the httpx ceilings: a value the checker cannot read is
+    a ceiling whose size nobody is checking, and silence there is the quiet
+    direction."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const MaxMessageBytes = someOtherConst * 2
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\treturn readMessageBounded(r, MaxMessageBytes)
+}
+"""})
+    found = c.scan()
+    assert "unbounded-frame-accumulation" in kinds(found)
+    assert any("cannot read" in f["snippet"] for f in found)
+
+
+def test_a_consulted_ceiling_inside_a_const_block_is_accepted(tree):
+    """The declaration form the real file does not use today but may tomorrow.
+    The HTTP half shipped a defect of exactly this shape — a regex that read one
+    declaration style and silently missed the other."""
+    tree({c.TDS_PACKET_FILE: """package tds
+
+const (
+\theaderLen = 8
+\tMaxMessageBytes = 320 << 20
+)
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\treturn readMessageBounded(r, MaxMessageBytes)
+}
+"""})
+    assert c.scan() == []
+
+
+# --------------------------------------------------------------------------
+# unbounded-serve-root — a second HTTP listener handed anything but the root
+# handler is a listener with no ceiling on any of the 68 decoder sites
+# --------------------------------------------------------------------------
+
+def test_the_real_serve_form_is_not_flagged(tree):
+    """`http.Serve(ln, srv.Handler())` — the one site in the tree. Asserted
+    explicitly rather than left implicit in the fixture, because this kind
+    sweeping the whole tree means a false positive here is a false positive
+    everywhere."""
+    tree({})
+    assert c.scan() == []
+    sites = c.serve_sites(c.ROOT / c.SERVE_ROOT_ANCHOR, root=c.ROOT)
+    assert [s["handler"] for s in sites] == ["srv.Handler()"]
+
+
+def test_a_serve_site_handed_a_mux_is_flagged(tree):
+    """The bypass this kind exists for: a second listener, serving the same
+    routes, with the outer body bound nowhere in the chain."""
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.Serve(ln, srv.mux)
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-serve-root"]
+    assert f"{c.SERVE_ROOT_ANCHOR}:run:unbounded-serve-root" in keys(found)
+
+
+def test_a_bare_handlerfunc_is_flagged(tree):
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.ListenAndServe(":0", http.HandlerFunc(handle))
+}
+"""})
+    assert kinds(c.scan()) == ["unbounded-serve-root"]
+
+
+def test_the_tls_form_takes_its_handler_from_the_last_argument(tree):
+    """ListenAndServeTLS has four arguments, not two. A check that read the
+    second would report `certFile` as the handler and flag a correct site."""
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.ListenAndServeTLS(":0", "c.pem", "k.pem", srv.Handler())
+}
+"""})
+    assert c.scan() == []
+
+
+def test_an_http_server_literal_is_checked_too(tree):
+    """The form that does not look like a call at all, and the one a reader
+    adding TLS or timeouts reaches for first."""
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\ts := &http.Server{
+\t\tAddr:    ":0",
+\t\tHandler: srv.mux,
+\t}
+\treturn s.ListenAndServe()
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-serve-root"]
+    assert any("srv.mux" in f["snippet"] or "not Server.Handler()" in f["snippet"]
+               for f in found)
+
+
+def test_an_http_server_literal_with_the_root_handler_is_not_flagged(tree):
+    """Multi-line, with the Handler field several lines below the match — the
+    reason the walk runs past the end of the matched line."""
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\ts := &http.Server{
+\t\tAddr:              ":0",
+\t\tReadHeaderTimeout: 5,
+\t\tHandler:           srv.Handler(),
+\t}
+\treturn s.ListenAndServe()
+}
+"""})
+    assert c.scan() == []
+
+
+def test_an_http_server_literal_with_no_handler_field_is_flagged(tree):
+    """No Handler field means http.DefaultServeMux, which means no bound. The
+    absence has to read as a finding rather than as nothing to check."""
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\ts := &http.Server{Addr: ":0"}
+\treturn s.ListenAndServe()
+}
+"""})
+    found = c.scan()
+    assert kinds(found) == ["unbounded-serve-root"]
+    assert any("DefaultServeMux" in f["snippet"] for f in found)
+
+
+def test_a_nil_handler_is_flagged(tree):
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.ListenAndServe(":0", nil)
+}
+"""})
+    assert kinds(c.scan()) == ["unbounded-serve-root"]
+
+
+def test_a_root_handler_wrapped_in_middleware_is_not_flagged(tree):
+    """THE NEAR-MISS THAT MATTERS. The invariant is that the root handler is in
+    the chain, not that it is the outermost wrapper — the bound is installed
+    inside it either way. Flagging this would make the kind argue with any
+    future tracing or logging wrapper, and a guard that argues gets deleted.
+
+    It is also why top-level comma splitting is not optional: a naive split
+    would read the handler as `opts`.
+    """
+    tree({c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.Serve(ln, withTracing(srv.Handler(), opts))
+}
+"""})
+    assert c.scan() == []
+
+
+def test_servecontent_and_servemux_are_not_serve_sites(tree):
+    """`http.ServeContent`, `http.ServeFile` and `http.ServeMux` share a prefix
+    with `http.Serve` and install no handler at all. Matching them would report
+    findings on every file that serves a static asset."""
+    tree({"internal/api/h.go": """package api
+
+var mux = new(http.ServeMux)
+
+func handle(w http.ResponseWriter, r *http.Request) {
+\thttp.ServeContent(w, r, "f", t, rs)
+\thttp.ServeFile(w, r, "f")
+}
+"""})
+    assert c.scan() == []
+    assert c.serve_sites(c.ROOT / "internal/api/h.go", root=c.ROOT) == []
+
+
+def test_no_serve_site_at_all_is_flagged(tree):
+    """A sweep that covers nothing passes vacuously. If the serve call moves
+    behind a helper this regex does not know, the kind must say so rather than
+    report a clean tree — the same guard every sibling checker carries."""
+    tree({})
+    (c.ROOT / c.SERVE_ROOT_ANCHOR).unlink()
+    found = c.scan()
+    assert kinds(found) == ["unbounded-serve-root"]
+    assert any("passes vacuously" in f["snippet"] for f in found)
+
+
+def test_a_serve_site_in_a_test_file_is_not_swept(tree):
+    """httptest spins up servers with bare handlers by design; a test is not a
+    listener the emulator ships."""
+    tree({"internal/api/h_test.go": """package api
+
+func TestX(t *testing.T) {
+\tgo http.Serve(ln, mux)
+}
+"""})
+    assert c.scan() == []
+
+
+# --------------------------------------------------------------------------
 # the ledger, in both directions
 # --------------------------------------------------------------------------
 
@@ -401,6 +737,36 @@ func handle() {
         "file": "internal/api/h.go", "symbol": "handle",
         "kind": "unbounded-body-read", "reason": "a different shape"}]})
     # Fails twice over: the regexp is unrecorded AND the entry is now stale.
+    assert c.main(["check_perf_regressions.py", "--strict"]) == 1
+
+
+def test_the_kind_scopes_the_exemption_across_the_two_listeners(tree):
+    """An accepted finding on one listener must not exempt the other. Both new
+    kinds are three-part scoped like the four before them, so a ledger entry for
+    the TDS ceiling cannot quietly cover an HTTP serve site that bypasses the
+    root handler."""
+    tree({
+        c.TDS_PACKET_FILE: """package tds
+
+func ReadMessage(r io.Reader) (typ byte, data []byte, err error) {
+\tdata = append(data, p.Data...)
+\treturn typ, data, nil
+}
+""",
+        c.SERVE_ROOT_ANCHOR: """package main
+
+func run() error {
+\treturn http.Serve(ln, srv.mux)
+}
+""",
+    }, ledger={"accepted": [{
+        "file": c.TDS_PACKET_FILE, "symbol": c.TDS_CEILING,
+        "kind": "unbounded-frame-accumulation",
+        "reason": "accepted for the test"}]})
+    found = c.scan()
+    assert sorted(set(kinds(found))) == ["unbounded-frame-accumulation",
+                                         "unbounded-serve-root"]
+    # The frame finding is excused; the serve one is not, so strict still fails.
     assert c.main(["check_perf_regressions.py", "--strict"]) == 1
 
 

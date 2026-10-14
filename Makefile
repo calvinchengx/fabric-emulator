@@ -305,6 +305,23 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# net/http's generic refusal. A 256 MiB outer bound -- equal to
 	@# MaxBlobWrite, the ceiling `fab cp` has actually crossed -- would have
 	@# shipped that defect looking correct.
+	@#
+	@# And the SECOND LISTENER, which all of the above is blind to by
+	@# construction: it anchors on `r.Body`, and cmd/fabric-emulator/main.go
+	@# serves the SQL/TDS endpoint on its own net.Listener where there is no
+	@# `r.Body` for an outer bound to wrap. tds.ReadMessage joined packets
+	@# until one set the EOM status bit with no cap on the total -- each
+	@# ReadPacket is self-limiting at 64 KiB because the length field is a
+	@# uint16, which is exactly why the loop around it read as bounded and
+	@# was not. Measured when this landed: 1 http.Serve site in the tree, 1
+	@# TDS listener beside it, and 0 accumulated-length checks across all 40
+	@# files of internal/tds. Repaired by tds.MaxMessageBytes (320 MiB, the
+	@# HTTP listener's own default, so neither listener is the narrower
+	@# surface) and held by two more kinds: the ceiling must be DECLARED and
+	@# CONSULTED by ReadMessage, since declared-but-unused is what a presence
+	@# grep calls healthy, and every serve site must be handed
+	@# Server.Handler(), so a future second HTTP listener handed the bare mux
+	@# lands as a finding rather than as a silent bypass.
 	@$(PY) scripts/check_perf_regressions.py --strict
 	@# ...and the dimension none of the guards above can see either: whether
 	@# this repository's own source is WRITTEN in a shape that leaks a
