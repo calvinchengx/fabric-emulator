@@ -16,9 +16,24 @@ subcommands and its FABRIC_* environment knobs are a contract every compose
 file, CI job, example and README snippet in this repository is written against,
 and a rename would break all of them while every check here stayed green.
 
+AND ONE SURFACE IS NOT SERVED OVER A WIRE AT ALL: the exported Go API of
+`pkg/`. That directory exists for exactly one reason and its own package doc
+says so -- "WHY `pkg/` AND NOT `internal/`. Go's internal rule would make this
+unimportable by any other module" -- so the exported identifiers of
+`pkg/onelakesec` are a COMPILE-TIME contract an importing module binds to, and
+docs/release-notes/v0.37.0.md advertises `DecisionRule.Constraints` as API that
+landed. Renaming `Effective`, dropping `AccessEntry.Why` or deleting an
+exported struct field breaks that importer at BUILD time, and nothing in this
+tree watched it: the only script that reads `pkg/` at all is
+check_script_test_coverage, which counts that each package has a `_test.go`.
+The glob is `pkg/*`, so a package added tomorrow is covered the day it lands.
+
 Measured when this landed: 2 subcommands, 28 CLI flags, 37 FABRIC_* variables,
 and 1056 registered in-scope routes (174 after the route ratchet's family
-collapse, which this gate deliberately does NOT apply -- see below).
+collapse, which this gate deliberately does NOT apply -- see below). Measured
+when the Go API joined as the fifth surface: 51 exported ids, every one in
+`pkg/onelakesec` -- 23 package-level funcs, types and consts, 4 methods, and
+24 struct fields.
 
 THE LEDGER IS ASYMMETRIC ON PURPOSE, and the asymmetry is the whole design:
 
@@ -47,8 +62,41 @@ check_surface_ledger makes, for the same reason, over the same registrations.
 WHAT THIS IS NOT.
 
   * It says NOTHING about whether a surface still BEHAVES the same. A flag
-    that still parses and now means the opposite passes here. That is
-    conformance and the e2e suites: a different gate on a different input.
+    that still parses and now means the opposite passes here, and so does an
+    exported Go function that keeps its name and returns the other answer.
+    That is conformance and the e2e suites: a different gate on a different
+    input.
+  * A GO SIGNATURE OR TYPE CHANGE is out of scope on this pass. `Effective`
+    gaining a parameter, or `AccessEntry.Rows` becoming a `[]string`, breaks
+    an importer exactly as a deletion does, and this gate will not say so: a
+    signature is a structured thing, reading it off source text is where the
+    false positives live, and a surface recorded as a NAME is already the
+    difference between a rename that nobody notices and one that fails. Doing
+    it properly wants `go/types`, which is a Go program rather than a line in
+    this file -- a deliberate increment, named so it is a gap and not an
+    oversight.
+  * THE PARSER READS LINE COMMENTS AND NOT STRING LITERALS, which bounds the
+    guard above in one named direction. Comments ARE handled -- stripped by
+    `_braced` and `_struct_fields` alike, because an unbalanced brace in one
+    swallowed six live functions out of the ledger without `unparsed_exports`
+    saying a word, which is precisely the silent shrink this gate exists to
+    make impossible. A raw backtick string is not: one whose lines begin at
+    column 0 with Go-like declaration text would inject a PHANTOM id. Nothing
+    in `pkg/` writes that today, and the failure direction is the forgiving
+    one -- a phantom reads as a STALE LEDGER, which fails until a reader looks
+    at the --update diff, and never as a removal nobody may launder. A real
+    lexer is where this ends, and it is the same increment `go/types` is.
+  * IDS ARE KEYED BY PACKAGE NAME, not by directory path, because `pkg` plus
+    the clause is exactly how an importer writes one down. Two directories
+    under `pkg/` declaring the SAME package name would therefore collide into
+    one row and the second's unique ids would read as a removal. Go convention
+    makes that unlikely and the glob here is explicitly built for packages
+    that do not exist yet, so it is stated rather than guarded.
+  * `internal/` is deliberately out of scope, and for once the language does
+    the work: Go's own internal rule makes those packages unimportable by any
+    other module, so there is no downstream importer to break. Ledgering them
+    would record a few hundred ids nobody can bind to, and that is how a
+    ledger stops being read.
   * docker-compose service names and published ports are deliberately out of
     scope. They are a real surface, and they are the STACK's shape rather than
     the binary's; one gate answering both questions would answer both badly.
@@ -84,9 +132,12 @@ import check_route_coverage as cov  # noqa: E402
 # asserting against it would just be a second copy of the baseline.
 MAIN_GO = ROOT / "cmd" / "fabric-emulator" / "main.go"
 ENV_SOURCES = (ROOT / "internal", ROOT / "cmd")
+# A DIRECTORY and not a package list, so `pkg/*` is covered the day a second
+# package lands rather than the day somebody remembers this line.
+PKG_SOURCES = (ROOT / "pkg",)
 CONFIG_DOC = ROOT / "docs" / "04-configuration.md"
 
-SURFACES = ("subcommands", "cliFlags", "envVars", "routes")
+SURFACES = ("subcommands", "cliFlags", "envVars", "goAPI", "routes")
 
 # `fs.StringVar(&cfg.Addr, "addr", …)` and the pointer-returning form
 # `fs.String("addr", …)`, anchored on the flagset variable main.go uses. A
@@ -117,6 +168,38 @@ _ENV_READ = re.compile(
 # the surface rather than letting them drop out of it.
 _ENV_LITERAL = re.compile(r'"(FABRIC_[A-Z0-9_]+)"')
 _LINE_COMMENT = re.compile(r"//[^\n]*")
+
+# --- the exported Go API of pkg/ ----------------------------------------------
+#
+# READ OFF THE SOURCE TEXT, not with go/types, for the reason this whole gate
+# is offline: `make check` must answer before a push, with nothing but Python
+# and no Go toolchain required. The cost of that is a parser that knows only
+# the declaration forms this tree uses -- and the cost is PAID BY
+# unparsed_exports() below, which NAMES a form it cannot read instead of
+# letting the ledger quietly shrink. That is the same bargain _ENV_LITERAL
+# above strikes with _ENV_READ, for the same reason.
+
+# The declared NAME of a top-level declaration, in any form, used only to ask
+# whether there is an export on this line at all. DELIBERATELY LOOSER than the
+# strict matchers below: a line this finds an exported name on, and none of
+# them resolves, is exactly the anti-silence case.
+_GO_DECL = re.compile(
+    r"^(?:func|type|const|var)\s+(?:\(\s*\w*\s*\*?\w+\s*\)\s*)?([A-Za-z_]\w*)")
+_GO_METHOD = re.compile(
+    r"^func\s+\(\s*\w+\s+\*?([A-Za-z_]\w*)\s*\)\s*([A-Za-z_]\w*)\s*\(")
+_GO_FUNC = re.compile(r"^func\s+([A-Za-z_]\w*)\s*\(")
+_GO_TYPE = re.compile(r"^type\s+([A-Za-z_]\w*)\s+(.*)$")
+_GO_VALUE = re.compile(r"^(?:const|var)\s+([A-Za-z_]\w*)\b")
+_GO_GROUP = re.compile(r"^(const|var|type)\s*\(\s*$")
+_GO_PACKAGE = re.compile(r"^package\s+(\w+)", re.MULTILINE)
+# One entry of a grouped block, and one field of a struct body. A field line
+# may name several at once (`schema, table string`).
+_GO_ENTRY = re.compile(r"^([A-Za-z_]\w*)\b(.*)$")
+_GO_FIELD = re.compile(r"^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+\S")
+# An exported interface's method set. NOT ledgered on this pass -- `pkg/` has
+# no exported interface today -- so this exists to make the first one FAIL
+# rather than land silently unrecorded, which is the whole point of the guard.
+_GO_IFACE_METHOD = re.compile(r"^([A-Z]\w*)\s*\(")
 
 
 def _rel(path):
@@ -190,6 +273,202 @@ def unrecognised_env_reads():
     return surprises
 
 
+def _exported(name):
+    """Go's whole export rule: an initial capital, and nothing else."""
+    return name[:1].isupper()
+
+
+def _pkg_sources():
+    for base in PKG_SOURCES:
+        for path in sorted(base.rglob("*.go")):
+            if not path.name.endswith("_test.go"):
+                yield path
+
+
+def _braced(lines, start):
+    """The brace-matched body opening on lines[start], and the line it ends on.
+
+    BRACE-MATCHED rather than read to the next line beginning with `}`, the
+    same technique subcommands() uses on the dispatch switch and for the same
+    reason: a nested struct and a one-line `struct{ Msg string }` both get
+    their real extent, where a line window reads one of them wrong. This tree
+    has one of each.
+
+    COMMENTS ARE STRIPPED FIRST, and that is not tidiness. _struct_fields
+    below strips them per line, so without it the two disagree about where a
+    body ENDS: one unbalanced brace inside a comment in an exported type's
+    body swallows the declarations after it, and because each is then SKIPPED
+    rather than misread, unparsed_exports() has nothing to name. Driven over
+    the real tree, one `// {` line inside AccessEntry took extraction from 51
+    ids to 45 with no surprises reported -- a false BREAKING CHANGE for six
+    live functions whose printed remedy is to write them into `removed`, and,
+    once that comment is already in the baseline, a brand-new export that is
+    never extracted at all. rowfilter.go already carries brace-bearing
+    comments, so the trigger is one wrapped line away. Stripping preserves
+    newlines (_LINE_COMMENT stops at one), so the end line is unchanged.
+    """
+    text = "\n".join(_LINE_COMMENT.sub("", line) for line in lines[start:])
+    opened = text.index("{")
+    depth, index = 1, opened + 1
+    while index < len(text) and depth:
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+        index += 1
+    return text[opened + 1:index - 1], start + text[:index].count("\n")
+
+
+def _struct_fields(body):
+    """Exported field names in one struct body, and lines read as no field."""
+    names, unread = [], []
+    depth = 0
+    for raw in body.split("\n"):
+        line = _LINE_COMMENT.sub("", raw).strip()
+        here, depth = depth, depth + line.count("{") - line.count("}")
+        # A nested type's own body is not this struct's surface.
+        if here or not line:
+            continue
+        field = _GO_FIELD.match(line)
+        if not field:
+            # An embedded field, or a shape this parser does not know. Either
+            # way it yielded no id, so an EXPORTED one has to be named.
+            if _exported(line):
+                unread.append(line)
+            continue
+        names += [n for n in (p.strip() for p in field.group(1).split(","))
+                  if _exported(n)]
+    return names, unread
+
+
+def _read_go_api(pkg, text):
+    """One file: the exported ids it declares, and the lines left unread."""
+    ids, unread = [], []
+    lines = text.split("\n")
+    index, group = 0, None
+
+    def body_at(line_index, name, rest):
+        """Skip a type's body, taking its exported fields on the way past."""
+        body, end = _braced(lines, line_index)
+        if _exported(name):
+            if re.search(r"\bstruct\b", rest):
+                fields, missed = _struct_fields(body)
+                ids.extend(f"{pkg}.{name}.{field}" for field in fields)
+                unread.extend(missed)
+            else:
+                # An exported interface, or an exported type whose body is
+                # neither. Its members are a contract this pass does not
+                # record, so they are named rather than dropped.
+                unread.extend(
+                    member.strip() for member in body.split("\n")
+                    if _GO_IFACE_METHOD.match(
+                        _LINE_COMMENT.sub("", member).strip()))
+        return end + 1
+
+    while index < len(lines):
+        line = _LINE_COMMENT.sub("", lines[index])
+        index += 1
+
+        if group:
+            if line.startswith(")"):
+                group = None
+                continue
+            entry = _GO_ENTRY.match(line.strip())
+            if not entry:
+                continue
+            name, rest = entry.group(1), entry.group(2)
+            if _exported(name):
+                ids.append(f"{pkg}.{name}")
+            # A grouped `type (` entry can carry a body, and it must be
+            # skipped whether or not the type is exported: its field lines
+            # would otherwise read as further entries of the group.
+            if group == "type" and "{" in rest:
+                index = body_at(index - 1, name, rest)
+            continue
+
+        opening = _GO_GROUP.match(line)
+        if opening:
+            group = opening.group(1)
+            continue
+
+        method = _GO_METHOD.match(line)
+        if method:
+            receiver, name = method.group(1), method.group(2)
+            # An unexported receiver or an unexported method cannot be named
+            # from another module, so neither is an id. DECIDED HERE, which is
+            # what keeps it out of unparsed_exports below -- the difference
+            # between a deliberate exclusion and a parser that gave up.
+            if _exported(receiver) and _exported(name):
+                ids.append(f"{pkg}.{receiver}.{name}")
+            continue
+
+        func = _GO_FUNC.match(line)
+        if func:
+            if _exported(func.group(1)):
+                ids.append(f"{pkg}.{func.group(1)}")
+            continue
+
+        kind = _GO_TYPE.match(line)
+        if kind:
+            name, rest = kind.group(1), kind.group(2)
+            if _exported(name):
+                ids.append(f"{pkg}.{name}")
+            if "{" in rest:
+                index = body_at(index - 1, name, rest)
+            continue
+
+        value = _GO_VALUE.match(line)
+        if value:
+            if _exported(value.group(1)):
+                ids.append(f"{pkg}.{value.group(1)}")
+            continue
+
+        declaration = _GO_DECL.match(line)
+        if declaration and _exported(declaration.group(1)):
+            unread.append(line.strip())
+
+    return ids, unread
+
+
+def _go_api_scan():
+    """Both answers at once, so the ledger and the guard cannot disagree."""
+    ids, surprises = set(), []
+    for path in _pkg_sources():
+        text = path.read_text(encoding="utf-8")
+        clause = _GO_PACKAGE.search(text)
+        pkg = clause.group(1) if clause else path.parent.name
+        found, unread = _read_go_api(pkg, text)
+        ids.update(found)
+        surprises += [(_rel(path), line) for line in unread]
+    return ids, surprises
+
+
+def go_api():
+    """Every exported identifier of `pkg/`, spelled as an importer writes it.
+
+    `<package>.<Name>` for a package-level func, type, const or var;
+    `<package>.<Type>.<Method>` where receiver AND method are both exported;
+    `<package>.<Type>.<Field>` for an exported field of an exported struct.
+    Unexported receivers, types and fields never enter the ledger, because
+    Go's export rule means no other module can bind to one -- so `rfNode`,
+    `rfLiteral` and `RowFilter.root` are absent on purpose, not by omission.
+    """
+    return sorted(_go_api_scan()[0])
+
+
+def unparsed_exports():
+    """`pkg/` declarations whose exported name this parser could not read.
+
+    THE SAME GUARD unrecognised_env_reads() is, one surface over, and it
+    exists for the same failure: a refactor that writes an export in a form
+    this parser does not know would shrink the ledger instead of failing it,
+    and a shrinking ledger reads in review as a clean tree. A generic type, an
+    embedded field, an exported interface's method set -- each is named here,
+    with the file it is in, rather than dropped.
+    """
+    return _go_api_scan()[1]
+
+
 def _shape(template):
     """A path template with its parameter NAMES erased.
 
@@ -226,12 +505,13 @@ EXTRACTORS = {
     "subcommands": (subcommands, lambda: _rel(MAIN_GO)),
     "cliFlags": (cli_flags, lambda: _rel(MAIN_GO)),
     "envVars": (env_vars, lambda: ", ".join(_rel(p) for p in ENV_SOURCES)),
+    "goAPI": (go_api, lambda: ", ".join(_rel(p) for p in PKG_SOURCES)),
     "routes": (routes, lambda: ", ".join(_rel(p) for p in cov.SOURCES)),
 }
 
 
 def tree_surface():
-    """The four surfaces as the tree has them now, keyed by surface name."""
+    """The five surfaces as the tree has them now, keyed by surface name."""
     return {name: EXTRACTORS[name][0]() for name in SURFACES}
 
 
@@ -272,9 +552,13 @@ def write_baseline(surface, previous=None):
         "_comment": [
             "The surface an external user BINDS TO: the emulator binary's",
             "subcommands and CLI flags, the FABRIC_* environment knobs it",
-            "reads, and every in-scope HTTP route it registers. Written by",
+            "reads, and every in-scope HTTP route it registers -- plus one",
+            "surface served over no wire at all, the exported Go API of",
+            "`pkg/`, which is a COMPILE-TIME contract an importing module",
+            "binds to: that directory exists so another module CAN import it,",
+            "where Go's internal rule would forbid it. Written by",
             "scripts/check_backward_compat.py --update; do not hand-edit the",
-            "four lists. `removed` and `docsUndocumented` ARE hand-written and",
+            "five lists. `removed` and `docsUndocumented` ARE hand-written and",
             "are preserved across --update.",
             "The gate is asymmetric on purpose. An entry in the tree and not",
             "here is a STALE LEDGER: run --update and let the diff be the",
@@ -293,6 +577,7 @@ def write_baseline(surface, previous=None):
         "subcommands": lists["subcommands"],
         "cliFlags": lists["cliFlags"],
         "envVars": lists["envVars"],
+        "goAPI": lists["goAPI"],
         "docsUndocumented": previous.get("docsUndocumented", {}),
         "removed": removed,
         "routes": lists["routes"],
@@ -372,6 +657,16 @@ def main_for_test(strict=False, update=False):
         for rel, name in surprises:
             print(f"    {rel}: {name}", file=sys.stderr)
         print("  -> add the reader to _ENV_READ.", file=sys.stderr)
+        return 1
+
+    unread = unparsed_exports()
+    if unread:
+        print("check_backward_compat: a pkg/ declaration is written in a form "
+              "this parser does not know, so its export would be missing from "
+              "the surface:", file=sys.stderr)
+        for rel, line in unread:
+            print(f"    {rel}: {line}", file=sys.stderr)
+        print("  -> teach go_api() the form the tree now uses.", file=sys.stderr)
         return 1
 
     previous = read_baseline()
@@ -456,7 +751,8 @@ def main_for_test(strict=False, update=False):
                   "repository has newly promised to keep.")
 
     if not failed:
-        print("  every recorded subcommand, flag, env var and route is still here")
+        print("  every recorded subcommand, flag, env var, exported Go API id "
+              "and route is still here")
 
     undocumented = undocumented_knobs(surface, previous)
     if undocumented:

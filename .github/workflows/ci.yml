@@ -602,12 +602,25 @@ jobs:
       # and stores `registered` as a COUNT, so deleting a served route shows up
       # in review as `174 -> 173` and never names itself.
       #
-      # Below the HTTP layer nothing looked at all. Measured when this landed:
-      # 28 CLI flags, 2 subcommands and 37 FABRIC_* variables -- a contract
-      # every compose file, e2e harness, example and README snippet in this
+      # Below the HTTP layer nothing looked at all. Measured today: 30 CLI
+      # flags, 2 subcommands and 41 FABRIC_* variables -- a contract every
+      # compose file, e2e harness, example and README snippet in this
       # repository is written against, including the FABRIC_RECORD_RESPONSES
       # this job's own siblings set. A rename would break all of them and
       # every check above would stay green.
+      #
+      # AND A FIFTH SURFACE SERVED OVER NO WIRE: the 51 exported ids of
+      # `pkg/`. That directory exists for one reason and its own package doc
+      # states it -- Go's internal rule would make it unimportable by any
+      # other module -- so its exports are a COMPILE-TIME contract a
+      # downstream module binds to, and docs/release-notes/v0.37.0.md
+      # advertises `DecisionRule.Constraints` as API that landed. Renaming
+      # `Effective` or deleting an exported struct field breaks that importer
+      # at BUILD time, where no HTTP gate can see it and no runtime test
+      # fails. The only script that read `pkg/` at all counted that each
+      # package has a `_test.go`. The glob is `pkg/*`, so a package added
+      # tomorrow is covered the day it lands; a signature change is NOT, and
+      # the docstring says so rather than leaving it a surprise.
       #
       # Asymmetric on purpose. An addition is a stale ledger: run --update and
       # the diff is the review of what surface is newly promised. A removal is
