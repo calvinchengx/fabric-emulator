@@ -21,7 +21,7 @@ dependencies = [
     # the floor was `>=18`, which permits 18 through 22, inside
     # GHSA-rgxp-2hwp-jwgg (vulnerable >=15.0.0,<23.0.1) that the root was
     # floored to 23.0.1 for. Examples are what people copy.
-    "pyarrow>=23.0.1,<26",
+    "pyarrow>=23.0.1,<27",
     "pyodbc>=5.2,<6",
     # Drives notebook cells and the silver transform onto Sail over Spark
     # Connect (no JVM).
