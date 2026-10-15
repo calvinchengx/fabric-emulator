@@ -854,6 +854,39 @@ jobs:
       # recorded. The ledger is checked in BOTH directions, so a site that gets
       # fixed cannot leave an entry behind still excusing the file.
       #
+      # THE SAME DEFECT CLASS THEN TURNED UP SIX MORE TIMES, behind one spelling
+      # the TLS rule had never learned -- and this is the honest lesson of the
+      # gate rather than a footnote. R1's own scope sentence claimed every
+      # certificate-verification skip in this tree, and it matched requests'
+      # `verify=False` while missing the stdlib pair `verify_mode =
+      # ssl.CERT_NONE` / `check_hostname = False`, which is what this
+      # repository's own Python actually writes: the spark agent, fabric-target,
+      # the Sail launcher, 28 e2e harnesses. 39 sites unexamined for two
+      # releases, six of them carrying a credential over the unverified
+      # connection. eventstream_kafka._fabric_request is the sharp one -- a
+      # bearer token to a FABRIC_API_URL DEFAULTING to
+      # api.fabric.microsoft.com, so the DEFAULT configuration reached a real
+      # Microsoft endpoint with the trust check off; four more POST
+      # ENTRA_CLIENT_SECRET to a URL that is configuration. All six are scoped
+      # per host now (python/spark_agent/tls_scope.py and fabric_target's
+      # _tls_context, both citing akv.hostScopedTLS, the same repair one
+      # language over) rather than ledgered.
+      #
+      # AND A SEVENTH RULE for the host-escape shape R5/R6 left uncovered: an
+      # archive member extracted with nothing checking where it lands.
+      # filepath.Join CLEANS its result -- Join("/out", "../../etc/x") is a
+      # perfectly clean /etc/x -- which is precisely why the shape reads as
+      # safe, and tarfile's filter="data" only becomes the default in 3.14
+      # against this repo's 3.12 floor, so the unsafe default is live on the
+      # interpreter this job runs. e2e/azcopy/run.py unpacked an aka.ms
+      # download with bare extractall in both the zip and tar branch; both
+      # were repaired rather than recorded, so the rule ships at zero. Its Go
+      # half has never had a finding at all, because no non-test Go file here
+      # imports archive/zip or archive/tar -- stated in the docstring rather
+      # than left to read as a measurement. Same reason there is no Go shell
+      # rule: nothing here imports os/exec, and a speculative zero in the rule
+      # set would be worse than an honest absence.
+      #
       # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_security_footguns.py --strict

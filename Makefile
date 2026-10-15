@@ -358,13 +358,38 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# seeded secrets, self-signed TLS, an unauthenticated admin API -- and a
 	@# checker that reported those would be argued with rather than fixed.
 	@# So the emulator-only sites are LEDGERED with the host set each client
-	@# reaches (docs/security-footguns.json), and 30 are. Two rules ship at
+	@# reaches (docs/security-footguns.json), and 65 are. Three rules ship at
 	@# zero as pure regression guards; the first run found one real defect --
 	@# internal/akv disabled certificate verification transport-wide from a
 	@# flag documented for entra-emulator's cert, on the one client whose
 	@# allowlist deliberately admits a real *.vault.azure.net, so a secret
 	@# could come from a real vault over a connection nobody authenticated
 	@# while the https check that exists for that reason still passed.
+	@#
+	@# AND THEN THE SAME DEFECT SIX MORE TIMES, from one spelling the TLS rule
+	@# had never learned. R1 claimed to cover every certificate-verification
+	@# skip in this tree and matched requests' `verify=False` only -- not the
+	@# stdlib pair `verify_mode = ssl.CERT_NONE` / `check_hostname = False`,
+	@# which is what this repository's OWN Python writes, in the spark agent,
+	@# in fabric-target, in the Sail launcher and across 28 e2e harnesses. 39
+	@# sites were unexamined; six carried a credential over the unverified
+	@# connection, and eventstream_kafka._fabric_request sent a bearer token
+	@# to a FABRIC_API_URL DEFAULTING to api.fabric.microsoft.com -- so the
+	@# default configuration reached a real Microsoft endpoint with the trust
+	@# check off. Four more POST ENTRA_CLIENT_SECRET. All six are now scoped
+	@# per host (python/spark_agent/tls_scope.py and fabric_target's
+	@# _tls_context, both citing akv.hostScopedTLS) rather than recorded.
+	@#
+	@# The seventh rule is the host-escape shape R5/R6 did not cover: an
+	@# archive member extracted with nothing checking where it lands.
+	@# filepath.Join CLEANS its result, so Join("/out", "../../etc/x") is a
+	@# perfectly clean /etc/x -- which is why the shape reads as safe -- and
+	@# tarfile's filter="data" only becomes the default in 3.14 against this
+	@# repo's 3.12 floor. e2e/azcopy/run.py unpacked an aka.ms download with
+	@# bare extractall in both branches; both were repaired, so the rule
+	@# ships empty. Its Go half has never had a finding because no non-test
+	@# Go file here imports archive/zip or archive/tar, and the docstring
+	@# says so rather than implying a measurement.
 	@$(PY) scripts/check_security_footguns.py --strict
 	@# ...and the dimension the three above cannot see either: whether this
 	@# emulator says anything at all when it fails. Measured when this landed:

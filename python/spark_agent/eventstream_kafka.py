@@ -46,7 +46,6 @@ import base64
 import json
 import os
 import re
-import ssl
 import sys
 import tempfile
 import time
@@ -55,6 +54,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from tls_scope import tls_context
 
 
 class EventstreamError(RuntimeError):
@@ -139,9 +140,12 @@ def _fabric_token(env=None):
         "client_secret": env["ENTRA_CLIENT_SECRET"],
         "scope": env.get("ENTRA_FABRIC_SCOPE", "https://api.fabric.microsoft.com/.default"),
     }).encode()
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # SCOPED PER HOST, not per client. This call POSTs ENTRA_CLIENT_SECRET, and
+    # `url` is configuration — so an unconditional skip sent the secret over an
+    # unauthenticated connection whenever ENTRA_TOKEN_URL named something real.
+    # tls_context accepts the emulator's self-signed cert and verifies
+    # everything else; internal/akv's hostScopedTLS is the same fix in Go.
+    ctx = tls_context(url)
     req = urllib.request.Request(url, data=form)
     with urllib.request.urlopen(req, timeout=30, context=ctx) as response:
         return json.loads(response.read())["access_token"]
@@ -155,9 +159,11 @@ def _fabric_request(path, env=None, query=None):
     if query:
         url += "?" + urllib.parse.urlencode(query)
     token = _fabric_token(env)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # Scoped per host, and this is the site where it matters most in this file:
+    # `base` DEFAULTS to api.fabric.microsoft.com, so the unconditional skip
+    # here sent a bearer token to a real Microsoft endpoint over a connection
+    # nobody authenticated. See tls_scope.
+    ctx = tls_context(url)
     req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
     try:
         with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
