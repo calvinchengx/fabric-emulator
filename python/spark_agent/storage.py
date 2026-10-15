@@ -44,11 +44,12 @@ from __future__ import annotations
 
 import json
 import os
-import ssl
 import time
 import urllib.parse
 import urllib.request
 from contextlib import contextmanager
+
+from tls_scope import tls_context
 
 # Refresh this long before the token actually expires, so a statement that
 # starts just under the wire still finishes with a valid bearer.
@@ -69,13 +70,14 @@ def _mint(url, env):
         "client_secret": env["ENTRA_CLIENT_SECRET"],
         "scope": env.get("ENTRA_SCOPE", "https://storage.azure.com/.default"),
     }).encode()
-    # entra-emulator serves self-signed TLS on the compose network. This is a
-    # local dev tool and the issuer is named by our own config, not by anything
-    # user-supplied, so skip verification for the mint — same call the Sail
-    # launcher makes, and the emulator's own FABRIC_ENTRA_TLS_INSECURE.
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # entra-emulator serves self-signed TLS on the compose network, so its cert
+    # is accepted — but SCOPED TO THAT HOST rather than applied to the call.
+    # The old comment said the issuer "is named by our own config, not by
+    # anything user-supplied" and treated that as sufficient; config is exactly
+    # what can name a real endpoint, and this request POSTs
+    # ENTRA_CLIENT_SECRET. tls_context verifies every non-local host; see
+    # tls_scope, and internal/akv's hostScopedTLS for the same fix in Go.
+    ctx = tls_context(url)
     with urllib.request.urlopen(urllib.request.Request(url, data=form),
                                 timeout=30, context=ctx) as response:
         body = json.loads(response.read())
@@ -166,9 +168,9 @@ def _forge_attributed(env):
         "audience": env.get("ENTRA_AUDIENCE", "https://storage.azure.com"),
         "extraClaims": {"fabric_job_id": job, "fabric_cell_index": str(cell)},
     }).encode()
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # Scoped per host, as in _mint above: ENTRA_FORGE_URL is configuration, and
+    # what comes back is a bearer token. See tls_scope.
+    ctx = tls_context(forge)
     req = urllib.request.Request(forge, data=body, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30, context=ctx) as response:

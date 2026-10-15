@@ -25,14 +25,39 @@ rather than absent (R1, R3), escape from the emulator to the host (R5, R6).
 WHAT IS FLAGGED, and what each rule deliberately does NOT flag:
 
   * `tls-verification-off` (R1) -- `InsecureSkipVerify: true`, `verify=False`,
-    `connection_verify=False`. Every site is LEDGERED rather than banned,
-    because a local emulator talking to a sibling's self-signed cert is the
-    normal case here. The ledger entry must name the HOST SET that client can
-    reach, which is the thing that actually decides whether the skip is safe:
-    six of the seven reach a compose service and nothing else, and the seventh
-    (internal/akv) reaches real `*.vault.azure.net` by design, which is why its
-    skip is now scoped to one configured host instead of the transport. A new
-    unledgered site fails, so that distinction cannot be lost by default.
+    `connection_verify=False`, AND the stdlib `ssl` dialect: an assignment of
+    `ssl.CERT_NONE` to a `*.verify_mode`, of `False` to a `*.check_hostname`,
+    a call to `ssl._create_unverified_context()`, or an assignment to
+    `ssl._create_default_https_context`. Every site is LEDGERED rather than
+    banned, because a local emulator talking to a sibling's self-signed cert is
+    the normal case here. The ledger entry must name the HOST SET that client
+    can reach, which is the thing that actually decides whether the skip is
+    safe -- internal/akv reaches real `*.vault.azure.net` by design, which is
+    why its skip is scoped to one configured host instead of the transport. A
+    new unledgered site fails, so that distinction cannot be lost by default.
+
+    THE `ssl` DIALECT WAS INVISIBLE FOR THIS RULE'S FIRST TWO RELEASES, and it
+    is the same defect class as the internal/akv finding this docstring
+    celebrates, hiding behind a spelling the rule had not learned. `verify=False`
+    is requests'; the stdlib's is the pair above, and the pair is what this
+    repository's OWN Python reaches for. Adding it took R1 from 14 findings to
+    53 across 39 newly visible sites -- and six of those carried a credential
+    over the unverified connection. `eventstream_kafka._fabric_request` is the
+    sharp one: it sends a bearer token to a `FABRIC_API_URL` that DEFAULTS to
+    `api.fabric.microsoft.com`, so the default configuration talked to a real
+    Microsoft endpoint with the trust check off. Four more POST
+    `ENTRA_CLIENT_SECRET` to a URL that is configuration. All six are now scoped
+    per host (spark_agent/tls_scope.py and fabric_target's `_tls_context`,
+    both mirroring akv.hostScopedTLS) rather than recorded, which is why the
+    entries below for those files describe a GUARD rather than an allowance.
+
+    THE PAIRED IDIOM REPORTS ONCE. `check_hostname = False` is suppressed when
+    the same enclosing symbol also sets `verify_mode = ssl.CERT_NONE`, because
+    that is one context and one trust decision. The ledger key is (file, rule,
+    symbol), so a pair was always one ENTRY; this keeps the report, and the
+    counts in the prose, matching what a reader would count by hand. It is
+    scoped to the SYMBOL, not the file, so a second function's lone skip in the
+    same file is still its own finding.
   * `weak-random-for-secrets` (R2) -- `math/rand` in Go or `random` in Python
     BOUND TO a credential: assigned to a credential-named target, or returned
     from a credential-named function. Security material must come from
@@ -93,6 +118,38 @@ WHAT IS FLAGGED, and what each rule deliberately does NOT flag:
     ships in no artifact, and the alternative -- a silently excluded directory
     -- is what this repository's other guards call out as the failure mode.
     So they are recorded, with the reason, and a NEW one still fails.
+  * `archive-extraction-unchecked` (R7) -- an archive member extracted without
+    anything checking where it lands. Python: `extractall` with no `filter=`
+    and no `members=`, `shutil.unpack_archive`, and `.extract(<non-literal>)`
+    on an archive object. Go: an archive header's name joined onto a
+    destination with `filepath.Join` and no containment check in the same
+    function. SECURITY.md puts escape from the emulator to the host in scope
+    and R5/R6 already serve that bullet; this is its third shape.
+
+    WHY `filepath.Join` IS NOT THE BOUND IT LOOKS LIKE: it CLEANS its result,
+    so `Join("/out", "../../etc/x")` is `/etc/x` -- a perfectly clean path
+    outside `/out`. Same for Python's default `extractall`, where
+    `filter="data"` only became the default in 3.14 and this repository's floor
+    is 3.12, so on the interpreter CI actually runs the unsafe default is live.
+
+    Baseline ZERO, and both halves earned that differently. The PYTHON half had
+    two real findings when it landed -- `e2e/azcopy/run.py` extracted an
+    archive downloaded from an `aka.ms` redirect with bare `extractall`, both
+    the zip and the tar branch -- and they were FIXED rather than recorded
+    (`filter="data"` on the tar, a validated `members=` list on the zip), so
+    the rule ships empty. The GO half is a pure regression guard and has never
+    had a finding to report: no non-test Go file in this tree imports
+    `archive/zip` or `archive/tar` at all, so it exists so that the first
+    Go-side extractor lands as a finding instead of as a review comment.
+
+    Two measured narrowings, both from false positives on this tree. `.extract`
+    requires an archive module in the file AND a method call: the
+    vendored-activity-types parser has `v.extract(page(...))`, which scrapes an
+    HTML table, and `scripts/vendor_notebookutils_stubs.py` imports zipfile and
+    defines its own `extract(url)` -- so the import gate alone did not save it,
+    and that function reads members into a dict with `wheel.read(name)` and
+    writes no member-named path. The Go clause needs the archive import for the
+    same reason: `f.Name` is also how an `fs.DirEntry` is spelled.
 
 SCOPE IS NON-TEST SOURCE. Test files are excluded because a test's job includes
 constructing the violation -- python/tests/test_check_example_portability.py
@@ -108,14 +165,34 @@ away or been FIXED -- a closed gap left recorded goes on excusing the file, and
 would silently re-cover it if the shape came back. That direction is the one a
 "what's new" reader would never think to check.
 
-THE MEASURED BASELINE AT LANDING: 37 findings across 551 non-test source files,
-in 30 distinct (file, rule, symbol) keys, every one recorded in the ledger with
-its reason -- 13 tls-verification-off, 13 python-shell-injection, 10
-world-writable-mode, 1 credential-in-message, and zero for both regression-guard
-rules. One further finding is NOT in the ledger because it was FIXED in the same
-change: internal/akv set InsecureSkipVerify transport-wide from a flag documented
-for entra-emulator's certificate, on the one client whose allowlist deliberately
-admits a real `*.vault.azure.net`. See docs/63-security-footguns.md.
+THE MEASURED BASELINE, as of the change that added the `ssl` dialect and the
+archive rule: 73 findings across 576 non-test source files, in 65 distinct
+(file, rule, symbol) keys, every one recorded in the ledger with its reason --
+49 tls-verification-off, 13 python-shell-injection, 10 world-writable-mode, 1
+credential-in-message, and zero for all three regression-guard rules
+(weak-random-for-secrets, secret-compared-directly, archive-extraction-unchecked).
+
+EIGHT FURTHER FINDINGS ARE NOT IN THE LEDGER, because they were FIXED rather
+than recorded -- in two changes, and the first one is why this file exists:
+
+  * internal/akv set InsecureSkipVerify transport-wide from a flag documented
+    for entra-emulator's certificate, on the one client whose allowlist
+    deliberately admits a real `*.vault.azure.net`. Scoped to one host
+    (akv.hostScopedTLS).
+  * SIX `ssl`-dialect skips that the rule could not see until it learned that
+    dialect, each applied to a CALL rather than to a host, and each on a URL
+    that is configuration: `eventstream_kafka._fabric_request` (a bearer token
+    to a `FABRIC_API_URL` defaulting to `api.fabric.microsoft.com`),
+    `eventstream_kafka._fabric_token`, `storage._mint`,
+    `storage._forge_attributed`, `usercontext.caller_token` (four of which POST
+    `ENTRA_CLIENT_SECRET`) and `fabric_target`'s `_EmulatorCredential.get_token`.
+    All now scoped per host, the same repair as akv's, one language over.
+  * TWO unchecked archive extractions in `e2e/azcopy/run.py`, on an archive
+    downloaded from an `aka.ms` redirect.
+
+The ledger does carry the two host-scoped HELPERS, because the checker sees the
+assignments and cannot see the guard above them -- those entries record a fix,
+and say so. See docs/63-security-footguns.md.
 
 Usage:
     check_security_footguns.py             report findings, exit 0
@@ -167,6 +244,12 @@ REMEDY = {
         "0o777 and 0o666 let any local user rewrite the file, including one the "
         "emulator later reads back as input. Use 0o755/0o644, or record the "
         "site with the reason the wider mode is needed.",
+    "archive-extraction-unchecked":
+        "An archive member's name is chosen by whoever built the archive, so "
+        "`extractall` writes wherever the member says -- a `../../` component "
+        "escapes the destination entirely (zip-slip / tar-slip). Pass "
+        "filter=\"data\" to tarfile, or validate every member name against the "
+        "extraction root before writing it.",
 }
 
 
@@ -382,6 +465,21 @@ _GO_CMP = re.compile(
     r"([A-Za-z_][\w.]*(?:\([^()]*\))?)\s*(==|!=)\s*([A-Za-z_][\w.]*(?:\([^()]*\))?)")
 _GO_MODE = re.compile(r"\b(?:os\.WriteFile|os\.MkdirAll|os\.Mkdir|os\.Chmod|\.Chmod)\s*\(")
 _WORLD_WRITABLE = re.compile(r"\b0o?(?:777|666)\b")
+# The archive rule's Go half. A GUARD AT ZERO, stated rather than implied: no
+# non-test Go file in this tree imports archive/zip or archive/tar today, so
+# this rule has never had a finding to report and is here so that the first
+# Go-side extractor lands as one.
+_GO_ARCHIVE_IMPORT = re.compile(r'^\s*(?:[\w.]+\s+)?"archive/(?:zip|tar)"')
+# `filepath.Join(dest, hdr.Name)` -- the header's own name joined onto a
+# destination. filepath.Join CLEANS its result, which is what makes this read
+# as safe and is not: Join("/out", "../../etc/x") is "/etc/x", a perfectly
+# clean path outside /out.
+_GO_ARCHIVE_JOIN = re.compile(
+    r"filepath\.Join\s*\([^)]*\b(?:hdr|header|h|f|file|zf|entry)\.Name\b")
+# What makes it safe: the joined path compared back against the destination.
+# Either spelling counts -- a prefix test, or filepath.Rel's `..` check.
+_GO_CONTAINED = re.compile(
+    r"strings\.HasPrefix\s*\(|filepath\.Rel\s*\(|\.\.(?:/|\"|`)")
 
 
 def _go_symbol(lines, idx):
@@ -396,6 +494,28 @@ def _go_symbol(lines, idx):
         if m:
             return m.group(1)
     return "<file>"
+
+
+def _go_func_span(lines, idx):
+    """The lines of the Go function containing `lines[idx]`.
+
+    Start-of-func to the next top-level `func`, which is the same straight-line
+    reading `_go_symbol` makes and is exactly right for this tree, where every
+    site scanned sits in a top-level func. Used by the archive rule to ask
+    whether the containment check is in the SAME function as the join -- a
+    `filepath.Rel` three functions away does not protect this one.
+    """
+    start = 0
+    for i in range(idx, -1, -1):
+        if _GO_FUNC.match(lines[i]):
+            start = i
+            break
+    end = len(lines)
+    for i in range(idx + 1, len(lines)):
+        if _GO_FUNC.match(lines[i]):
+            end = i
+            break
+    return lines[start:end]
 
 
 def _literal(expr):
@@ -450,6 +570,7 @@ def findings_go(path, rel=None):
                     "snippet": lines[idx].strip()[:160]})
 
     imports_math_rand = any(_GO_MATHRAND.match(ln) for ln in lines)
+    imports_archive = any(_GO_ARCHIVE_IMPORT.match(ln) for ln in lines)
 
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -476,6 +597,19 @@ def findings_go(path, rel=None):
         if _WORLD_WRITABLE.search(line) and _GO_MODE.search(line):
             add(i, "world-writable-mode",
                 "a world-writable mode is passed to a file or directory create")
+
+        # The archive rule, Go side. Judged on the FUNCTION rather than the
+        # line, because the join and the check that makes it safe are
+        # necessarily different statements -- and on nothing at all unless the
+        # file imports an archive reader, so a `filepath.Join(dir, f.Name)`
+        # over an os.ReadDir listing (a name this process wrote) is not read as
+        # an archive escape.
+        if imports_archive and _GO_ARCHIVE_JOIN.search(line) and \
+                not any(_GO_CONTAINED.search(ln) for ln in _go_func_span(lines, i)):
+            add(i, "archive-extraction-unchecked",
+                "an archive header's name is joined onto a destination with no "
+                "containment check -- filepath.Join CLEANS the result, so "
+                "`../../x` becomes a valid path outside the destination")
 
         # R3, both spellings. EqualFold first so a match is not also read as a
         # plain `==` on the same line.
@@ -563,6 +697,115 @@ def _py_builds_string(node):
             and node.func.attr in ("format", "join"))
 
 
+# --- R1's `ssl` dialect ----------------------------------------------------
+# requests' `verify=False` is one spelling of "do not authenticate the peer";
+# the stdlib's is another, and it is the one this repository actually reaches
+# for in its own Python. Decided on the AST rather than by regex for the same
+# reason every rule below is: `ctx.verify_mode = ssl.CERT_NONE` is an
+# assignment whose TARGET and VALUE both matter, and a line-oriented scan
+# cannot tell it from a line that merely mentions CERT_NONE in a comment.
+_SSL_OFF_ATTRS = ("verify_mode", "check_hostname")
+
+
+def _py_ssl_skips(tree):
+    """Sites where the stdlib `ssl` dialect turns peer verification off.
+
+    Four spellings, all of which make the connection unauthenticated:
+
+      * `<anything>.verify_mode = ssl.CERT_NONE` -- the certificate is not
+        checked against any trust store at all.
+      * `<anything>.check_hostname = False` -- a certificate is still required
+        but need not be FOR the host being talked to, which is the half that
+        makes a substituted peer work.
+      * `ssl._create_unverified_context(...)` -- both of the above in one call.
+      * an assignment to `ssl._create_default_https_context`, which redirects
+        every later urllib HTTPS call in the process.
+
+    PAIRS COLLAPSE TO ONE REPORT. The idiom in this tree is the two
+    assignments together, three lines apart, and reporting both says the same
+    thing twice -- so `check_hostname = False` is suppressed when the same
+    enclosing symbol also sets `verify_mode = ssl.CERT_NONE`. The ledger key is
+    (file, rule, symbol), so a pair was always ONE entry; this is about the
+    report a human reads.
+
+    Yields (node, message) rather than adding directly, so `findings_py` keeps
+    one `add` and one symbol table.
+    """
+    # Pass one: which enclosing symbols turn verification off outright. Keyed
+    # on the line so the caller's symbol map resolves it the same way it
+    # resolves everything else.
+    verify_off_lines = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Attribute) and target.attr == "verify_mode" \
+                    and _py_unparse(node.value) in ("ssl.CERT_NONE", "CERT_NONE"):
+                verify_off_lines.add(node.lineno)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                # Checked FIRST and on the unparse, because this target is
+                # itself an Attribute (`ssl` . `_create_default_https_context`)
+                # and would otherwise fall through the two attr tests below and
+                # match neither -- which is exactly what the first version of
+                # this did, and the test for this spelling is what caught it.
+                # The right-hand side is a reference rather than a call, so the
+                # Call clause further down does not see it either.
+                if _py_unparse(target) == "ssl._create_default_https_context":
+                    out.append((node, verify_off_lines,
+                                "assigning ssl._create_default_https_context "
+                                "disables certificate verification for every "
+                                "later urllib HTTPS call in this process"))
+                    continue
+                if not isinstance(target, ast.Attribute):
+                    continue
+                if target.attr == "verify_mode" and \
+                        _py_unparse(node.value) in ("ssl.CERT_NONE", "CERT_NONE"):
+                    out.append((node, verify_off_lines,
+                                "`verify_mode = ssl.CERT_NONE` disables "
+                                "certificate verification"))
+                elif target.attr == "check_hostname" and _py_is_false(node.value):
+                    out.append((node, verify_off_lines,
+                                "`check_hostname = False` accepts a certificate "
+                                "issued for a different host"))
+        elif isinstance(node, ast.Call) and \
+                _py_unparse(node.func).endswith("ssl._create_unverified_context"):
+            out.append((node, verify_off_lines,
+                        "`ssl._create_unverified_context()` disables certificate "
+                        "verification"))
+    return out
+
+
+# --- the archive rule ------------------------------------------------------
+# SECURITY.md puts "escape from the emulator to the host" in scope, and
+# R5/R6 already serve that bullet. This is the third shape of it: an archive
+# member's path is chosen by whoever built the archive, so extracting one
+# without checking where it lands writes outside the destination directory.
+_PY_ARCHIVE_MODULES = ("zipfile", "tarfile")
+
+
+def _py_imports_archive(tree):
+    """Does this file import zipfile or tarfile?
+
+    Gates the `.extract(` clause below and nothing else. `extractall` and
+    `shutil.unpack_archive` are specific enough to stand alone, but `.extract`
+    is a name anything may have -- this repository's own vendored-table parser
+    has `v.extract(page(...))`, which is HTML scraping -- so that clause asks
+    for an archive module in the file before it fires. Measured: without the
+    gate the rule reported a documentation scraper as a path traversal.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] in _PY_ARCHIVE_MODULES for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module \
+                and node.module.split(".")[0] in _PY_ARCHIVE_MODULES:
+            return True
+    return False
+
+
 def _py_random_targets(tree):
     """Line numbers where a `random.*` result is bound to a credential.
 
@@ -628,6 +871,19 @@ def findings_py(path, rel=None):
         or (isinstance(n, ast.ImportFrom) and n.module == "random")
         for n in ast.walk(tree))
     random_for_secrets = _py_random_targets(tree)
+    imports_archive = _py_imports_archive(tree)
+
+    # R1's `ssl` dialect, before the Call walk below -- these are assignments,
+    # and the walk's `continue` on a non-Call would skip them. Same rule id as
+    # `verify=False`, so every site still has to name `hosts` in the ledger.
+    for node, verify_off_lines, message in _py_ssl_skips(tree):
+        if "check_hostname" in message:
+            # The pair idiom: one context, one line of report. See
+            # `_py_ssl_skips`.
+            sym = symbols.get(node.lineno, "<module>")
+            if any(symbols.get(ln, "<module>") == sym for ln in verify_off_lines):
+                continue
+        add(node, "tls-verification-off", message)
 
     for node in ast.walk(tree):
         # R2 -- see `_py_random_targets`: judged on what the randomness is
@@ -689,6 +945,45 @@ def findings_py(path, rel=None):
                 not isinstance(node.args[0], ast.Constant):
             add(node, "python-shell-injection",
                 f"`{fn}` over a non-literal executes whatever produced it")
+
+        # The archive rule. `extractall` with NO `filter=` and no explicit
+        # `members=` extracts every member at the path the member names, so a
+        # crafted `../../` component writes outside the destination. Python
+        # 3.14 makes `filter="data"` the default; this repository's floor is
+        # 3.12, where the default is still the unsafe one -- which is exactly
+        # why the shape has to be checked rather than assumed away.
+        #
+        # `members=` counts as a bound because supplying one means the caller
+        # built the list, so the names went through their own code rather than
+        # straight from the archive.
+        if tail == "extractall" and not any(
+                kw.arg in ("filter", "members") for kw in node.keywords):
+            add(node, "archive-extraction-unchecked",
+                "`extractall` with no filter= writes each member wherever "
+                "the member's own name points, including outside the "
+                "destination directory")
+        if fn in ("shutil.unpack_archive",):
+            add(node, "archive-extraction-unchecked",
+                "`shutil.unpack_archive` extracts without validating member "
+                "paths -- it has no filter= of its own")
+        # A METHOD call only, and only in a file that imports an archive
+        # module. BOTH clauses are measured corrections, from the two false
+        # positives this clause produced against this tree on its first run:
+        #
+        #   * `v.extract(page(enough()))` -- the vendored-activity-types
+        #     parser, which extracts a TABLE from HTML. Hence the import gate.
+        #   * `files = extract(url)` in scripts/vendor_notebookutils_stubs.py,
+        #     which imports zipfile AND defines its own `extract(url)`, so the
+        #     import gate alone did not save it. That function reads members
+        #     into a dict with `wheel.read(name)` and writes no member-named
+        #     path at all. Hence the Attribute clause: a member extraction is
+        #     always a method ON an archive object, never a bare call.
+        if imports_archive and tail == "extract" \
+                and isinstance(node.func, ast.Attribute) and node.args and \
+                not isinstance(node.args[0], ast.Constant):
+            add(node, "archive-extraction-unchecked",
+                "`extract` of a member named by the archive rather than by a "
+                "literal -- validate the name against the extraction root")
 
         # R6
         if fn in ("os.chmod", "os.fchmod", "os.lchmod", "path.chmod") or tail == "chmod":

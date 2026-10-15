@@ -56,7 +56,6 @@ direction, deliberately.
 """
 import json
 import os
-import ssl
 import subprocess
 import sys
 import urllib.parse
@@ -68,6 +67,7 @@ import urllib.request
 # mutually dependent and only the call order kept it working. codeexec holds
 # run_code and imports neither of us, so the edge is gone rather than delayed.
 import codeexec
+from tls_scope import tls_context
 
 # The child entry point is a SIBLING FILE, not this module. Running this one
 # would import agent from inside a library that agent itself imports, which
@@ -134,11 +134,12 @@ def caller_token(principal, env=None, opener=None):
     req = urllib.request.Request(
         admin, data=body, method="POST",
         headers={"Content-Type": "application/json"})
-    # Same self-signed-TLS allowance as storage._mint, for the same reason: the
-    # issuer is named by our own config, not by anything user-supplied.
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # Same self-signed-TLS allowance as storage._mint, and now scoped the same
+    # way: the emulator's cert is accepted and every other host is verified.
+    # "named by our own config, not by anything user-supplied" was the old
+    # justification here too, and config is what can name a real endpoint —
+    # what this call returns is a bearer token. See tls_scope.
+    ctx = tls_context(admin)
     do = opener or (lambda r: urllib.request.urlopen(r, timeout=30, context=ctx))
     try:
         with do(req) as response:

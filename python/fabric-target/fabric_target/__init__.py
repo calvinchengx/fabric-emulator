@@ -66,6 +66,61 @@ def _env_any(names, default=None):
     return default
 
 
+# Hosts that are this machine, or a sibling container on a compose network.
+# See `_tls_context` for why the skip is scoped to them rather than applied to
+# the request.
+_LOCAL_EXACT = frozenset({
+    "localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "host.docker.internal",
+})
+
+
+def _is_local_host(host):
+    """Is this hostname local, or a bare compose service name?
+
+    A name with no dot cannot be a public DNS name, which is what makes
+    treating `entra-emulator` as local a fact rather than a guess. `.localhost`
+    is reserved to loopback by RFC 6761 and `.internal` to private use, so
+    neither can resolve to a public endpoint either.
+    """
+    host = (host or "").strip().lower()
+    if not host:
+        return False
+    return (host in _LOCAL_EXACT or host.endswith(".localhost")
+            or host.endswith(".internal") or host.startswith("127.")
+            or "." not in host)
+
+
+def _tls_context(url):
+    """An unverified context for a local host, else None — default verification.
+
+    THE SAME FINDING AS `internal/akv`, which this repository has already fixed
+    once: a TLS skip applied to a CLIENT rather than to a HOST reaches every
+    endpoint that client can be pointed at, including a real one. akv turned
+    verification off transport-wide from a flag documented for entra-emulator's
+    certificate, on the one client whose allowlist admits a real
+    `*.vault.azure.net`; the repair was `akv.hostScopedTLS`, which decides per
+    request host. See internal/akv/akv.go and docs/63-security-footguns.md §4.
+
+    This credential had the shape in miniature. It POSTs a client secret to
+    `self._url`, which is built from `entra_url` — and that is
+    `ENTRA_EMULATOR_URL` / `ENTRA_URL`, configuration. The default is
+    `https://localhost:8443`, so the common case was always local; nothing
+    restricted it to the common case, so a shell that pointed `ENTRA_URL` at a
+    real tenant sent the secret over an unauthenticated connection.
+
+    `None` rather than a hand-built strict context, because `None` is what
+    `urllib.request.urlopen` reads as "use the interpreter's default" — and a
+    second definition of the default is a second thing to drift.
+    """
+    host = urllib.parse.urlsplit(url or "").hostname
+    if not _is_local_host(host):
+        return None
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 class _EmulatorCredential:
     """TokenCredential-shaped client-credentials flow against entra-emulator.
 
@@ -92,9 +147,7 @@ class _EmulatorCredential:
             "client_secret": self._secret,
             "scope": scope,
         }).encode()
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx = _tls_context(self._url)
         req = urllib.request.Request(self._url, data=body, method="POST")
         with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
             payload = json.load(r)

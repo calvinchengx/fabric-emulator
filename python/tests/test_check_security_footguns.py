@@ -102,6 +102,220 @@ def test_python_verify_false_in_both_spellings(tree):
     assert len([m for m in messages(root) if "tls-verification-off" in m]) == 2
 
 
+# --- R1's `ssl` dialect ----------------------------------------------------
+# The dialect R1 could not see for its first two releases. `verify=False` is
+# requests' spelling; the stdlib's is `verify_mode`/`check_hostname`, and it is
+# the one this repository's own Python actually reaches for -- 39 sites were
+# invisible to the rule that claimed to ledger every certificate-verification
+# skip in this tree, six of them carrying a client secret or a bearer token.
+
+@pytest.mark.parametrize("body", [
+    "import ssl\nctx = ssl.create_default_context()\nctx.verify_mode = ssl.CERT_NONE\n",
+    "import ssl\nctx = ssl.create_default_context()\nctx.check_hostname = False\n",
+    "import ssl\nCTX = ssl._create_unverified_context()\n",
+    "import ssl\nssl._create_default_https_context = ssl._create_unverified_context\n",
+])
+def test_every_ssl_spelling_of_a_verification_skip_is_reported(tree, body):
+    root = tree({"s.py": body})
+    assert [m for m in messages(root) if "tls-verification-off" in m], body
+
+
+@pytest.mark.parametrize("body", [
+    # Verification LEFT ON. The overwhelmingly common shape, and reporting it
+    # would make the rule about the `ssl` module rather than about trust.
+    "import ssl\nctx = ssl.create_default_context()\n",
+    "import ssl\nctx = ssl.create_default_context()\nctx.verify_mode = ssl.CERT_REQUIRED\n",
+    "import ssl\nctx = ssl.create_default_context()\nctx.check_hostname = True\n",
+    # A name that merely mentions the constant.
+    "import ssl\nmodes = {'none': ssl.CERT_NONE}\n",
+])
+def test_verification_left_on_is_not_a_finding(tree, body):
+    root = tree({"s.py": body})
+    assert not [m for m in messages(root) if "tls-verification-off" in m], body
+
+
+def test_the_paired_idiom_reports_once_not_twice(tree):
+    """`check_hostname = False` beside `verify_mode = ssl.CERT_NONE` is ONE skip.
+
+    The dominant shape in this tree is the two assignments together, and
+    reporting both says the same thing twice about one context. The ledger key
+    is (file, rule, symbol), so a pair always collapsed to one ENTRY -- this is
+    about the report a human reads, and about a count in the prose matching it.
+    """
+    root = tree({"s.py": "import ssl\n"
+                         "def mint():\n"
+                         "    ctx = ssl.create_default_context()\n"
+                         "    ctx.check_hostname = False\n"
+                         "    ctx.verify_mode = ssl.CERT_NONE\n"
+                         "    return ctx\n"})
+    assert len([m for m in messages(root) if "tls-verification-off" in m]) == 1
+
+
+def test_check_hostname_alone_is_still_reported(tree):
+    """The suppression is about the PAIR, not about check_hostname.
+
+    Accepting a certificate issued for a different host is the half that makes
+    a substituted peer work, so on its own it must still fail.
+    """
+    root = tree({"s.py": "import ssl\n"
+                         "def mint():\n"
+                         "    ctx = ssl.create_default_context()\n"
+                         "    ctx.check_hostname = False\n"
+                         "    return ctx\n"})
+    assert len([m for m in messages(root) if "tls-verification-off" in m]) == 1
+
+
+def test_the_pair_suppression_does_not_cross_symbols(tree):
+    """Two functions, two skips -- one function's pair cannot hide another's.
+
+    The suppression keys on the ENCLOSING SYMBOL, and a version that keyed on
+    the file would report one finding here and silently exempt the second
+    function, which is the shape the ledger's (file, rule, symbol) key exists
+    to keep separate.
+    """
+    root = tree({"s.py": "import ssl\n"
+                         "def a():\n"
+                         "    ctx = ssl.create_default_context()\n"
+                         "    ctx.check_hostname = False\n"
+                         "    ctx.verify_mode = ssl.CERT_NONE\n"
+                         "def b():\n"
+                         "    ctx = ssl.create_default_context()\n"
+                         "    ctx.check_hostname = False\n"})
+    hits = [f for f in c.scan(c.source_files(root))
+            if f["rule"] == "tls-verification-off"]
+    assert {f["symbol"] for f in hits} == {"a", "b"}
+
+
+def test_an_ssl_skip_must_also_name_its_hosts(tree):
+    """The `ssl` dialect reuses R1's id, so it inherits R1's `hosts` requirement.
+
+    That is the whole reason for not giving it a rule of its own: the host set
+    a client can reach is what decides whether a skip is safe, and a second
+    rule id would have been a second place for that requirement to be dropped.
+    """
+    tree({"s.py": "import ssl\nctx = ssl.create_default_context()\n"
+                  "ctx.verify_mode = ssl.CERT_NONE\n"},
+         ledger={"accepted": [{"file": "s.py", "rule": "tls-verification-off",
+                               "symbol": "<module>", "why": "a reason, no hosts"}]})
+    with pytest.raises(KeyError, match="hosts"):
+        c.load_ledger()
+
+
+# --- archive extraction ----------------------------------------------------
+# SECURITY.md puts "escape from the emulator to the host" in scope and R5/R6
+# already serve it. This is the third shape: an archive member's path is chosen
+# by whoever built the archive, so extracting one unchecked writes outside the
+# destination (zip-slip / tar-slip).
+
+@pytest.mark.parametrize("body", [
+    "import tarfile\nwith tarfile.open(p) as t:\n    t.extractall(d)\n",
+    "import zipfile\nwith zipfile.ZipFile(p) as z:\n    z.extractall(d)\n",
+    "import shutil\nshutil.unpack_archive(p, d)\n",
+])
+def test_an_unbounded_extraction_is_reported(tree, body):
+    root = tree({"a.py": body})
+    assert [m for m in messages(root) if "archive-extraction-unchecked" in m], body
+
+
+@pytest.mark.parametrize("body", [
+    # tarfile's own containment filter: refuses absolute and `..` names, and
+    # links pointing out of the destination. On this repo's >=3.12 floor it has
+    # to be NAMED -- it only became the default in 3.14.
+    'import tarfile\nwith tarfile.open(p) as t:\n    t.extractall(d, filter="data")\n',
+    # A members= list means the caller built it, so the names went through
+    # their own code rather than straight from the archive.
+    "import zipfile\nwith zipfile.ZipFile(p) as z:\n"
+    "    names = [n for n in z.namelist() if ok(n)]\n"
+    "    z.extractall(d, members=names)\n",
+])
+def test_a_bounded_extraction_is_not_reported(tree, body):
+    root = tree({"a.py": body})
+    assert not [m for m in messages(root) if "archive-extraction-unchecked" in m], body
+
+
+@pytest.mark.parametrize("body", [
+    # The vendored-activity-types parser: `extract` of a TABLE out of HTML, in
+    # a file with no archive module in it at all.
+    "got = v.extract(page(rows))\n",
+    # scripts/vendor_notebookutils_stubs.py: imports zipfile AND defines its
+    # own `extract(url)`, so the import gate alone did not save it. A member
+    # extraction is always a method ON an archive object.
+    "import zipfile\ndef extract(url):\n    return {}\nfiles = extract(u)\n",
+])
+def test_an_extract_that_is_not_an_archive_member_is_not_reported(tree, body):
+    root = tree({"a.py": body})
+    assert not [m for m in messages(root) if "archive-extraction-unchecked" in m], body
+
+
+def test_a_real_archive_member_extract_is_reported(tree):
+    root = tree({"a.py": "import zipfile\n"
+                         "with zipfile.ZipFile(p) as z:\n"
+                         "    for n in z.namelist():\n"
+                         "        z.extract(n, d)\n"})
+    assert [m for m in messages(root) if "archive-extraction-unchecked" in m]
+
+
+def test_the_go_archive_join_shape_is_reported(tree):
+    """`filepath.Join(dest, hdr.Name)` with nothing checking where it lands.
+
+    filepath.Join CLEANS its result, which is exactly what makes this read as
+    safe and is not: Join("/out", "../../etc/x") is "/etc/x" -- a perfectly
+    clean path outside /out.
+    """
+    root = tree({"x.go": 'package x\n\nimport "archive/tar"\n\n'
+                         'func unpack(dest string, tr *tar.Reader) {\n'
+                         '\tfor {\n'
+                         '\t\thdr, _ := tr.Next()\n'
+                         '\t\tp := filepath.Join(dest, hdr.Name)\n'
+                         '\t\tos.WriteFile(p, nil, 0o644)\n'
+                         '\t}\n}\n'})
+    assert [m for m in messages(root) if "archive-extraction-unchecked" in m]
+
+
+@pytest.mark.parametrize("guard", [
+    '\t\tif !strings.HasPrefix(p, dest) {\n\t\t\tcontinue\n\t\t}\n',
+    '\t\tif rel, err := filepath.Rel(dest, p); err != nil || rel == ".." {\n'
+    '\t\t\tcontinue\n\t\t}\n',
+])
+def test_a_contained_go_join_is_not_reported(tree, guard):
+    root = tree({"x.go": 'package x\n\nimport "archive/tar"\n\n'
+                         'func unpack(dest string, tr *tar.Reader) {\n'
+                         '\tfor {\n'
+                         '\t\thdr, _ := tr.Next()\n'
+                         '\t\tp := filepath.Join(dest, hdr.Name)\n'
+                         + guard +
+                         '\t\tos.WriteFile(p, nil, 0o644)\n'
+                         '\t}\n}\n'})
+    assert not [m for m in messages(root) if "archive-extraction-unchecked" in m], guard
+
+
+def test_a_join_in_a_file_with_no_archive_reader_is_not_reported(tree):
+    """`filepath.Join(dir, f.Name)` over an os.ReadDir listing is not an escape.
+
+    `f.Name` is also how an fs.DirEntry is spelled, and those names come from
+    the filesystem this process is already reading rather than from an archive.
+    The import gate is what separates them.
+    """
+    root = tree({"x.go": 'package x\n\nfunc walk(dir string, fs []entry) {\n'
+                         '\tfor _, f := range fs {\n'
+                         '\t\tp := filepath.Join(dir, f.Name)\n'
+                         '\t\t_ = p\n\t}\n}\n'})
+    assert not [m for m in messages(root) if "archive-extraction-unchecked" in m]
+
+
+def test_the_go_containment_check_must_be_in_the_same_function(tree):
+    """A `filepath.Rel` three functions away does not protect this one."""
+    root = tree({"x.go": 'package x\n\nimport "archive/tar"\n\n'
+                         'func safe(dest, p string) bool {\n'
+                         '\trel, _ := filepath.Rel(dest, p)\n'
+                         '\treturn rel != ".."\n}\n\n'
+                         'func unpack(dest string, tr *tar.Reader) {\n'
+                         '\thdr, _ := tr.Next()\n'
+                         '\tp := filepath.Join(dest, hdr.Name)\n'
+                         '\tos.WriteFile(p, nil, 0o644)\n}\n'})
+    assert [m for m in messages(root) if "archive-extraction-unchecked" in m]
+
+
 # --- the ledger's other direction ------------------------------------------
 
 def test_a_stale_ledger_entry_fails(tree, capsys):

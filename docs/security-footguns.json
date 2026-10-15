@@ -14,22 +14,52 @@
     "with their reason instead of being silently excluded. An excluded directory teaches nobody",
     "anything; an entry naming the host set is reviewable.",
     "",
-    "THE MEASURED BASELINE at the commit that added this: 37 findings across 551 non-test source",
-    "files, in 30 distinct (file, rule, symbol) keys -- ALL of them listed below, and one more that",
-    "is NOT, because it was fixed in the same change rather than recorded. internal/akv set",
-    "InsecureSkipVerify on the whole transport from FABRIC_ENTRA_TLS_INSECURE (docker-compose.yml",
-    "sets it true; docs/04-configuration.md documents it as being for entra-emulator's cert), on the",
-    "one client whose allowlist deliberately admits a real *.vault.azure.net -- so a secret could be",
-    "fetched from a real vault over a connection nobody authenticated, while the https requirement",
+    "THE MEASURED BASELINE, as of the change that taught R1 the stdlib `ssl` dialect and added",
+    "archive-extraction-unchecked: 73 findings across 576 non-test source files, in 65 distinct",
+    "(file, rule, symbol) keys -- ALL of them listed below, and EIGHT MORE that are NOT, because",
+    "they were fixed in the same changes rather than recorded.",
+    "",
+    "THE FIRST of those eight is why this file exists. internal/akv set InsecureSkipVerify on the",
+    "whole transport from FABRIC_ENTRA_TLS_INSECURE (docker-compose.yml sets it true;",
+    "docs/04-configuration.md documents it as being for entra-emulator's cert), on the one client",
+    "whose allowlist deliberately admits a real *.vault.azure.net -- so a secret could be fetched",
+    "from a real vault over a connection nobody authenticated, while the https requirement",
     "checkVaultURI enforces for exactly that reason still passed. internal/server compounded it by",
     "handing that client the transport built for the Entra JWKS fetch. The skip is now scoped to the",
     "configured emulator vault host (akv.hostScopedTLS) and AKV builds its own transport, which is",
     "why the akv entry below can name ONE host instead of every Azure vault domain.",
     "",
-    "Two rules ship with a zero baseline and are pure regression guards, so they appear nowhere",
-    "below: weak-random-for-secrets (no non-test Go file imports math/rand at all) and",
+    "SIX MORE WERE THE SAME DEFECT IN PYTHON, and they were invisible until R1 learned the stdlib",
+    "spelling of a verification skip. The rule matched requests' `verify=False` and not",
+    "`verify_mode = ssl.CERT_NONE` / `check_hostname = False`, which is the pair this repository's",
+    "own Python actually writes -- so 39 sites were unexamined, and six of them carried a credential",
+    "over the unverified connection. eventstream_kafka._fabric_request is the sharp one: it sends a",
+    "bearer token to a FABRIC_API_URL that DEFAULTS to api.fabric.microsoft.com, so the default",
+    "configuration talked to a real Microsoft endpoint with the trust check off. Four more POST",
+    "ENTRA_CLIENT_SECRET (eventstream_kafka._fabric_token, storage._mint,",
+    "storage._forge_attributed, usercontext.caller_token) and the sixth is fabric_target's",
+    "_EmulatorCredential.get_token. Each was applied to a CALL rather than to a host; all six are",
+    "now scoped per host by python/spark_agent/tls_scope.py and fabric_target's own _tls_context,",
+    "both of which cite akv.hostScopedTLS because they are the same repair one language over.",
+    "",
+    "THE LAST TWO were unchecked archive extractions in e2e/azcopy/run.py -- an archive downloaded",
+    "from an aka.ms redirect, unpacked with bare extractall in both the zip and the tar branch, so",
+    "one `../../` member would have written outside WORK (on CI, the checkout). Repaired with",
+    "filter=\"data\" on the tar and a validated members= list on the zip, which is why",
+    "archive-extraction-unchecked ships at zero rather than with two entries below.",
+    "",
+    "TWO ENTRIES BELOW RECORD A FIX RATHER THAN AN ALLOWANCE, and they are the two host-scoped",
+    "helpers themselves (tls_scope.tls_context and fabric_target._tls_context). The checker sees the",
+    "two assignments that build the unverified context and cannot see the host guard above them, so",
+    "the sites still match. Their `hosts` field names what the guard actually admits, which is the",
+    "whole point: loopback, *.localhost, *.internal and bare compose service names, and nothing else.",
+    "",
+    "Three rules ship with a zero baseline and are pure regression guards, so they appear nowhere",
+    "below: weak-random-for-secrets (no non-test Go file imports math/rand at all),",
     "secret-compared-directly (this repo imports neither hmac.Equal nor subtle.ConstantTimeCompare;",
-    "internal/awssig is crypto/hmac's only user, for signing).",
+    "internal/awssig is crypto/hmac's only user, for signing), and archive-extraction-unchecked --",
+    "whose Python half reached zero by the two azcopy repairs above, and whose Go half has never had",
+    "a finding to report because no non-test Go file here imports archive/zip or archive/tar.",
     "",
     "`hosts` is required on every tls-verification-off entry and is the field that makes the entry",
     "worth reading: it is precisely what was missing when akv's skip reached an Azure domain. It is",
@@ -260,6 +290,312 @@
       "rule": "credential-in-message",
       "symbol": "run",
       "why": "DELIBERATE, and the line above it says so: the terminal pane's token is printed to this process's stdout for the operator to copy into the pane, the way Jupyter prints its own. The portal is unauthenticated, so an ENDPOINT handing the token out would be equivalent to having no token -- stdout on the operator's own terminal is the narrowest channel that still works. The value is generated per run by this process, is not a cloud credential, and reaches no log file, event or error body."
+    },
+    {
+      "file": "docker/sail/launcher.py",
+      "rule": "tls-verification-off",
+      "symbol": "clock_offset",
+      "hosts": [
+        "the emulator's own /_emulator/clock, derived from AZURE_STORAGE_ENDPOINT -- fabric-emulator on the compose network"
+      ],
+      "why": "Reads the emulator's clock offset so the token-refresh deadline can follow an advanced clock. It sends NO credential at all and its failure path is `return 0`, so the worst a substituted answer buys is a refresh schedule computed from a wrong offset. The endpoint is derived from the storage endpoint this container was already given, which in this image is always the compose sibling."
+    },
+    {
+      "file": "docker/sail/launcher.py",
+      "rule": "tls-verification-off",
+      "symbol": "mint",
+      "hosts": [
+        "$ENTRA_TOKEN_URL -- entra-emulator on the compose network"
+      ],
+      "why": "Mints the Storage-audience token for Sail against entra-emulator over its self-signed cert, and the comment above it has said so since it was written. This is the container ENTRYPOINT of docker/sail: it runs only inside the compose network this repo defines, where ENTRA_TOKEN_URL is set by docker-compose.yml to the sibling service. The client secret it sends is the SEEDED one this repo publishes on purpose (SECURITY.md: seeded secrets are design, not a finding). Worth naming the limit: unlike the agent's mints one directory over -- which this change host-scoped onto spark_agent/tls_scope.py -- this one is not scoped, because an image entrypoint has no non-compose caller to protect. If that ever stops being true, tls_scope is the fix."
+    },
+    {
+      "file": "docs/demo/flow.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_for_portal",
+      "hosts": [
+        "the emulator's own portal on localhost, started by this demo script"
+      ],
+      "why": "A documentation demo that boots the stack and waits for the portal to answer before driving it. Sends no credential on the readiness poll, talks only to the listener it started, and ships in no artifact."
+    },
+    {
+      "file": "e2e/adls-sdk/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/airflow/witness.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/arm-capacities/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/azcopy/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/azcopy/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/delta-rs/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/delta-rs/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/duckdb/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/duckdb/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/fabric-cicd/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/fabric-target/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/great-expectations/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/mcp-core/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/mcp-core/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/mcp-datawarehouse/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/mcp-datawarehouse/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/mcp-eventhouse/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/mcp-eventhouse/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/mcp-fabriciq/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/mcp-fabriciq/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/notebookutils/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/portal-terminal/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_for_portal",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/purview-datamap/driver.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/purview-datamap/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "wait_healthy",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code polling the health endpoint of a process THIS SCRIPT just started on loopback, before any credential exists. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. The context is built inline for the readiness poll and reaches nothing else; a harness that cannot reach its own listener has nothing to test."
+    },
+    {
+      "file": "e2e/semantic-model/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/sempy/run.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "e2e/vscode-extension/witness.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "127.0.0.1 / localhost on the ports this harness itself starts (entra-emulator, fabric-emulator and whichever sidecars the suite needs) -- never a host named by configuration"
+      ],
+      "why": "Harness code driving the emulator family this suite itself starts on loopback. The emulator family serves a self-signed cert on a compose network / localhost, and docs/05-tls-and-hosts.md documents installing the local CA as optional. Harness code, run against containers this repo starts; it ships in no artifact and the endpoints are chosen by the harness rather than by configuration."
+    },
+    {
+      "file": "python/fabric-target/fabric_target/__init__.py",
+      "rule": "tls-verification-off",
+      "symbol": "_tls_context",
+      "hosts": [
+        "loopback, *.localhost, *.internal and bare compose service names ALONE -- the emulator entra at ENTRA_EMULATOR_URL / ENTRA_URL. A real tenant named there returns None and is fully verified."
+      ],
+      "why": "THE HOST-SCOPED HELPER ITSELF, and the one entry here that records a fix rather than an allowance. The unverified context this builds is returned ONLY for a host that is loopback, `.localhost`, `.internal` or a bare compose service name; every other host -- including every real Microsoft domain -- gets `None`, which urllib reads as full default verification. The checker sees the two assignments and cannot see the guard above them, which is why this is recorded instead of being invisible. It is the same shape as internal/akv's hostScopedTLS, and it is what replaced six unconditional skips in this change. fabric-target is a separate distributable and cannot import spark_agent's copy, which is why the helper is duplicated rather than shared. It guards _EmulatorCredential.get_token, which POSTs a client secret."
+    },
+    {
+      "file": "python/notebookutils/_config.py",
+      "rule": "tls-verification-off",
+      "symbol": "ssl_context",
+      "hosts": [
+        "whatever NOTEBOOKUTILS_FABRIC_URL / _ONELAKE_URL / _ENTRA_URL name, and ONLY when NOTEBOOKUTILS_INSECURE is set -- unset in real mode, so a real Fabric endpoint always verifies"
+      ],
+      "why": "ALREADY GATED, and gated more precisely than a host check could be: the skip is behind `self.insecure`, i.e. NOTEBOOKUTILS_INSECURE, which fabric_target's `notebook_env()` sets to \"1\" for the emulator and \"0\" for real Fabric. So the trust decision is keyed on the TARGET, which is the thing that actually decides it, and real mode gets full verification without needing to recognise a hostname. Recorded rather than changed -- the checker can see the two assignments and not the `if` above them."
+    },
+    {
+      "file": "python/spark_agent/tls_scope.py",
+      "rule": "tls-verification-off",
+      "symbol": "tls_context",
+      "hosts": [
+        "loopback, *.localhost, *.internal and bare compose service names ALONE. Every dotted public host, including api.fabric.microsoft.com and login.microsoftonline.com, returns None and is fully verified."
+      ],
+      "why": "THE HOST-SCOPED HELPER ITSELF, and the one entry here that records a fix rather than an allowance. The unverified context this builds is returned ONLY for a host that is loopback, `.localhost`, `.internal` or a bare compose service name; every other host -- including every real Microsoft domain -- gets `None`, which urllib reads as full default verification. The checker sees the two assignments and cannot see the guard above them, which is why this is recorded instead of being invisible. It is the same shape as internal/akv's hostScopedTLS, and it is what replaced six unconditional skips in this change. Replaces the skips in storage._mint, storage._forge_attributed, usercontext.caller_token, eventstream_kafka._fabric_token and eventstream_kafka._fabric_request -- the last of which sent a bearer token to a FABRIC_API_URL defaulting to api.fabric.microsoft.com."
+    },
+    {
+      "file": "scripts/spark_check.py",
+      "rule": "tls-verification-off",
+      "symbol": "<module>",
+      "hosts": [
+        "$FABRIC / localhost -- the emulator's own Livy surface, what `make spark` points at"
+      ],
+      "why": "The deep Spark check `make spark` runs against a local stack: Livy -> spark-agent -> sail, all on loopback or the compose network. A developer-facing diagnostic over the self-signed dev cert, which is the transport docs/05-tls-and-hosts.md documents for exactly this."
     }
   ]
 }

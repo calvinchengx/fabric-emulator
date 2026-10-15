@@ -85,10 +85,27 @@ fifteen `# noqa: S###` directives in the tree were written as though it did.
 that is decidable from source text, offline, on every push and in `make check`:
 TLS verification skips, non-cryptographic randomness for security material,
 non-constant-time secret comparison, a credential value reaching a log or error,
-Python shell and dynamic-execution misuse, and world-writable file modes. Its
-first run found one real defect — `internal/akv` disabled certificate
-verification for its whole transport, on the one client whose allowlist
-deliberately admits a real `*.vault.azure.net`.
+Python shell and dynamic-execution misuse, world-writable file modes, and
+unchecked archive extraction. Its first run found one real defect —
+`internal/akv` disabled certificate verification for its whole transport, on the
+one client whose allowlist deliberately admits a real `*.vault.azure.net`.
+
+The TLS rule then found the same defect class **six more times** once it was
+taught the spelling it had been missing. It matched `requests`' `verify=False`
+and not the standard library's `verify_mode = ssl.CERT_NONE` /
+`check_hostname = False`, which is the pair this repository's own Python
+actually writes — so 39 sites were unexamined, and six of them sent a client
+secret or a bearer token over the unverified connection. One sent a bearer token
+to a `FABRIC_API_URL` **defaulting to `api.fabric.microsoft.com`**, so the
+default configuration reached a real Microsoft endpoint with the trust check
+off. All six are now scoped per host, as `internal/akv` was. The same change
+added the archive rule and fixed its two findings — an archive downloaded over
+the network and unpacked without checking where its members land.
+
+That is worth stating plainly rather than as a win: **a rule whose scope
+sentence claimed to cover every verification skip in this tree covered one
+library's spelling of it for two releases.** Each rule here covers the
+spellings someone thought of, which is the limit most worth distrusting.
 
 It is a floor, not a ceiling: a source-shape checker, not a taint analysis. The
 sites where this emulator's documented local-by-design posture legitimately
