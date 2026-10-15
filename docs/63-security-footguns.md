@@ -331,12 +331,12 @@ not restrict itself to the compose case, which is the same gap in reasoning
 **The fix** is `akv.hostScopedTLS` one language over:
 `python/spark_agent/tls_scope.py` for the agent's five, and a module-local
 `_tls_context` in `fabric-target` (a separate distributable, so it cannot
-import the agent's). Both return an unverified context only for a host that is
-loopback, `.localhost`, `.internal`, `127.0.0.0/8`, or a **bare compose service
-name** — and `None` otherwise, which `urllib.request.urlopen` reads as the
-interpreter's fully-verifying default. `None` rather than a hand-built strict
-context, deliberately: a second definition of "the default" is a second thing
-to drift.
+import the agent's). Both return an unverified context only for a host that
+**parses as** a loopback, link-local or private address, or is `.localhost`,
+`.internal`, `host.docker.internal`, or a **bare compose service name** — and
+`None` otherwise, which `urllib.request.urlopen` reads as the interpreter's
+fully-verifying default. `None` rather than a hand-built strict context,
+deliberately: a second definition of "the default" is a second thing to drift.
 
 The bare-name rule is the load-bearing one. Compose resolves service names with
 no dot in them (`entra-emulator`, `fabric-emulator`), which is how every URL in
@@ -349,6 +349,67 @@ Both helpers still match R1, because the checker sees the two assignments and
 cannot see the host guard above them. They are therefore **in** the ledger —
 with `hosts` naming what the guard actually admits, and a `why` that says it
 records a fix rather than an allowance.
+
+### The guard's own fail-open, and why it was a *table* that found it
+
+The first version of both helpers decided on the **name**, and ended:
+
+```python
+if host.startswith("127."):       # a PREFIX test against a name
+    return True
+return "." not in host            # no dot, so it cannot be public
+```
+
+Both lines are wrong in the permissive direction, and both were reachable from
+every credential-carrying call site above, whose URL is configuration:
+
+- **No IPv6 address contains a dot**, so `"." not in host` read *every* IPv6
+  literal as local. `tls_context("https://[2606:4700:4700::1111]/token")`
+  returned an unverified context, and so did the Microsoft-owned
+  `2620:1ec:bdf::1` — which contradicts the `hosts` field those entries are
+  required to carry, since an IPv6 literal is not dotted and was not verified.
+- `startswith("127.")` matches a *name*, so the attacker-chosen public name
+  `127.0.0.1.evil.com` got one too.
+
+The repair decides address literals on the **parsed address**
+(`ipaddress.ip_address`, local only for `is_loopback` / `is_link_local` /
+`is_private`), falls through to the name rules otherwise, and fails **closed**
+on a colon-bearing host that will not parse — a malformed address literal is
+not a dotless DNS name. Private and link-local addresses stay local because a
+compose network *is* those: the docker bridge `172.17.0.2`, an IPv6 ULA
+`fc00::1`, a scoped `fe80::1%eth0`.
+
+Two things are worth stating about *how* this was found, because they are the
+transferable part:
+
+1. **Nothing asserted this boundary at all.** When the six skips were repaired,
+   no test in `python/tests/` or `python/fabric-target/tests/` named
+   `tls_scope` or `is_local_host`, and `check_script_test_coverage.py` scopes
+   itself to `scripts/`, so no gate could notice. That is this repository's own
+   thesis — a guard whose behaviour nothing asserts can stop guarding and go on
+   reporting green — applied to the module that decides whether to authenticate
+   a peer holding a client secret. It is now pinned by a host/expectation table
+   (`python/tests/test_spark_agent_tls_scope.py`): 21 hosts that must be
+   local and 14 that must verify, each run through the predicate *and* through
+   `tls_context` itself — because a `tls_context` that stopped consulting the
+   host rule would satisfy every predicate assertion and still hand an
+   unverified context to everything. Six of the must-verify rows fail on the
+   pre-repair code.
+2. **The two copies are a deliberate mirror, and the bug was in both,
+   verbatim.** `fabric-target` ships as its own distributable and cannot import
+   the agent's helper, so duplication is the price of that packaging
+   boundary — the same arrangement as `akv.hostScopedTLS` and `tls_scope`, one
+   language apart. Both docstrings now say so, and the table runs over **both**
+   implementations plus an agreement test, so a one-sided correction fails the
+   build instead of leaving one credential boundary behind.
+
+One smaller decision made deliberate rather than incidental: `urlsplit`
+defers host validation to `.hostname`, which raises `ValueError` on a
+malformed bracketed literal. Uncaught, that aborted a token mint with an
+exception thrown from inside a TLS helper — fail-closed in that nothing was
+transmitted, and a path nobody chose. Both helpers catch it and take the
+verifying branch, which is what the test asserts; a test that merely
+*tolerated* the `ValueError` would be pinning an accident.
 
 ### Two unchecked archive extractions, on a network download
 

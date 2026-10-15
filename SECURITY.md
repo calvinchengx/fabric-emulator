@@ -107,6 +107,17 @@ sentence claimed to cover every verification skip in this tree covered one
 library's spelling of it for two releases.** Each rule here covers the
 spellings someone thought of, which is the limit most worth distrusting.
 
+**And the guard that replaced those six skips shipped with a hole of the same
+kind.** It decided whether a host was local from the *shape of the name* and
+ended on "no dot, so it cannot be public" — but no IPv6 address contains a
+dot, so every IPv6 literal was read as local and authenticated nothing, and
+`127.0.0.1.evil.com` is a public name with a loopback-shaped prefix. Both
+halves were reachable from the same configuration that carries the client
+secret, and nothing in either test suite asserted the boundary at all. The
+repair decides an address literal on the parsed address, and the behaviour is
+now pinned by a host table over both copies of the helper. See
+[docs/63-security-footguns.md](docs/63-security-footguns.md) §4.
+
 It is a floor, not a ceiling: a source-shape checker, not a taint analysis. The
 sites where this emulator's documented local-by-design posture legitimately
 produces one of those shapes are **recorded** in `docs/security-footguns.json`

@@ -11,6 +11,7 @@ endpoints/credentials — it never branches on which target is active. The
 resolver does, once, here.
 """
 import base64
+import ipaddress
 import json
 import os
 import shutil
@@ -66,28 +67,62 @@ def _env_any(names, default=None):
     return default
 
 
-# Hosts that are this machine, or a sibling container on a compose network.
+# NAMES that are this machine, or a sibling container on a compose network.
 # See `_tls_context` for why the skip is scoped to them rather than applied to
-# the request.
+# the request. Address LITERALS are deliberately absent: `_is_local_host`
+# decides those on the PARSED address before this set is consulted, so
+# `127.0.0.1`, `::1`, `[::1]` and `0.0.0.0` — all entries here once — could no
+# longer match, and a dead entry reads as load-bearing.
 _LOCAL_EXACT = frozenset({
-    "localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "host.docker.internal",
+    "localhost", "host.docker.internal",
 })
 
 
 def _is_local_host(host):
     """Is this hostname local, or a bare compose service name?
 
-    A name with no dot cannot be a public DNS name, which is what makes
-    treating `entra-emulator` as local a fact rather than a guess. `.localhost`
-    is reserved to loopback by RFC 6761 and `.internal` to private use, so
-    neither can resolve to a public endpoint either.
+    A DELIBERATE MIRROR of `spark_agent.tls_scope.is_local_host`, which carries
+    the long form of this reasoning. fabric-target ships as its own
+    distributable and cannot import the agent, so the two are copies on
+    purpose — and a correction to one must be made to BOTH, the way
+    `akv.hostScopedTLS` and `tls_scope` are the same repair one language apart.
+    Each copy is pinned by a host table in its own package's suite.
+
+    AN ADDRESS LITERAL IS DECIDED ON THE PARSED ADDRESS, before any name rule
+    runs, and that branch is a repair: the name rules alone failed OPEN twice.
+    `"." not in host` read every IPv6 literal as local, since no IPv6 address
+    contains a dot — so `https://[2606:4700:4700::1111]/token` got an
+    unverified context — and `host.startswith("127.")` is a prefix test against
+    a NAME, so the attacker-chosen public name `127.0.0.1.evil.com` got one
+    too. Both were reachable here, where the URL is `ENTRA_EMULATOR_URL` /
+    `ENTRA_URL` and the request carries a client secret. Loopback, link-local
+    and private addresses stay local (the docker bridge, an IPv6 ULA, a scoped
+    `fe80::`); every global-unicast address verifies.
+
+    Then the name rules. A name with no dot cannot be a public DNS name, which
+    is what makes treating `entra-emulator` as local a fact rather than a
+    guess. `.localhost` is reserved to loopback by RFC 6761 and `.internal` to
+    private use, so neither can resolve to a public endpoint either.
     """
     host = (host or "").strip().lower()
     if not host:
         return False
-    return (host in _LOCAL_EXACT or host.endswith(".localhost")
-            or host.endswith(".internal") or host.startswith("127.")
-            or "." not in host)
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return addr.is_loopback or addr.is_link_local or addr.is_private
+    if host in _LOCAL_EXACT:
+        return True
+    if host.endswith(".localhost") or host.endswith(".internal"):
+        return True
+    # A colon-bearing host `ip_address` could not parse is a MALFORMED address
+    # literal rather than a DNS name, and the dotless rule below would read it
+    # as local. Fail closed: verify it.
+    if ":" in host:
+        return False
+    return "." not in host
 
 
 def _tls_context(url):
@@ -111,8 +146,19 @@ def _tls_context(url):
     `None` rather than a hand-built strict context, because `None` is what
     `urllib.request.urlopen` reads as "use the interpreter's default" — and a
     second definition of the default is a second thing to drift.
+
+    A URL WHOSE HOST CANNOT BE PARSED IS VERIFIED, deliberately rather than
+    incidentally. `urlsplit` defers host validation to `.hostname`, which
+    raises `ValueError` on a malformed bracketed literal
+    (`https://[not:an:address]/`); uncaught, that escapes into the middle of a
+    token mint — fail-closed in that nothing is transmitted, but a path nobody
+    chose. Caught here, so a malformed URL takes the same branch as a public
+    one.
     """
-    host = urllib.parse.urlsplit(url or "").hostname
+    try:
+        host = urllib.parse.urlsplit(url or "").hostname
+    except ValueError:
+        return None
     if not _is_local_host(host):
         return None
     ctx = ssl.create_default_context()
