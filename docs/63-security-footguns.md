@@ -502,9 +502,9 @@ run":
   from the Azure SDK.
 - **It does not read TypeScript.** The portal is out of scope, as it is for the
   `check_*_test_flakiness.py` trio's AST-based members.
-- **There is still no SBOM and no licence check.** That gap is SECURITY.md's
-  and is unchanged by this document — there is no inventory artifact for a
-  downstream consumer to ingest.
+- **There is still no licence check.** That gap is SECURITY.md's and is
+  unchanged by this document. The SBOM half of it closed: `make sbom` emits a
+  CycloneDX inventory of the locked dependencies, without licence fields.
 - **Only Go gets reachability filtering.** Python and npm are scanned against
   the advisory graph now (the two osv-scanner rows above), which they were not
   when this document was written, but version-level: a finding means the locked

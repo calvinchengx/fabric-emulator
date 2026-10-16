@@ -78,6 +78,9 @@ help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
 
+sbom: ## Write a CycloneDX SBOM of every locked dependency to sbom.cdx.json
+	@$(PY) scripts/gen_sbom.py --out sbom.cdx.json
+
 doctor: ## Check the toolchain and the docker context this Makefile needs
 	@sh scripts/doctor.sh
 

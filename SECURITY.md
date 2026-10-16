@@ -176,8 +176,10 @@ and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
   to match against advisories. Dependabot's bumps are the whole of the
   coverage there. The decision, and the reason, are recorded in `SCANNERS` in
   `scripts/check_dependency_risk.py`, where the fourth invariant reads them.
-- **Nothing produces an SBOM, and nothing checks licences.** There is no
-  inventory artifact for a downstream consumer to ingest.
+- **Nothing checks licences.** `make sbom` (`scripts/gen_sbom.py`) writes a
+  deterministic CycloneDX 1.5 inventory of every locked Go, Python and npm
+  dependency, but lockfiles carry no licence data, so the SBOM has none, and
+  Dockerfile and GitHub Actions pins are not resolved sets and are not in it.
 
 **What keeps the Dependabot half honest.** A scanner configuration that has
 quietly stopped matching the repository reports clean on precisely the
