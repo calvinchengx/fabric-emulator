@@ -44,7 +44,7 @@ test = [
     "cryptography>=42,<51",
 ]
 lint = [
-    "ruff>=0.14,<0.17",
+    "ruff>=0.14,<0.18",
     # Astral's type checker. Pre-1.0, so pinned tight: a minor bump can change
     # which inferences it makes, and a type checker that changes its mind
     # between runs is a broken build nobody caused.
