@@ -361,7 +361,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# seeded secrets, self-signed TLS, an unauthenticated admin API -- and a
 	@# checker that reported those would be argued with rather than fixed.
 	@# So the emulator-only sites are LEDGERED with the host set each client
-	@# reaches (docs/security-footguns.json), and 65 are. Three rules ship at
+	@# reaches (docs/security-footguns.json), and 85 are. Three rules ship at
 	@# zero as pure regression guards; the first run found one real defect --
 	@# internal/akv disabled certificate verification transport-wide from a
 	@# flag documented for entra-emulator's cert, on the one client whose
@@ -393,6 +393,33 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# ships empty. Its Go half has never had a finding because no non-test
 	@# Go file here imports archive/zip or archive/tar, and the docstring
 	@# says so rather than implying a measurement.
+	@#
+	@# AND AN EIGHTH, whose asymmetry runs the OTHER way: a name spliced into
+	@# SQL text is SQL SYNTAX, not a value, and backticks around it look like
+	@# quoting until the name contains one. Measured when this landed, every
+	@# GO site in this tree already escaped correctly -- principalName doubles
+	@# `]`, quotedID doubles `'`, internal/server's sqlIdent/sqlLiteral are
+	@# the same pair, enterDelegated leans on SQL Server's own QUOTENAME --
+	@# while NOT ONE backtick was doubled anywhere in python/spark_agent,
+	@# onelake_security.apply included. That one builds the temp view which
+	@# ENFORCES OneLake row- and column-level security, from a name that is a
+	@# OneLake folder created by whoever can write there, so a breakout picks
+	@# the body of the view deciding which rows a principal sees rather than
+	@# raising a syntax error. Seven symbols repaired onto sqlident's
+	@# quote_ident/quote_literal (the Go pair, mirrored rather than half of
+	@# it); the six correct Go symbols are LEDGERED as regression guards,
+	@# because that half of the rule reads the enclosing function and cannot
+	@# see an escape in the argument list where the Python half can.
+	@#
+	@# The Python half recognising the escape is what makes the repair a
+	@# RATCHET rather than twenty more ledger entries: an escaped site reports
+	@# clean, so deleting a quote_ident call becomes an unrecorded finding and
+	@# exit 1. Two of the seven the rule CANNOT see -- secure_view_sql returns
+	@# SQL instead of running it, _drop binds its statements to a variable
+	@# first -- and both were fixed anyway, since they are the column-only and
+	@# the table-withholding routes of the same enforcement. Ordinary names
+	@# come back byte-identical, which is the only reason a change touching
+	@# every statement the agent builds moved no fixture or e2e output.
 	@$(PY) scripts/check_security_footguns.py --strict
 	@# ...and the dimension the three above cannot see either: whether this
 	@# emulator says anything at all when it fails. Measured when this landed:

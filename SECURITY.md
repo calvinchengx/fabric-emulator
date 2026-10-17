@@ -85,8 +85,9 @@ fifteen `# noqa: S###` directives in the tree were written as though it did.
 that is decidable from source text, offline, on every push and in `make check`:
 TLS verification skips, non-cryptographic randomness for security material,
 non-constant-time secret comparison, a credential value reaching a log or error,
-Python shell and dynamic-execution misuse, world-writable file modes, and
-unchecked archive extraction. Its first run found one real defect —
+Python shell and dynamic-execution misuse, world-writable file modes, unchecked
+archive extraction, and SQL assembled by interpolating a name. Its first run
+found one real defect —
 `internal/akv` disabled certificate verification for its whole transport, on the
 one client whose allowlist deliberately admits a real `*.vault.azure.net`.
 
@@ -117,6 +118,28 @@ secret, and nothing in either test suite asserted the boundary at all. The
 repair decides an address literal on the parsed address, and the behaviour is
 now pinned by a host table over both copies of the helper. See
 [docs/63-security-footguns.md](docs/63-security-footguns.md) §4.
+
+**The newest rule found the same kind of asymmetry one layer down, and this
+time the Go half was the one that was right.** A name spliced into SQL text is
+SQL *syntax*, not a value — backticks around it look like quoting until the
+name contains one. Measured: every Go site in this tree already escaped
+correctly (`internal/tds.principalName` doubles `]`, `quotedID` doubles `'`,
+`internal/server` has the same pair, and `enterDelegated` leans on SQL Server's
+own `QUOTENAME`), while **not one backtick was doubled anywhere in
+`python/spark_agent`** — including `onelake_security.apply`, which builds the
+temp view that *enforces* OneLake row- and column-level security. A lakehouse
+table is a folder under `Tables/` created by whoever can write to OneLake and
+nothing rejects a backtick in a path segment, so a name that broke out of that
+statement would choose the body of the view deciding which rows a principal
+sees. Seven symbols were repaired onto one escape helper; the six correct Go
+symbols are recorded as regression guards, because that half of the rule reads
+the enclosing function and cannot see an escape in the argument list.
+
+Two of the seven the rule **cannot** see — one returns SQL text instead of
+executing it, one binds its statement to a variable first — and both were fixed
+anyway, since they are the column-only and the table-withholding paths of the
+same enforcement. That is the honest shape of this gate: it is a floor, and
+where the floor does not reach, a test table does.
 
 It is a floor, not a ceiling: a source-shape checker, not a taint analysis. The
 sites where this emulator's documented local-by-design posture legitimately

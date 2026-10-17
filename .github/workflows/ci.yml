@@ -887,6 +887,56 @@ jobs:
       # rule: nothing here imports os/exec, and a speculative zero in the rule
       # set would be worse than an honest absence.
       #
+      # AND AN EIGHTH RULE, sql-identifier-interpolated, whose measured
+      # asymmetry runs the OPPOSITE way to R1's and is the more interesting
+      # half of it. A name spliced into SQL text is SQL SYNTAX, not a value:
+      # backticks around it look like quoting right up until the name contains
+      # one, and then the pair closes and the rest is parsed. Measured when
+      # this landed, every GO site in this tree was ALREADY CORRECT --
+      # internal/tds.principalName doubles `]` -> `]]`, quotedID doubles `'`
+      # -> `''`, internal/server's sqlIdent/sqlLiteral are the same pair one
+      # package over, and enterDelegated leans on SQL Server's own QUOTENAME
+      # -- while NOT ONE backtick was doubled anywhere in python/spark_agent.
+      # That included onelake_security.apply, which builds the temp view that
+      # ENFORCES OneLake row- and column-level security, and the name it
+      # splices is a OneLake `Tables/` FOLDER created by whoever can write
+      # there, with nothing in internal/onelake rejecting a backtick in a path
+      # segment. So a breakout there does not raise a syntax error; it chooses
+      # the body of the view that decides which rows a principal sees.
+      #
+      # Seven spark_agent symbols were repaired onto one helper
+      # (python/spark_agent/sqlident.py: quote_ident AND quote_literal,
+      # mirroring the Go pair rather than half of it, since `LOCATION '{loc}'`
+      # is the identical defect one character over). The six correct Go
+      # symbols are LEDGERED as regression guards, because the Go half is
+      # regex and brace-scanning rather than a parser: it reads the enclosing
+      # FUNCTION and cannot see the escape sitting in the argument list, where
+      # the Python half can. For those six the ledger's new required `values`
+      # field is the only place the escape is written down at all.
+      #
+      # THE PYTHON HALF RECOGNISING THE ESCAPE IS THE LOAD-BEARING DECISION,
+      # not a convenience. Had escaped sites gone on reporting, every repaired
+      # one would have needed a ledger entry -- and then deleting the
+      # quote_ident call would have left that entry valid and this job green:
+      # a guard that has stopped guarding and still reports success, which is
+      # the exact failure this whole lane exists to catch. Instead an escaped
+      # site reports clean and removing an escape is an unrecorded finding at
+      # exit 1. Verified in both directions rather than asserted.
+      #
+      # Two of the seven the rule CANNOT see, and both were fixed anyway:
+      # secure_view_sql RETURNS SQL text instead of executing it, and _drop
+      # binds its statements to a variable before spark.sql reads them, so
+      # neither is a finding. They are the column-only grant's projection and
+      # the table-WITHHOLDING path -- the one that runs when a table must not
+      # be readable -- so a repair that stopped where the checker's vision
+      # stops would have left precisely those two unescaped. They are held by
+      # python/tests/test_spark_agent_sql_ident.py, a name table driven
+      # through the helper AND through the real call paths with a recording
+      # engine, which is the tls_scope lesson applied rather than restated: a
+      # perfect helper proves nothing if apply stops calling it. Ordinary
+      # names come back byte-identical, which is the only reason a change
+      # touching every statement the agent builds moved no recording.
+      #
       # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_security_footguns.py --strict

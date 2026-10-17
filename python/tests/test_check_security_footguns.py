@@ -505,6 +505,270 @@ def test_a_go_world_writable_create_is_reported(tree):
     assert len([m for m in messages(root) if "world-writable-mode" in m]) == 1
 
 
+# --- R8: SQL built by interpolation ----------------------------------------
+# The near-misses matter more here than for any rule except R4, because SQL
+# text and f-strings are everywhere in a Spark emulator: this tree has 36
+# `.sql(f"...")` call sites and only 7 of them were defects. The narrowings
+# below are each a measured false positive.
+
+@pytest.mark.parametrize("body", [
+    # The site this rule exists for: OneLake security's own enforcement view.
+    'spark.sql(f"CREATE OR REPLACE TEMP VIEW {name} AS {sql}")\n',
+    'spark.sql(f"SHOW TABLES IN `{db}`")\n',
+    'spark.sql(f"DROP TABLE IF EXISTS `{db}`.`{name}`")\n',
+    'cur.execute(f"SELECT {col} FROM {table}")\n',
+    # Backticks around it are NOT quoting: a backtick in the name closes them.
+    'spark.sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{name}` USING delta")\n',
+    # The other two build spellings.
+    'cur.execute("SELECT * FROM %s" % table)\n',
+    'cur.execute("DROP VIEW {}".format(view))\n',
+    'cur.execute("SELECT * FROM " + table)\n',
+])
+def test_sql_assembled_from_a_name_is_reported(tree, body):
+    root = tree({"q.py": f"def f(name, sql, db, col, table, schema, view):\n    {body}"})
+    assert [m for m in messages(root) if "sql-identifier-interpolated" in m], body
+
+
+def test_an_escaped_identifier_is_not_a_finding(tree):
+    """THE RATCHET, and the reason the rule recognises a named escape at all.
+
+    If an escaped site reported as loudly as a raw one, every repaired site
+    would need a ledger entry -- and then DELETING the escape would leave that
+    entry valid and the build green. Recognising `quote_ident` is what makes
+    the gate able to tell a fix from a defect, so removing one fails.
+    """
+    root = tree({"q.py": "from sqlident import quote_ident, quote_literal\n"
+                         "def f(spark, name, db, loc):\n"
+                         "    spark.sql(f'DROP TABLE IF EXISTS "
+                         "{quote_ident(db)}.{quote_ident(name)}')\n"
+                         "    spark.sql(f'CREATE TABLE {quote_ident(name)} "
+                         "LOCATION {quote_literal(loc)}')\n"})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_removing_the_escape_turns_the_site_back_into_a_finding(tree):
+    """The same file, one call unwrapped. This is the assertion above's point."""
+    root = tree({"q.py": "from sqlident import quote_ident\n"
+                         "def f(spark, name, db):\n"
+                         "    spark.sql(f'DROP TABLE IF EXISTS "
+                         "`{db}`.{quote_ident(name)}')\n"})
+    hits = [m for m in messages(root) if "sql-identifier-interpolated" in m]
+    assert len(hits) == 1 and "db" in hits[0], hits
+
+
+@pytest.mark.parametrize("body", [
+    # THE DOMINANT e2e SHAPE: a module-level constant. Measured --
+    # e2e/sail-session-isolation/probe.py is exactly this, and without the
+    # narrowing a dozen harness probes crowd out the sites that decide who
+    # sees which rows.
+    'VIEW = "iso_probe"\ndef f(spark):\n    spark.sql(f"DROP VIEW IF EXISTS {VIEW}")\n',
+    # A literal hole after constant folding.
+    'def f(spark):\n    spark.sql(f"DROP VIEW IF EXISTS {\'v\'}")\n',
+])
+def test_an_interpolation_of_this_files_own_constants_is_not_reported(tree, body):
+    root = tree({"p.py": body})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m], body
+
+
+@pytest.mark.parametrize("body", [
+    # NOT SQL. The verb gate is what stops this rule being a rule about
+    # f-strings -- `.sql` and `.execute` are not rare method names.
+    'def f(c, x):\n    c.execute(f"refresh {x}")\n',
+    'def f(c, p):\n    c.sql(f"/items/{p}")\n',
+    # A maintenance command over a URI rather than an identifier spliced into
+    # a relation: e2e/engine-matrix/probes.py runs these over a local path and
+    # including the verbs would add six harness findings saying nothing new.
+    'def f(spark, p):\n    spark.sql(f"OPTIMIZE delta.`{p}`")\n',
+    'def f(spark, p):\n    spark.sql(f"VACUUM delta.`{p}` RETAIN 168 HOURS")\n',
+])
+def test_an_fstring_that_is_not_a_ddl_statement_is_not_reported(tree, body):
+    root = tree({"p.py": body})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m], body
+
+
+def test_a_parameterized_query_is_never_reported(tree):
+    """The shape this rule wants people to write must not be flagged.
+
+    A fixed literal with the values BOUND by the driver is the correct answer
+    to the whole class, so reporting it would be telling people to stop doing
+    the right thing. The rule requires the template itself to be BUILT.
+    """
+    root = tree({"p.py": 'def f(cur, v, t):\n'
+                         '    cur.execute("SELECT x FROM t WHERE id = ?", (v,))\n'
+                         '    cur.execute("SELECT x FROM t WHERE id = %s", [v])\n'
+                         '    cur.executemany("INSERT INTO t VALUES (?)", t)\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_a_bare_call_is_not_read_as_a_sql_method(tree):
+    """`execute` is a name anything may have -- R7's measured lesson reused.
+
+    scripts/vendor_notebookutils_stubs.py defines its own `extract(url)`, which
+    is why R7's clause requires a METHOD call. The same is true here: a
+    module-level `execute()` helper is not a cursor.
+    """
+    root = tree({"p.py": 'def execute(q):\n    return q\n'
+                         'def f(name):\n    return execute(f"DROP VIEW {name}")\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_the_interpolated_part_cannot_supply_the_verb(tree):
+    """The verb must be text the AUTHOR wrote, not text a hole provides.
+
+    `f"{verb} FROM t"` would otherwise pass the gate on a word nobody typed,
+    and a rule whose scope depends on runtime values has no scope.
+    """
+    root = tree({"p.py": 'def f(c, verb, t):\n    c.execute(f"{verb} FROM {t}")\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_one_report_per_symbol_not_per_statement(tree):
+    """A loop building three statements is one context and one ledger entry.
+
+    The key is (file, rule, symbol), so these were always ONE entry; this keeps
+    the printed report, and the counts in the prose, matching what a reader
+    would count by hand. Same decision as R1's paired `ssl` idiom.
+    """
+    root = tree({"p.py": 'def sweep(spark, db, name):\n'
+                         '    spark.sql(f"DROP VIEW IF EXISTS {name}")\n'
+                         '    spark.sql(f"DROP TABLE IF EXISTS {name}")\n'
+                         '    spark.sql(f"SHOW TABLES IN `{db}`")\n'})
+    assert len([m for m in messages(root)
+                if "sql-identifier-interpolated" in m]) == 1
+
+
+def test_the_symbol_dedup_does_not_cross_functions(tree):
+    root = tree({"p.py": 'def a(spark, n):\n'
+                         '    spark.sql(f"DROP VIEW IF EXISTS {n}")\n'
+                         'def b(spark, n):\n'
+                         '    spark.sql(f"DROP TABLE IF EXISTS {n}")\n'})
+    hits = [f for f in c.scan(c.source_files(root))
+            if f["rule"] == "sql-identifier-interpolated"]
+    assert {f["symbol"] for f in hits} == {"a", "b"}
+
+
+def test_a_test_file_building_the_violation_is_out_of_scope(tree):
+    root = tree({"python/tests/test_sql.py":
+                 'def test_x(spark, name):\n'
+                 '    spark.sql(f"DROP VIEW IF EXISTS {name}")\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+# --- R8's Go half ----------------------------------------------------------
+
+def test_go_sql_assembled_in_a_function_that_executes_it_is_reported(tree):
+    root = tree({"x.go": 'package x\n\nimport "database/sql"\n\n'
+                         'func sync(ctx context.Context, db *sql.DB, name string) error {\n'
+                         '\tvar b strings.Builder\n'
+                         '\tfmt.Fprintf(&b, "ALTER ROLE [%s] DROP MEMBER [%s];", name, name)\n'
+                         '\t_, err := db.ExecContext(ctx, b.String())\n'
+                         '\treturn err\n}\n'})
+    assert [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_go_sprintf_with_no_sql_handle_in_the_file_is_not_reported(tree):
+    """The import gate, and a MEASURED false positive it removes.
+
+    `.Query(` is also how `net/url`'s is spelled, and internal/api/fabriciq.go's
+    `u.Query().Has("pbi_source")` satisfied the "this function executes SQL"
+    test on a URL parse. Same gate R7's archive clause carries.
+    """
+    root = tree({"x.go": 'package x\n\n'
+                         'func tool(u *url.URL, id string) string {\n'
+                         '\tif u.Query().Has("x") {\n'
+                         '\t\treturn fmt.Sprintf("CREATE a report %q", id)\n'
+                         '\t}\n\treturn ""\n}\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_go_english_prose_is_not_read_as_sql(tree):
+    """The case-sensitivity narrowing, also measured.
+
+    Four of the verbs -- WITH, USE, SET, SHOW -- are ordinary English, and the
+    Go clause SEARCHES rather than anchors. With `re.I` this reported
+    fabriciq.go's `"No Report or SemanticModel with id %q that you can
+    access."` on the word "with". Every SQL statement this tree's Go assembles
+    spells its keywords upper case.
+    """
+    root = tree({"x.go": 'package x\n\nimport "database/sql"\n\n'
+                         'func f(ctx context.Context, db *sql.DB, id string) error {\n'
+                         '\trow := db.QueryRowContext(ctx, "SELECT 1")\n'
+                         '\t_ = row\n'
+                         '\treturn fmt.Errorf("no model with id %q, use the list", id)\n}\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_go_sql_built_in_a_function_that_does_not_execute_is_not_reported(tree):
+    """Judged on the ENCLOSING FUNCTION, which is what keeps fmt.Sprintf usable.
+
+    The same call builds request URLs and ids all over this tree; only the
+    Exec/Query beside it says this one is a statement.
+    """
+    root = tree({"x.go": 'package x\n\nimport "database/sql"\n\n'
+                         'func describe(name string) string {\n'
+                         '\treturn fmt.Sprintf("CREATE TABLE %s", name)\n}\n\n'
+                         'func run(ctx context.Context, db *sql.DB) error {\n'
+                         '\t_, err := db.ExecContext(ctx, "SELECT 1")\n'
+                         '\treturn err\n}\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_go_a_writestring_of_a_bare_literal_interpolates_nothing(tree):
+    root = tree({"x.go": 'package x\n\nimport "database/sql"\n\n'
+                         'func f(ctx context.Context, db *sql.DB) error {\n'
+                         '\tvar b strings.Builder\n'
+                         '\tb.WriteString("CREATE TABLE t (id int);")\n'
+                         '\t_, err := db.ExecContext(ctx, b.String())\n'
+                         '\treturn err\n}\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+# --- R8's ledger field -----------------------------------------------------
+
+def test_a_sql_entry_must_name_what_is_interpolated_and_what_escapes_it(tree):
+    """`values` is to R8 what `hosts` is to R1.
+
+    What decides whether spliced SQL is safe is WHAT goes in and WHAT escapes
+    it -- and for the Go sites this field is the only place the escape is
+    written down at all, because that half of the rule reads the enclosing
+    function rather than the argument.
+    """
+    tree({"q.py": 'def f(spark, n):\n    spark.sql(f"DROP VIEW IF EXISTS {n}")\n'},
+         ledger={"accepted": [{"file": "q.py",
+                               "rule": "sql-identifier-interpolated",
+                               "symbol": "f", "why": "a reason, but no values"}]})
+    with pytest.raises(KeyError, match="values"):
+        c.load_ledger()
+
+
+def test_a_sql_entry_with_values_is_accepted(tree):
+    tree({"q.py": 'def f(spark, n):\n    spark.sql(f"DROP VIEW IF EXISTS {n}")\n'},
+         ledger={"accepted": [{"file": "q.py",
+                               "rule": "sql-identifier-interpolated",
+                               "symbol": "f",
+                               "values": "`n`, a module constant in this file",
+                               "why": "harness code over its own constants"}]})
+    assert c.main(["check", "--strict"]) == 0
+
+
+def test_a_stale_sql_entry_fails_like_every_other_rule(tree, capsys):
+    """The other direction: a site that got FIXED cannot leave an entry behind.
+
+    This is the direction that matters most for R8, because the fix is a
+    one-line wrapper -- an entry outliving it would go on excusing the symbol
+    and would silently re-cover the shape if someone unwrapped it.
+    """
+    tree({"q.py": "from sqlident import quote_ident\n"
+                  "def f(spark, n):\n"
+                  "    spark.sql(f'DROP VIEW IF EXISTS {quote_ident(n)}')\n"},
+         ledger={"accepted": [{"file": "q.py",
+                               "rule": "sql-identifier-interpolated",
+                               "symbol": "f", "values": "`n`, unescaped",
+                               "why": "was raw once"}]})
+    assert c.main(["check", "--strict"]) == 1
+    assert "stale" in capsys.readouterr().out
+
+
 # --- scope -----------------------------------------------------------------
 
 def test_test_files_and_vendored_trees_are_out_of_scope(tree):
