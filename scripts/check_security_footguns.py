@@ -183,9 +183,10 @@ WHAT IS FLAGGED, and what each rule deliberately does NOT flag:
     than a syntax error. A lakehouse table is a FOLDER under `Tables/` created
     by whoever can write to OneLake, and nothing in `internal/onelake` rejects
     a backtick in a path segment, so the name is data the whole way round.
-    Seven symbols were repaired onto `python/spark_agent/sqlident.py`
-    (`quote_ident` / `quote_literal`, mirroring the Go pair); the six Go
-    symbols are LEDGERED as a regression guard over code that is right.
+    Eight symbols were repaired onto `python/spark_agent/sqlident.py`
+    (`quote_ident` / `quote_literal` / `quote_name`, mirroring the Go pair);
+    the six Go symbols are LEDGERED as a regression guard over code that is
+    right.
 
     THE RULE RECOGNISES THE ESCAPE, and that is not a convenience. A rule that
     reported an escaped site as loudly as a raw one would say nothing about
@@ -255,8 +256,9 @@ somebody adds a source file, in the one place a reader checks whether the sweep
 still covers the tree. 578 is 577 plus `python/spark_agent/sqlident.py`, which
 this change added.
 
-FIFTEEN FURTHER FINDINGS ARE NOT IN THE LEDGER, because they were FIXED rather
-than recorded -- in three changes, and the first one is why this file exists:
+SEVENTEEN FURTHER FINDINGS ARE NOT IN THE LEDGER, because they were FIXED
+rather than recorded -- in three changes, and the first one is why this file
+exists:
 
   * internal/akv set InsecureSkipVerify transport-wide from a flag documented
     for entra-emulator's certificate, on the one client whose allowlist
@@ -272,23 +274,38 @@ than recorded -- in three changes, and the first one is why this file exists:
     All now scoped per host, the same repair as akv's, one language over.
   * TWO unchecked archive extractions in `e2e/azcopy/run.py`, on an archive
     downloaded from an `aka.ms` redirect.
-  * SEVEN symbols across `python/spark_agent` that spliced a table, schema,
-    view or column NAME into SQL text with nothing doubling a backtick --
-    `catalog.register`, `catalog._make_unqualified_resolve`,
+  * EIGHT symbols across `python/spark_agent` that spliced a table, schema,
+    view, column or LOCATION into SQL text with nothing doubling a backtick or
+    an apostrophe -- `catalog.register`, `catalog._make_unqualified_resolve`,
     `onelake_security.schemas_holding`, `.restore`, `._sweep_qualified`,
-    `.secure_view_sql` (and `._drop`), and `usercontext.register`. The sharp
-    one is the pair that enforces policy: `apply` built the temp view holding
-    the row filter, and `secure_view_sql` built a column-only projection, both
-    from a name that originates as a OneLake folder. All now go through
-    `sqlident.quote_ident` / `quote_literal`, leaving ordinary names
-    byte-identical so no fixture, recording or e2e output moved.
+    `.secure_view_sql` (and `._drop`), `usercontext.register`, and
+    `delta_ops.execute_ctas`. The sharp one is the pair that enforces policy:
+    `apply` built the temp view holding the row filter, and `secure_view_sql`
+    built a column-only projection, both from a name that originates as a
+    OneLake folder. All now go through `sqlident.quote_ident` /
+    `quote_literal` / `quote_name`, leaving ordinary names byte-identical so no
+    fixture, recording or e2e output moved.
 
-    TWO OF THOSE SEVEN THIS RULE CANNOT SEE, and they were repaired anyway:
-    `secure_view_sql` RETURNS a string rather than calling `.sql()`, and
-    `_drop` binds its templates to a variable before `spark.sql(stmt)` reads
-    them. A repair that stopped where the checker's vision stops would have
-    left the CLS projection and the WITHHOLDING path -- the one that runs when
-    a table must not be readable -- as the only unescaped routes.
+    THREE OF THOSE EIGHT THIS RULE COULD NOT SEE, and they were repaired
+    anyway. Two it still cannot: `secure_view_sql` RETURNS a string rather
+    than calling `.sql()`, and `_drop` binds its templates to a variable
+    before `spark.sql(stmt)` reads them. A repair that stopped where the
+    checker's vision stops would have left the CLS projection and the
+    WITHHOLDING path -- the one that runs when a table must not be readable --
+    as the only unescaped routes.
+
+    THE THIRD IS NOW VISIBLE, and that is the correction worth reading rather
+    than the count. `delta_ops.execute_ctas` is reached as `original_sql(...)`,
+    a bare NAME that delta_ops binds to `spark.sql` and passes as a parameter,
+    so R8's method requirement -- measured, and right about `execute` being a
+    name anything may have -- walked straight past it. It spliced a
+    catalog-supplied schema location into `LOCATION '{loc}'` with nothing
+    doubling an apostrophe, in the one package this rule's scope sentence
+    claimed to have swept, while `catalog.register` escaped the SAME value one
+    module over. `_py_sql_aliases` closes it: a bare call counts when this file
+    itself binds that name to a `.sql`/`.execute` attribute. So the repair
+    RATCHETS -- deleting either escape takes `--strict` to exit 1 -- instead of
+    being a correction nothing holds.
 
 The ledger does carry the two host-scoped HELPERS, because the checker sees the
 assignments and cannot see the guard above them -- those entries record a fix,
@@ -1038,7 +1055,7 @@ _PY_SQL_METHODS = ("sql", "execute", "executemany", "executescript")
 # ledgered as regression guards over code that is already correct, which is
 # also why the Go entries in docs/security-footguns.json read as "this is
 # right and must stay right" instead of "this is allowed".
-_PY_SQL_ESCAPES = ("quote_ident", "quote_literal")
+_PY_SQL_ESCAPES = ("quote_ident", "quote_literal", "quote_name")
 
 # THE VERB GATE IS WHAT KEEPS THIS FROM BEING A RULE ABOUT f-STRINGS. Without
 # it, every `f"{x}"` reaching any method called `execute` is a finding. The
@@ -1129,16 +1146,68 @@ def _py_is_escaped(node):
     return _py_unparse(node.func).split(".")[-1] in _PY_SQL_ESCAPES
 
 
+def _py_sql_aliases(tree):
+    """Bare names this file binds to a SQL-execution method, e.g. `spark.sql`.
+
+    THE THIRD BLIND SPOT THIS RULE SHIPPED WITH, and the one that cost a real
+    finding rather than a hypothetical one. The clause below wants a METHOD for
+    a measured reason -- `execute` is a name anything may have -- and that
+    reasoning does not reach a bare name that IS `spark.sql`:
+
+        original_sql = spark.sql                     # delta_ops.py:928
+        ...
+        execute_ctas(spark, original_sql, params)    # passed as a parameter
+        original_sql(f"CREATE TABLE ... LOCATION '{loc}'")  # invisible to R8
+
+    That site is `delta_ops.execute_ctas`; it spliced a catalog-supplied schema
+    location into a quoted literal with nothing doubling an apostrophe, and it
+    sits in the one package this rule's own scope sentence claims to have
+    swept. The same value is escaped by `catalog.register` one module over, so
+    without this clause the identical `sloc` was quoted in one statement and
+    raw in another -- which is the argument for `quote_literal` existing,
+    turned on the change that added it.
+
+    SCOPED TO THIS FILE'S OWN BINDINGS, which is what keeps the method
+    requirement's reasoning intact. A bare `execute(x)` is still ignored unless
+    the file says somewhere that `execute` is a `.sql`/`.execute` attribute of
+    something; the gate is not "a bare call" but "a bare call to a name this
+    file aliased onto a SQL executor". Any scope counts, because the binding
+    and the call are routinely in different functions -- here they are 400
+    lines and one parameter apart -- so a module-scope-only reading (the one
+    `_py_module_constants` makes, for its own different purpose) would have
+    seen neither.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Attribute) and value.attr in _PY_SQL_METHODS):
+            continue
+        for t in targets:
+            if isinstance(t, ast.Name):
+                names.add(t.id)
+    return names
+
+
 def _py_sql_interpolations(tree):
     """Sites where SQL text is assembled from something that is not a literal.
 
     Yields (node, message). A finding needs all three of:
 
-      * a method call named `.sql` / `.execute` / `.executemany` /
-        `.executescript`. A METHOD, like R7's `.extract` clause and for the
-        same measured reason: `execute` is a name anything may have, and this
-        repository's own scripts/vendor_notebookutils_stubs.py defines a bare
-        `extract(url)` that the import gate alone did not save.
+      * a call to a SQL executor: a method named `.sql` / `.execute` /
+        `.executemany` / `.executescript`, or a bare name this file binds to
+        one of those (see `_py_sql_aliases`). A METHOD by default, like R7's
+        `.extract` clause and for the same measured reason: `execute` is a name
+        anything may have, and this repository's own
+        scripts/vendor_notebookutils_stubs.py defines a bare `extract(url)`
+        that the import gate alone did not save. The alias set is the narrow
+        exception, and it is narrow on purpose: a name that IS `spark.sql` is
+        the executor rather than a coincidence of spelling.
       * its first argument BUILT -- an f-string, a `%`/`+`, or `.format` --
         rather than a literal. `cur.execute("SELECT x FROM t WHERE id = ?",
         (v,))` is a parameterized query: the literal is fixed and the value is
@@ -1150,11 +1219,21 @@ def _py_sql_interpolations(tree):
     whose holes is a literal or a module-level constant is skipped.
     """
     consts = _py_module_constants(tree)
+    aliases = _py_sql_aliases(tree)
     out = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        if not isinstance(node, ast.Call):
             continue
-        if node.func.attr not in _PY_SQL_METHODS or not node.args:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr not in _PY_SQL_METHODS:
+                continue
+        elif isinstance(func, ast.Name):
+            if func.id not in aliases:
+                continue
+        else:
+            continue
+        if not node.args:
             continue
         arg = node.args[0]
         parts = _py_interpolated_parts(arg)

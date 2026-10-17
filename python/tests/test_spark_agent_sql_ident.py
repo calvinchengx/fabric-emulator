@@ -39,9 +39,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
+import delta_ops  # noqa: E402
 import onelake_security as ols  # noqa: E402
 import usercontext  # noqa: E402
-from sqlident import quote_ident, quote_literal  # noqa: E402
+from sqlident import quote_ident, quote_literal, quote_name  # noqa: E402
 
 # name -> the one correct quoting of it. Every backtick doubled, the whole
 # wrapped in a fresh pair.
@@ -286,3 +287,133 @@ def test_an_ordinary_name_emits_exactly_what_it_did_before():
     assert "CREATE OR REPLACE TEMP VIEW `sales` AS " \
            "SELECT * FROM (SELECT * FROM sales WHERE r = 1)" in spark.ran, spark.ran
     assert "DROP TABLE IF EXISTS `default`.`sales`" in spark.ran, spark.ran
+
+
+# --- the dotted composition, and the site it exists for ----------------------
+# `quote_name` is `quote_ident` joined on dots. It earns its own name for one
+# measured reason: `delta_ops.execute_ctas` builds a name whose SCHEMA HALF IS
+# OPTIONAL, and the two-hole spelling `catalog.register` uses cannot be written
+# there without a conditional inside the f-string -- which is not a call, so R8
+# would read the repaired site as unescaped and the fix would not ratchet.
+
+@pytest.mark.parametrize("parts,want", [
+    (("lake", "sales"), "`lake`.`sales`"),
+    # The optional-schema case this helper exists for: `execute_ctas` passes
+    # (None, tbl) for an unqualified target, and an empty quoted segment in the
+    # middle of a dotted name is a statement the engine refuses for a reason
+    # that names nothing useful.
+    ((None, "sales"), "`sales`"),
+    (("", "sales"), "`sales`"),
+    # Each PART is escaped separately, so a backtick cannot end the quoting and
+    # a dot inside a part stays inside it rather than becoming a qualification
+    # the caller never wrote.
+    (("we`ird", "sa`les"), "`we``ird`.`sa``les`"),
+    ((None, BREAKOUT), QUOTED),
+    (("lake",), "`lake`"),
+])
+def test_a_dotted_name_quotes_every_part(parts, want):
+    assert quote_name(*parts) == want
+
+
+@pytest.mark.parametrize("parts", [("a\x00b", "t"), ("lake", "a\nb")])
+def test_a_dotted_name_refuses_what_quote_ident_refuses(parts):
+    """The composition must not become the lenient route to the same splice."""
+    with pytest.raises(ValueError):
+        quote_name(*parts)
+
+
+class _Writer:
+    """Just enough of a DataFrameWriter for `execute_ctas` to reach its DDL."""
+
+    def __init__(self, saved):
+        self._saved = saved
+
+    def format(self, _fmt):
+        return self
+
+    def mode(self, _mode):
+        return self
+
+    def option(self, _k, _v):
+        return self
+
+    def save(self, loc):
+        self._saved.append(loc)
+
+
+class _DF:
+    def __init__(self, saved):
+        self.write = _Writer(saved)
+
+
+def _ctas(target, schema_location, location=None, replace=False):
+    """Run the real `execute_ctas`, returning the statements it emitted.
+
+    THE LIVE ROUTE, end to end and not simulated: `schema_location` goes in
+    through `delta_ops.remember_schema` -- which is what
+    `catalog._remember_schema_location` calls with `catalog.register`'s own
+    `sloc` -- and comes back out through `known_schema_location` into the
+    LOCATION of the registration statement. Nothing on that path validates it;
+    `remember_schema` only strips a trailing slash.
+    """
+    delta_ops.forget_all()
+    delta_ops.remember_schema("bronze", schema_location)
+    ran, saved = [], []
+
+    def original_sql(q):
+        ran.append(q)
+        return _DF(saved)
+
+    params = {"target": target, "query": "SELECT 1"}
+    if location:
+        params["location"] = location
+    if replace:
+        params["replace"] = True
+    delta_ops.execute_ctas(object(), original_sql, params)
+    delta_ops.forget_all()
+    return [q for q in ran if q != "SELECT 1"], saved
+
+
+def test_a_ctas_quotes_the_catalog_supplied_schema_location():
+    """`execute_ctas`'s registration, pinned as text.
+
+    THE SITE R8 COULD NOT SEE FOR ITS FIRST RELEASE, because the callee is the
+    bare name `original_sql` rather than `spark.sql` -- and the same value was
+    already escaped by `catalog.register` one module over, so before this the
+    identical catalog-supplied location was quoted in one statement and spliced
+    raw into another. An apostrophe closed the literal and everything after it
+    became clause.
+    """
+    ran, saved = _ctas("bronze.t", "abfss://lake@onelake/it's/Tables")
+    assert ran == ["CREATE TABLE IF NOT EXISTS `bronze`.`t` "
+                   "USING delta LOCATION 'abfss://lake@onelake/it''s/Tables/t'"], ran
+    # The WRITE still goes to the unescaped path: quoting is for SQL text, and
+    # a doubled apostrophe in a storage URI would be a different object.
+    assert saved == ["abfss://lake@onelake/it's/Tables/t"], saved
+
+
+def test_a_ctas_with_no_schema_emits_no_leading_dot():
+    """An unqualified target: `quote_name` drops the absent schema entirely."""
+    ran, _ = _ctas("t", "abfss://lake/Tables", location="abfss://lake/Tables/t")
+    assert ran == ["CREATE TABLE IF NOT EXISTS `t` "
+                   "USING delta LOCATION 'abfss://lake/Tables/t'"], ran
+
+
+def test_a_replacing_ctas_quotes_the_name_it_drops_first():
+    ran, _ = _ctas("bronze.t", "abfss://lake/Tables", replace=True)
+    assert ran == ["DROP TABLE IF EXISTS `bronze`.`t`",
+                   "CREATE TABLE IF NOT EXISTS `bronze`.`t` "
+                   "USING delta LOCATION 'abfss://lake/Tables/t'"], ran
+
+
+def test_an_ordinary_ctas_emits_exactly_what_it_did_before():
+    """The no-drift half, for this path too -- see the sibling above.
+
+    Byte-for-byte the hand-written `` f"`{schema}`.`{tbl}`" `` and
+    `` LOCATION '{loc}' `` this replaced, which is what lets the repair move no
+    recording and no e2e output.
+    """
+    ran, _ = _ctas("bronze.silver_customers", "abfss://lake@onelake/Tables")
+    assert ran == ["CREATE TABLE IF NOT EXISTS `bronze`.`silver_customers` "
+                   "USING delta LOCATION "
+                   "'abfss://lake@onelake/Tables/silver_customers'"], ran

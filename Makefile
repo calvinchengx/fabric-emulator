@@ -405,21 +405,34 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# ENFORCES OneLake row- and column-level security, from a name that is a
 	@# OneLake folder created by whoever can write there, so a breakout picks
 	@# the body of the view deciding which rows a principal sees rather than
-	@# raising a syntax error. Seven symbols repaired onto sqlident's
-	@# quote_ident/quote_literal (the Go pair, mirrored rather than half of
-	@# it); the six correct Go symbols are LEDGERED as regression guards,
+	@# raising a syntax error. Eight symbols repaired onto sqlident's
+	@# quote_ident/quote_literal/quote_name (the Go pair, mirrored rather than
+	@# half of it); the six correct Go symbols are LEDGERED as regression guards,
 	@# because that half of the rule reads the enclosing function and cannot
 	@# see an escape in the argument list where the Python half can.
 	@#
 	@# The Python half recognising the escape is what makes the repair a
 	@# RATCHET rather than twenty more ledger entries: an escaped site reports
 	@# clean, so deleting a quote_ident call becomes an unrecorded finding and
-	@# exit 1. Two of the seven the rule CANNOT see -- secure_view_sql returns
+	@# exit 1. Two of the eight the rule CANNOT see -- secure_view_sql returns
 	@# SQL instead of running it, _drop binds its statements to a variable
 	@# first -- and both were fixed anyway, since they are the column-only and
-	@# the table-withholding routes of the same enforcement. Ordinary names
-	@# come back byte-identical, which is the only reason a change touching
-	@# every statement the agent builds moved no fixture or e2e output.
+	@# the table-withholding routes of the same enforcement.
+	@#
+	@# A THIRD WAS INVISIBLE TO R8 ITSELF, and it is the sharpest of the eight:
+	@# delta_ops.execute_ctas is reached as original_sql(...), a bare NAME that
+	@# delta_ops binds to spark.sql and passes as a parameter, so the rule's
+	@# METHOD requirement -- right about `execute` being a name anything may
+	@# have -- walked past it. It spliced a catalog-supplied schema location
+	@# into LOCATION '{loc}' with nothing doubling an apostrophe, inside the one
+	@# package R8's scope sentence claimed to have swept, while catalog.register
+	@# escaped the SAME value one module over. The rule now accepts a bare call
+	@# to a name THIS FILE binds to a .sql/.execute attribute, so that repair
+	@# ratchets too.
+	@#
+	@# Ordinary names come back byte-identical, which is the only reason a
+	@# change touching every statement the agent builds moved no fixture or
+	@# e2e output.
 	@$(PY) scripts/check_security_footguns.py --strict
 	@# ...and the dimension the three above cannot see either: whether this
 	@# emulator says anything at all when it fails. Measured when this landed:

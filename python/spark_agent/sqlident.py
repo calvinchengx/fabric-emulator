@@ -1,4 +1,9 @@
-"""Quote one SQL identifier, so a name cannot become statement.
+"""Quote a SQL identifier or literal, so a name cannot become statement.
+
+Three functions, and they are one escape rather than three: `quote_ident`
+doubles the backtick that quotes an identifier, `quote_literal` doubles the
+apostrophe that quotes a string, and `quote_name` is `quote_ident` joined on
+dots for a qualified name whose schema half may be absent.
 
 WHY THIS EXISTS, and why it is a helper rather than a backtick typed at each
 site. Every statement this agent builds names a table, a schema or a view by
@@ -18,7 +23,9 @@ identifier, and the matching `'` -> `''` for an N'...' literal is inline there
 as named helpers, `sqlIdent`/`sqlLiteral`, and `enterDelegated` leans on SQL
 Server's own `QUOTENAME`, which doubles `]` too. Correct at every site, and
 re-established by reading rather than by a call -- which is the argument for
-this side being one helper that every site goes through. Spark's quote character is the backtick, so the rule is `` ` `` -> ``` `` ```.
+this side being one helper that every site goes through. Spark's quote
+character is the backtick, so the rule is `` ` `` -> ``` `` ```.
+
 This module is that repair in Python, and the asymmetry is the reason it was
 needed: when `sql-identifier-interpolated` (R8) was written, the Go half of
 this tree escaped correctly at every site and NOT ONE backtick was doubled
@@ -66,6 +73,31 @@ def quote_ident(name):
                 f"{s!r}. Refusing rather than emitting a statement whose "
                 "parse depends on who is reading it.")
     return QUOTE + s.replace(QUOTE, QUOTE * 2) + QUOTE
+
+
+def quote_name(*parts):
+    """A dotted identifier -- `schema`.`table` -- with every part quoted.
+
+    A THIN COMPOSITION OF `quote_ident`, and it exists for one measured reason
+    rather than for tidiness: `delta_ops.execute_ctas` builds a name whose
+    SCHEMA HALF IS OPTIONAL, so the two-hole spelling `catalog.register` uses
+    (`f"{quote_ident(schema)}.{quote_ident(name)}"`, where a schema is always
+    present) cannot be written there without an `if` inside the f-string -- and
+    a conditional in the hole is not a call, so R8 would read the site as
+    unescaped and the repair would not ratchet. Composing here keeps the splice
+    a single call to a helper the checker recognises, which is what makes
+    deleting the escape fail the build.
+
+    `catalog.register` is deliberately NOT changed to use this: its parts are
+    both mandatory, its inline form is already one recognised call per hole,
+    and rewriting it would be churn for no safety.
+
+    Empty and None parts are DROPPED rather than quoted. `execute_ctas` passes
+    `(schema, tbl)` with `schema` None for an unqualified target, and an empty
+    quoted identifier in the middle of a dotted name (`` ``.`t` ``) is a
+    statement the engine refuses for a reason that names nothing useful.
+    """
+    return ".".join(quote_ident(p) for p in parts if p not in (None, ""))
 
 
 def quote_literal(value):

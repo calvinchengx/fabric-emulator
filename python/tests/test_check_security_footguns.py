@@ -508,8 +508,10 @@ def test_a_go_world_writable_create_is_reported(tree):
 # --- R8: SQL built by interpolation ----------------------------------------
 # The near-misses matter more here than for any rule except R4, because SQL
 # text and f-strings are everywhere in a Spark emulator: this tree has 36
-# `.sql(f"...")` call sites and only 7 of them were defects. The narrowings
-# below are each a measured false positive.
+# `.sql(f"...")` call sites and only 8 of them were defects. The narrowings
+# below are each a measured false positive -- and the ALIAS clause, the one
+# widening, is here too, because the eighth defect was the one R8's own method
+# requirement could not see.
 
 @pytest.mark.parametrize("body", [
     # The site this rule exists for: OneLake security's own enforcement view.
@@ -609,6 +611,60 @@ def test_a_bare_call_is_not_read_as_a_sql_method(tree):
     """
     root = tree({"p.py": 'def execute(q):\n    return q\n'
                          'def f(name):\n    return execute(f"DROP VIEW {name}")\n'})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_a_bare_name_this_file_bound_to_spark_sql_is_read_as_a_sql_call(tree):
+    """THE THIRD BLIND SPOT, and the one that cost a real finding.
+
+    `delta_ops` binds `original_sql = spark.sql` and passes it as a parameter,
+    so the callee at the splice is a bare NAME. The method requirement above is
+    measured and right -- `execute` is a name anything may have -- and its
+    reasoning simply does not reach a name that IS `spark.sql`. The site it hid
+    spliced a catalog-supplied schema location into a quoted literal with
+    nothing doubling an apostrophe, in the one package R8's scope sentence
+    claims to have swept, while the same value was escaped one module over.
+    """
+    root = tree({"d.py": "def wrap(spark):\n"
+                         "    original_sql = spark.sql\n"
+                         "    return original_sql\n"
+                         "def ctas(original_sql, name, loc):\n"
+                         "    original_sql(f\"CREATE TABLE {name} LOCATION '{loc}'\")\n"})
+    hits = [m for m in messages(root) if "sql-identifier-interpolated" in m]
+    assert len(hits) == 1 and "loc" in hits[0] and "name" in hits[0], hits
+
+
+def test_the_alias_must_be_bound_in_this_file_to_a_sql_method(tree):
+    """The narrowing that keeps the method requirement's reasoning intact.
+
+    A bare call is still ignored -- see `test_a_bare_call_is_not_read_as_a_sql_method`
+    -- unless the file itself says the name is a `.sql`/`.execute` attribute of
+    something. Here `run` is bound to an unrelated attribute, so it stays
+    invisible: the gate is not "a bare call" but "a bare call to a name this
+    file aliased onto a SQL executor".
+    """
+    root = tree({"d.py": "def f(engine, name):\n"
+                         "    run = engine.submit\n"
+                         "    run(f\"DROP TABLE {name}\")\n"})
+    assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
+
+
+def test_an_aliased_call_is_escaped_by_the_same_helpers(tree):
+    """The ratchet reaches the aliased site too, through `quote_name`.
+
+    `quote_name` is the dotted composition of `quote_ident`, and it exists
+    because the site this clause uncovered has an OPTIONAL schema: the
+    two-hole spelling `catalog.register` uses cannot be written there without a
+    conditional in the hole, and a conditional is not a call -- so the rule
+    would read the repaired site as unescaped and the fix would not hold.
+    """
+    root = tree({"d.py": "from sqlident import quote_literal, quote_name\n"
+                         "def wrap(spark):\n"
+                         "    original_sql = spark.sql\n"
+                         "def ctas(original_sql, schema, tbl, loc):\n"
+                         "    original_sql(f\"CREATE TABLE "
+                         "{quote_name(schema, tbl)} "
+                         "LOCATION {quote_literal(loc)}\")\n"})
     assert not [m for m in messages(root) if "sql-identifier-interpolated" in m]
 
 
