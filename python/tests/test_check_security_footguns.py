@@ -885,6 +885,17 @@ def test_an_unparseable_python_file_is_reported_rather_than_skipped(tree):
 
 # --- this repository's own tree -------------------------------------------
 
+def test_the_sql_verb_gate_skips_leading_comments_and_cannot_be_redosed():
+    import time
+
+    assert c._SQL_VERB.match("/* hi */ -- x\n select 1")
+    assert c._SQL_VERB.match("/**/drop table x")
+    assert not c._SQL_VERB.match("/* a * b */ x")
+    t0 = time.monotonic()
+    assert not c._SQL_VERB.match("/*" + "*//*" * 40 + " x")
+    assert time.monotonic() - t0 < 1
+
+
 def test_the_real_tree_passes_strict():
     """The checker against THIS repo, not a synthetic one.
 

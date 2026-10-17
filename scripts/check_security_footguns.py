@@ -634,7 +634,9 @@ _GO_SQL_EXEC = re.compile(
 # refusal message, on the word "with". Every SQL statement this tree's Go
 # assembles spells its keywords in upper case, so requiring that costs nothing
 # and takes the prose out of scope.
-_GO_SQL_VERB = re.compile(
+_GO# The block-comment arm is the unambiguous C-comment form: a lazy `.*?` there
+# backtracked exponentially on `/*` followed by many `*//*` (CodeQL py/redos).
+_SQL_VERB = re.compile(
     r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|GRANT|REVOKE|SHOW"
     r"|MERGE|TRUNCATE|WITH|USE|SET)\b")
 # ...and the file must actually hold a `database/sql` handle. The SAME import
@@ -1066,7 +1068,7 @@ _PY_SQL_ESCAPES = ("quote_ident", "quote_literal", "quote_name")
 # including those verbs would have put 6 harness probes in the report to say
 # nothing new.
 _SQL_VERB = re.compile(
-    r"^\s*(?:--[^\n]*\n|/\*.*?\*/|\s)*"
+    r"^\s*(?:--[^\n]*\n|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/|\s)*"
     r"(select|insert|update|delete|create|drop|alter|grant|revoke|show"
     r"|merge|truncate|with|use|set)\b", re.I | re.S)
 
