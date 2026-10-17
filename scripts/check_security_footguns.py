@@ -20,7 +20,9 @@ SECURITY.md says so and calls those design rather than findings. A checker that
 reported them would be argued with rather than fixed, which is how a guard stops
 being read. So each rule below maps onto a bullet SECURITY.md already treats as
 in scope: real credentials leaking (R1, R4), authorization logic that is wrong
-rather than absent (R1, R3), escape from the emulator to the host (R5, R6).
+rather than absent (R1, R3, R8), escape from the emulator to the host (R5, R6,
+R7), and T-SQL or notebook input reaching the host beyond the documented
+execution surface (R5, R8).
 
 WHAT IS FLAGGED, and what each rule deliberately does NOT flag:
 
@@ -150,6 +152,81 @@ WHAT IS FLAGGED, and what each rule deliberately does NOT flag:
     and that function reads members into a dict with `wheel.read(name)` and
     writes no member-named path. The Go clause needs the archive import for the
     same reason: `f.Name` is also how an `fs.DirEntry` is spelled.
+  * `sql-identifier-interpolated` (R8) -- SQL text assembled by interpolation
+    rather than built from a literal with its values bound. Python: a `.sql` /
+    `.execute` / `.executemany` / `.executescript` METHOD call whose first
+    argument is an f-string, a `%`/`+` build or `.format`, and whose
+    author-written text starts on a DDL/DML verb. Go: `fmt.Sprintf`,
+    `fmt.Fprintf` or a concatenating `strings.Builder` write carrying an
+    upper-case SQL verb, inside a function that also calls `Exec*`/`Query*`,
+    in a file that imports `database/sql`.
+
+    A NAME SPLICED INTO SQL IS SYNTAX, NOT A VALUE. Backticks around it look
+    like quoting and are not: a backtick inside the name closes the pair and
+    the rest is parsed. It maps onto two SECURITY.md bullets at once --
+    authorization logic that is wrong rather than absent, and T-SQL input
+    reaching the host -- and R5 does not cover it, because R5's Python clause
+    stops at `eval`/`exec`/`yaml.load` and a command string with a shell
+    behind it. A SQL string handed to an engine is a different interpreter
+    with a different fix.
+
+    THE MEASURED ASYMMETRY IS WHY THIS RULE REPORTS A SHAPE RATHER THAN
+    BANNING ONE. The GO half of this tree was already correct at every site:
+    `internal/tds.principalName` doubles `]` -> `]]` for a bracket-quoted
+    identifier and `quotedID` doubles `'` -> `''` for an N'...' literal,
+    `internal/server`'s `sqlIdent`/`sqlLiteral` are the same pair one package
+    over, and `enterDelegated` leans on SQL Server's own `QUOTENAME`. The
+    PYTHON half escaped nothing -- not one backtick was doubled anywhere in
+    `python/spark_agent` -- including `onelake_security.apply`, which installs
+    the temp view that enforces OneLake row- and column-level security, where
+    a name that breaks out of its statement is an authorization failure rather
+    than a syntax error. A lakehouse table is a FOLDER under `Tables/` created
+    by whoever can write to OneLake, and nothing in `internal/onelake` rejects
+    a backtick in a path segment, so the name is data the whole way round.
+    Eight symbols were repaired onto `python/spark_agent/sqlident.py`
+    (`quote_ident` / `quote_literal` / `quote_name`, mirroring the Go pair);
+    the six Go symbols are LEDGERED as a regression guard over code that is
+    right.
+
+    THE RULE RECOGNISES THE ESCAPE, and that is not a convenience. A rule that
+    reported an escaped site as loudly as a raw one would say nothing about
+    safety: every repaired site would need a ledger entry, and then deleting
+    the `quote_ident` call would leave that entry valid and the build green --
+    a guard that has stopped guarding and still reports success. So an
+    escaped interpolation is not a finding, removing an escape makes it one
+    again, and `--strict` goes to exit 1. It TRUSTS the named helper rather
+    than re-deriving the escape, exactly as R7 trusts `filter="data"` instead
+    of reimplementing tarfile; what makes that sound is that the helper is
+    pinned by a name table driven through both the helper and the real call
+    paths (python/tests/test_spark_agent_sql_ident.py).
+
+    THE GO HALF HAS NO SUCH RECOGNITION, statedly: it is regex and
+    brace-scanning rather than a parser, so it sees a FUNCTION and not the
+    expression substituted into a format string. Its six sites are therefore
+    ledgered, and for them the `values` field is the only place the escape is
+    written down at all.
+
+    Four measured narrowings, each from a false positive on this tree. The
+    VERB GATE is what stops this being a rule about f-strings: without it
+    every `f"{x}"` reaching any method called `execute` is a finding, and the
+    verb must come from text the AUTHOR wrote, so interpolated parts are
+    blanked before the test -- `f"{verb} FROM t"` must not pass on a word
+    nobody typed. MODULE-LEVEL CONSTANTS are skipped, which is what most e2e
+    probes are (`e2e/sail-session-isolation/probe.py` is
+    `s.sql(f"DROP VIEW IF EXISTS {VIEW}")` over a file-local constant). The
+    Go half needs the `database/sql` IMPORT GATE because `.Query(` is also how
+    `net/url`'s is spelled -- `u.Query().Has("pbi_source")` in
+    internal/api/fabriciq.go satisfied the "this function executes SQL" test
+    on a URL parse -- and its verb search is CASE-SENSITIVE because four of
+    the verbs (WITH, USE, SET, SHOW) are ordinary English: with `re.I` it
+    reported that same file's `"No Report or SemanticModel with id %q that you
+    can access."` on the word "with".
+
+    Baseline TWENTY findings, all recorded: the six correct Go symbols, nine
+    e2e harness probes and four example scripts whose interpolated values are
+    all constants or literals this file itself wrote, and
+    `onelake_security.apply` -- whose `name` is escaped and whose `sql` is the
+    policy author's own row filter, spliced on purpose.
 
 SCOPE IS NON-TEST SOURCE. Test files are excluded because a test's job includes
 constructing the violation -- python/tests/test_check_example_portability.py
@@ -165,15 +242,23 @@ away or been FIXED -- a closed gap left recorded goes on excusing the file, and
 would silently re-cover it if the shape came back. That direction is the one a
 "what's new" reader would never think to check.
 
-THE MEASURED BASELINE, as of the change that added the `ssl` dialect and the
-archive rule: 73 findings across 576 non-test source files, in 65 distinct
-(file, rule, symbol) keys, every one recorded in the ledger with its reason --
-49 tls-verification-off, 13 python-shell-injection, 10 world-writable-mode, 1
-credential-in-message, and zero for all three regression-guard rules
+THE MEASURED BASELINE, as of the change that added R8: 93 findings across 578
+non-test source files, in 85 distinct (file, rule, symbol) keys, every one
+recorded in the ledger with its reason -- 49 tls-verification-off, 20
+sql-identifier-interpolated, 13 python-shell-injection, 10 world-writable-mode,
+1 credential-in-message, and zero for all three regression-guard rules
 (weak-random-for-secrets, secret-compared-directly, archive-extraction-unchecked).
 
-EIGHT FURTHER FINDINGS ARE NOT IN THE LEDGER, because they were FIXED rather
-than recorded -- in two changes, and the first one is why this file exists:
+THE FILE COUNT HAD ALREADY DRIFTED, and it is restated here from a measured run
+rather than carried forward. The three paragraphs above this one claimed 576
+files while the gate itself was printing 577 -- prose that goes stale the moment
+somebody adds a source file, in the one place a reader checks whether the sweep
+still covers the tree. 578 is 577 plus `python/spark_agent/sqlident.py`, which
+this change added.
+
+SEVENTEEN FURTHER FINDINGS ARE NOT IN THE LEDGER, because they were FIXED
+rather than recorded -- in three changes, and the first one is why this file
+exists:
 
   * internal/akv set InsecureSkipVerify transport-wide from a flag documented
     for entra-emulator's certificate, on the one client whose allowlist
@@ -189,6 +274,38 @@ than recorded -- in two changes, and the first one is why this file exists:
     All now scoped per host, the same repair as akv's, one language over.
   * TWO unchecked archive extractions in `e2e/azcopy/run.py`, on an archive
     downloaded from an `aka.ms` redirect.
+  * EIGHT symbols across `python/spark_agent` that spliced a table, schema,
+    view, column or LOCATION into SQL text with nothing doubling a backtick or
+    an apostrophe -- `catalog.register`, `catalog._make_unqualified_resolve`,
+    `onelake_security.schemas_holding`, `.restore`, `._sweep_qualified`,
+    `.secure_view_sql` (and `._drop`), `usercontext.register`, and
+    `delta_ops.execute_ctas`. The sharp one is the pair that enforces policy:
+    `apply` built the temp view holding the row filter, and `secure_view_sql`
+    built a column-only projection, both from a name that originates as a
+    OneLake folder. All now go through `sqlident.quote_ident` /
+    `quote_literal` / `quote_name`, leaving ordinary names byte-identical so no
+    fixture, recording or e2e output moved.
+
+    THREE OF THOSE EIGHT THIS RULE COULD NOT SEE, and they were repaired
+    anyway. Two it still cannot: `secure_view_sql` RETURNS a string rather
+    than calling `.sql()`, and `_drop` binds its templates to a variable
+    before `spark.sql(stmt)` reads them. A repair that stopped where the
+    checker's vision stops would have left the CLS projection and the
+    WITHHOLDING path -- the one that runs when a table must not be readable --
+    as the only unescaped routes.
+
+    THE THIRD IS NOW VISIBLE, and that is the correction worth reading rather
+    than the count. `delta_ops.execute_ctas` is reached as `original_sql(...)`,
+    a bare NAME that delta_ops binds to `spark.sql` and passes as a parameter,
+    so R8's method requirement -- measured, and right about `execute` being a
+    name anything may have -- walked straight past it. It spliced a
+    catalog-supplied schema location into `LOCATION '{loc}'` with nothing
+    doubling an apostrophe, in the one package this rule's scope sentence
+    claimed to have swept, while `catalog.register` escaped the SAME value one
+    module over. `_py_sql_aliases` closes it: a bare call counts when this file
+    itself binds that name to a `.sql`/`.execute` attribute. So the repair
+    RATCHETS -- deleting either escape takes `--strict` to exit 1 -- instead of
+    being a correction nothing holds.
 
 The ledger does carry the two host-scoped HELPERS, because the checker sees the
 assignments and cannot see the guard above them -- those entries record a fix,
@@ -250,6 +367,14 @@ REMEDY = {
         "escapes the destination entirely (zip-slip / tar-slip). Pass "
         "filter=\"data\" to tarfile, or validate every member name against the "
         "extraction root before writing it.",
+    "sql-identifier-interpolated":
+        "A name spliced into SQL text is SQL SYNTAX, not a value: a backtick in "
+        "a Spark identifier, or a `]` in a bracket-quoted T-SQL one, ends the "
+        "quoting and the rest of the name becomes statement. Escape the "
+        "identifier by DOUBLING its quote character -- spark_agent's "
+        "quote_ident, or internal/tds.principalName one language over -- or "
+        "record the site in docs/security-footguns.json with a `values` field "
+        "naming what is interpolated and what escapes it.",
 }
 
 
@@ -480,6 +605,44 @@ _GO_ARCHIVE_JOIN = re.compile(
 # Either spelling counts -- a prefix test, or filepath.Rel's `..` check.
 _GO_CONTAINED = re.compile(
     r"strings\.HasPrefix\s*\(|filepath\.Rel\s*\(|\.\.(?:/|\"|`)")
+# R8's Go half. Sprintf and Fprintf build the statement text; a strings.Builder
+# `WriteString` does too, but only when its argument is CONCATENATED -- a
+# WriteString of a bare literal interpolates nothing, and internal/server's
+# onelakesync.go writes plenty of those.
+_GO_SQL_FORMAT = re.compile(r"\b(?:fmt\.Sprintf|fmt\.Fprintf)\s*\(")
+_GO_SQL_WRITESTRING = re.compile(r"\b\w+\.WriteString\s*\(")
+# What makes the function a SQL one rather than a string-formatting one. Judged
+# on the ENCLOSING FUNCTION, not the line, because the build and the execution
+# are necessarily different statements -- and this gate is why `fmt.Sprintf`
+# stayed out of R4's log vocabulary without costing this rule anything: the
+# same call is a URL builder in internal/api and a statement builder here, and
+# only the Exec/Query beside it tells them apart.
+_GO_SQL_EXEC = re.compile(
+    r"\.(?:Exec|ExecContext|Query|QueryContext|QueryRow|QueryRowContext)\s*\(")
+# SEARCHED rather than anchored, which is the one place the Go half reads
+# differently from the Python one. A Python `spark.sql(...)` argument IS the
+# whole statement, so it starts on its verb; a Go statement is assembled from
+# fragments, and this repository's are mid-statement by construction --
+# `"\nIF IS_ROLEMEMBER(N'%s', N'%s') = 1 ALTER ROLE [%s] DROP MEMBER [%s];"`
+# begins on IF and carries its verb four tokens in.
+#
+# AND CASE-SENSITIVE, which the Python half is not and does not need to be.
+# Searching rather than anchoring means the verb may be matched anywhere in the
+# string, and four of these words -- WITH, USE, SET, SHOW -- are ordinary
+# English. Measured: with `re.I` this reported internal/api/fabriciq.go's
+# `"No Report or SemanticModel with id %q that you can access."`, an MCP tool's
+# refusal message, on the word "with". Every SQL statement this tree's Go
+# assembles spells its keywords in upper case, so requiring that costs nothing
+# and takes the prose out of scope.
+_GO_SQL_VERB = re.compile(
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|GRANT|REVOKE|SHOW"
+    r"|MERGE|TRUNCATE|WITH|USE|SET)\b")
+# ...and the file must actually hold a `database/sql` handle. The SAME import
+# gate R7's `.extract` clause carries, for the same measured reason: `.Query(`
+# is also how `net/url`'s is spelled, and `u.Query().Has("pbi_source")` in
+# fabriciq.go satisfied the "this function executes SQL" test on a URL parse.
+# A function with no sql.DB in the file is not running a statement.
+_GO_SQL_IMPORT = re.compile(r'^\s*(?:[\w.]+\s+)?"database/sql"')
 
 
 def _go_symbol(lines, idx):
@@ -571,6 +734,7 @@ def findings_go(path, rel=None):
 
     imports_math_rand = any(_GO_MATHRAND.match(ln) for ln in lines)
     imports_archive = any(_GO_ARCHIVE_IMPORT.match(ln) for ln in lines)
+    imports_sql = any(_GO_SQL_IMPORT.match(ln) for ln in lines)
 
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -643,6 +807,46 @@ def findings_go(path, rel=None):
                 add(idx, "credential-in-message",
                     f"the credential value `{arg}` is passed to a log or error")
                 break
+
+    # R8 over the whole file TEXT, not per line, and that is not a detail: the
+    # statements here are raw backtick strings spanning five lines
+    # (internal/tds.EnsurePrincipal's CREATE USER / ALTER ROLE block), so a
+    # per-line scan would read a fragment and find no verb in it. `_balanced`
+    # is quote-aware and counts backticks, which is what makes the multi-line
+    # case work at all.
+    #
+    # ONE REPORT PER SYMBOL, like the Python half: revokePrincipal builds its
+    # statement with an Fprintf inside a loop, and the ledger key has always
+    # been (file, rule, symbol).
+    seen_sql = set()
+    for pattern, needs_concat in (((_GO_SQL_FORMAT, False),
+                                   (_GO_SQL_WRITESTRING, True))
+                                  if imports_sql else ()):
+        for m in pattern.finditer(text):
+            inner, _ = _balanced(text, m.end() - 1)
+            if needs_concat and "+" not in inner:
+                continue
+            args = _split_args(inner)
+            fmt = next((a for a in args if a[:1] in ('"', "`")), None)
+            if fmt is None or not _GO_SQL_VERB.search(fmt):
+                continue
+            # A format string with no substitution and no concatenation builds
+            # nothing: `fmt.Fprintf(&b, "COMMIT;")` is a literal with a comma
+            # in the wrong place, not an interpolation.
+            if len(args) < 2 and "+" not in inner:
+                continue
+            idx = text.count("\n", 0, m.start())
+            sym = _go_symbol(lines, idx)
+            if sym in seen_sql:
+                continue
+            span = _go_func_span(lines, idx)
+            if not any(_GO_SQL_EXEC.search(ln) for ln in span):
+                continue
+            seen_sql.add(sym)
+            add(idx, "sql-identifier-interpolated",
+                "SQL text is assembled by interpolation in a function that "
+                "executes it -- a name spliced into an identifier is SQL "
+                "syntax, so the quote character inside it must be doubled")
     return out
 
 
@@ -806,6 +1010,254 @@ def _py_imports_archive(tree):
     return False
 
 
+# --- R8: SQL built by interpolation ----------------------------------------
+# SECURITY.md puts T-SQL input reaching the host in scope, and "authorization
+# logic that is wrong rather than absent" alongside it. This rule serves both:
+# a NAME spliced into SQL text is SQL SYNTAX, not a value, so a backtick in a
+# Spark identifier closes the quoting and the rest of the name becomes
+# statement -- and one of this repository's sites is OneLake row/column
+# security installing its own enforcement view.
+#
+# IT IS NOT R5. R5's Python-shell clause stops at `eval`/`exec`/`yaml.load` and
+# a command string with a shell behind it; a SQL string handed to an engine is
+# a different interpreter with a different fix, and R5 never looked at one.
+#
+# THE MEASURED ASYMMETRY IS THE POINT, and it is why this rule reports a shape
+# rather than banning it. The GO side of this tree is already correct:
+# internal/tds.principalName doubles `]` -> `]]` for a bracket-quoted
+# identifier, `quotedID` doubles `'` -> `''` for an N'...' literal, and
+# internal/server's sqlIdent/sqlLiteral do the same one package over. The
+# PYTHON side escaped nothing at all -- not one backtick is doubled anywhere in
+# python/spark_agent -- so the Go sites are ledgered as a regression guard over
+# code that is right, and the Python sites were repaired.
+_PY_SQL_METHODS = ("sql", "execute", "executemany", "executescript")
+
+# THE ESCAPE THE RULE RECOGNISES, and recognising one is not optional. A rule
+# that reported an escaped site exactly as loudly as a raw one would say
+# nothing about safety: every repaired site would need a ledger entry, and
+# then DELETING the `quote_ident` call would leave that entry valid and the
+# build green -- a guard that has stopped guarding and still reports success,
+# which is the failure this whole directory is written against. So an escaped
+# interpolation is not a finding, and an unescaped one is; removing an escape
+# turns its site back into a finding and fails the build. That is the ratchet.
+#
+# It TRUSTS THE NAMED HELPER rather than re-deriving the escape, exactly as
+# R7 trusts `filter="data"` instead of reimplementing tarfile's containment.
+# What makes that sound is that the helper's own behaviour is pinned by a name
+# table driven through BOTH the helper and the real call paths
+# (python/tests/test_spark_agent_sql_ident.py) -- the lesson the tls_scope
+# follow-up paid for, where a boundary nothing asserted was wrong in the
+# permissive direction for two releases.
+#
+# THE GO HALF HAS NO EQUIVALENT, deliberately and statedly: it is regex and
+# brace-scanning rather than a parser, so it sees a FUNCTION and not the
+# expression substituted into a format string. Its sites are therefore
+# ledgered as regression guards over code that is already correct, which is
+# also why the Go entries in docs/security-footguns.json read as "this is
+# right and must stay right" instead of "this is allowed".
+_PY_SQL_ESCAPES = ("quote_ident", "quote_literal", "quote_name")
+
+# THE VERB GATE IS WHAT KEEPS THIS FROM BEING A RULE ABOUT f-STRINGS. Without
+# it, every `f"{x}"` reaching any method called `execute` is a finding. The
+# list is deliberately the DDL/DML vocabulary and nothing else: this tree's
+# engine-matrix probes run `spark.sql(f"OPTIMIZE delta.`{p}`")` and
+# `VACUUM delta.`{p}`` over a local path variable, which are maintenance
+# commands over a URI rather than an identifier spliced into a relation, and
+# including those verbs would have put 6 harness probes in the report to say
+# nothing new.
+# The block-comment arm is the unambiguous C-comment form: a lazy `.*?` there
+# backtracked exponentially on `/*` followed by many `*//*` (CodeQL py/redos).
+_SQL_VERB = re.compile(
+    r"^\s*(?:--[^\n]*\n|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/|\s)*"
+    r"(select|insert|update|delete|create|drop|alter|grant|revoke|show"
+    r"|merge|truncate|with|use|set)\b", re.I | re.S)
+
+
+def _py_template_text(node):
+    """The literal text of a string built by interpolation, holes blanked.
+
+    Every substituted part becomes a space, so the VERB test below reads only
+    text the author wrote. Reading an interpolated part as text would let
+    `f"{verb} FROM t"` pass the gate on a word the author never typed.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else ""
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            v.value if isinstance(v, ast.Constant) and isinstance(v.value, str)
+            else " " for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return _py_template_text(node.left)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "format":
+        return _py_template_text(node.func.value)
+    return ""
+
+
+def _py_interpolated_parts(node):
+    """The expressions substituted into a built string, or None if it is not one.
+
+    None and [] are different answers: None means "a plain literal, nothing was
+    substituted" and [] means "built, but every hole was constant-folded away".
+    Only the first is safe by construction.
+    """
+    if isinstance(node, ast.JoinedStr):
+        return [v.value for v in node.values if isinstance(v, ast.FormattedValue)]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        right = node.right
+        parts = (list(right.elts) if isinstance(right, (ast.Tuple, ast.List))
+                 else [right])
+        left = _py_interpolated_parts(node.left)
+        return parts + (left or [])
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "format":
+        return list(node.args) + [kw.value for kw in node.keywords]
+    return None
+
+
+def _py_module_constants(tree):
+    """Names bound once at MODULE level -- not inside any def or class.
+
+    The narrowing this exists for, measured: most e2e probes are
+    `s.sql(f"DROP VIEW IF EXISTS {VIEW}")` over a file-local constant
+    (e2e/sail-session-isolation/probe.py). A value this file wrote into a
+    module global is not caller-controlled, and reporting it would put a dozen
+    harness probes in front of the three sites that decide who sees which rows.
+    """
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    names.add(t.id)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and \
+                isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def _py_is_escaped(node):
+    """Is this substituted expression the output of a known escape helper?
+
+    Decided on the CALLED FUNCTION, like `_is_credential_ref`: what a call
+    evaluates to is described by its function and not by its arguments, so
+    `quote_ident(row[1])` is escaped however the name got there.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    return _py_unparse(node.func).split(".")[-1] in _PY_SQL_ESCAPES
+
+
+def _py_sql_aliases(tree):
+    """Bare names this file binds to a SQL-execution method, e.g. `spark.sql`.
+
+    THE THIRD BLIND SPOT THIS RULE SHIPPED WITH, and the one that cost a real
+    finding rather than a hypothetical one. The clause below wants a METHOD for
+    a measured reason -- `execute` is a name anything may have -- and that
+    reasoning does not reach a bare name that IS `spark.sql`:
+
+        original_sql = spark.sql                     # delta_ops.py:928
+        ...
+        execute_ctas(spark, original_sql, params)    # passed as a parameter
+        original_sql(f"CREATE TABLE ... LOCATION '{loc}'")  # invisible to R8
+
+    That site is `delta_ops.execute_ctas`; it spliced a catalog-supplied schema
+    location into a quoted literal with nothing doubling an apostrophe, and it
+    sits in the one package this rule's own scope sentence claims to have
+    swept. The same value is escaped by `catalog.register` one module over, so
+    without this clause the identical `sloc` was quoted in one statement and
+    raw in another -- which is the argument for `quote_literal` existing,
+    turned on the change that added it.
+
+    SCOPED TO THIS FILE'S OWN BINDINGS, which is what keeps the method
+    requirement's reasoning intact. A bare `execute(x)` is still ignored unless
+    the file says somewhere that `execute` is a `.sql`/`.execute` attribute of
+    something; the gate is not "a bare call" but "a bare call to a name this
+    file aliased onto a SQL executor". Any scope counts, because the binding
+    and the call are routinely in different functions -- here they are 400
+    lines and one parameter apart -- so a module-scope-only reading (the one
+    `_py_module_constants` makes, for its own different purpose) would have
+    seen neither.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Attribute) and value.attr in _PY_SQL_METHODS):
+            continue
+        for t in targets:
+            if isinstance(t, ast.Name):
+                names.add(t.id)
+    return names
+
+
+def _py_sql_interpolations(tree):
+    """Sites where SQL text is assembled from something that is not a literal.
+
+    Yields (node, message). A finding needs all three of:
+
+      * a call to a SQL executor: a method named `.sql` / `.execute` /
+        `.executemany` / `.executescript`, or a bare name this file binds to
+        one of those (see `_py_sql_aliases`). A METHOD by default, like R7's
+        `.extract` clause and for the same measured reason: `execute` is a name
+        anything may have, and this repository's own
+        scripts/vendor_notebookutils_stubs.py defines a bare `extract(url)`
+        that the import gate alone did not save. The alias set is the narrow
+        exception, and it is narrow on purpose: a name that IS `spark.sql` is
+        the executor rather than a coincidence of spelling.
+      * its first argument BUILT -- an f-string, a `%`/`+`, or `.format` --
+        rather than a literal. `cur.execute("SELECT x FROM t WHERE id = ?",
+        (v,))` is a parameterized query: the literal is fixed and the value is
+        bound by the driver, which is the shape this rule wants people to
+        write, so it must never be reported.
+      * the author-written text starting on a SQL verb (see `_SQL_VERB`).
+
+    ...and then survives the constant narrowing: an interpolation every one of
+    whose holes is a literal or a module-level constant is skipped.
+    """
+    consts = _py_module_constants(tree)
+    aliases = _py_sql_aliases(tree)
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr not in _PY_SQL_METHODS:
+                continue
+        elif isinstance(func, ast.Name):
+            if func.id not in aliases:
+                continue
+        else:
+            continue
+        if not node.args:
+            continue
+        arg = node.args[0]
+        parts = _py_interpolated_parts(arg)
+        if parts is None:
+            continue
+        if not _SQL_VERB.match(_py_template_text(arg) or ""):
+            continue
+        spliced = [p for p in parts
+                   if not (isinstance(p, ast.Constant)
+                           or (isinstance(p, ast.Name) and p.id in consts)
+                           or _py_is_escaped(p))]
+        if not spliced:
+            continue
+        shown = ", ".join(sorted({_py_unparse(p) for p in spliced}))
+        out.append((node,
+                    f"SQL text is assembled with `{shown}` spliced into it -- "
+                    "a name interpolated into an identifier is SQL syntax, so "
+                    "a backtick in it ends the quoting and the rest becomes "
+                    "statement"))
+    return out
+
+
 def _py_random_targets(tree):
     """Line numbers where a `random.*` result is bound to a credential.
 
@@ -884,6 +1336,24 @@ def findings_py(path, rel=None):
             if any(symbols.get(ln, "<module>") == sym for ln in verify_off_lines):
                 continue
         add(node, "tls-verification-off", message)
+
+    # R8, also before the Call walk: these are Calls, but the walk below
+    # dispatches on a keyword/name vocabulary this rule does not share, and
+    # deciding "is the first argument a built SQL string" needs the whole call
+    # rather than its function name. One pass, one `add`, same symbol table.
+    #
+    # ONE REPORT PER SYMBOL, as the paired `ssl` idiom does: `_sweep_qualified`
+    # builds one statement in a loop and `restore` builds two, and three lines
+    # saying the same thing about one function makes the report's count stop
+    # matching what a reader would count by hand. The ledger key is
+    # (file, rule, symbol), so these were always ONE entry.
+    seen_sql = set()
+    for node, message in _py_sql_interpolations(tree):
+        sym = symbols.get(getattr(node, "lineno", 1), "<module>")
+        if sym in seen_sql:
+            continue
+        seen_sql.add(sym)
+        add(node, "sql-identifier-interpolated", message)
 
     for node in ast.walk(tree):
         # R2 -- see `_py_random_targets`: judged on what the randomness is
@@ -1076,6 +1546,16 @@ def load_ledger(ledger=None):
                 "verification skip is only reviewable against the set of hosts "
                 "that client can reach -- naming them is what distinguishes a "
                 "compose sibling's self-signed cert from a real Azure vault.")
+        if entry["rule"] == "sql-identifier-interpolated" and not entry.get("values"):
+            raise KeyError(
+                f"the security-footgun entry {key} has no `values`. The same "
+                "requirement as `hosts` one rule over, and for the same "
+                "reason: what decides whether spliced SQL is safe is WHAT is "
+                "interpolated and WHAT escapes it, so an entry that does not "
+                "name both records the site without recording the thing worth "
+                "reviewing. For the Go sites it is the only place the escape "
+                "is written down at all, because that half of the rule reads "
+                "the enclosing function rather than the argument.")
         out[key] = entry
     return out
 

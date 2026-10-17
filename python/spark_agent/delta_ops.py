@@ -37,6 +37,8 @@ the engine holds. See that module for why, and `docs/20-lakesail-engine.md`.
 import re
 import sys
 
+from sqlident import quote_literal, quote_name
+
 # Locations of tables the emulator itself registered, name -> Delta URI.
 #
 # A statement naming a registered table has to be resolved to a physical path
@@ -503,13 +505,30 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
     if replace:
         writer = writer.option("overwriteSchema", "true")
     writer.save(loc)
-    name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
+    # QUOTED AT THE SPLICE, not bound to a local first. `quote_name` composes
+    # `quote_ident` over the optional schema and the table, and `quote_literal`
+    # doubles an apostrophe in the location -- the same pair catalog.register
+    # one module over already goes through, which is the point: without it the
+    # SAME catalog-supplied `sloc` was escaped there and spliced raw here, one
+    # module apart, on statements built from the same data. `loc` is the live
+    # route: it comes from `known_schema_location(schema)`, i.e. from
+    # `remember_schema`, i.e. from `catalog.register`'s `sloc`, and
+    # `remember_schema` validates nothing. The `_CTAS`-parsed routes cannot
+    # carry the relevant character -- `target` has its backticks stripped above
+    # and the LOCATION capture is `[^']+` -- so this is a ratchet over them and
+    # a repair of the schema-location one.
+    #
+    # Inline rather than through a local on purpose: R8 decides on the
+    # expression AT the hole, so `name = quote_name(...)` followed by
+    # `f"... {name}"` would read as unescaped and the guard would not hold the
+    # repair. See docs/63 §6 on what the rule does not follow.
     if replace:
         try:
-            original_sql(f"DROP TABLE IF EXISTS {name}")
+            original_sql(f"DROP TABLE IF EXISTS {quote_name(schema, tbl)}")
         except Exception:  # noqa: BLE001 - a stale entry must not block the re-register
             pass
-    original_sql(f"CREATE TABLE IF NOT EXISTS {name} USING delta LOCATION '{loc}'")
+    original_sql(f"CREATE TABLE IF NOT EXISTS {quote_name(schema, tbl)} "
+                 f"USING delta LOCATION {quote_literal(loc)}")
     remember(tbl, loc, schema)
     where = "its stated LOCATION" if params.get("location") else "its schema location"
     return f"CREATE TABLE: {target} at {where} (delta write + register)"

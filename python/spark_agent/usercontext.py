@@ -67,6 +67,7 @@ import urllib.request
 # mutually dependent and only the call order kept it working. codeexec holds
 # run_code and imports neither of us, so the edge is gone rather than delayed.
 import codeexec
+from sqlident import quote_ident
 from tls_scope import tls_context
 
 # The child entry point is a SIBLING FILE, not this module. Running this one
@@ -440,7 +441,7 @@ def register(g, tables):
     errors = []
     for name in sorted(bound - set(wanted)):
         try:
-            spark.sql(f"DROP VIEW IF EXISTS `{name}`")
+            spark.sql(f"DROP VIEW IF EXISTS {quote_ident(name)}")
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")
     bound.clear()
@@ -453,13 +454,16 @@ def register(g, tables):
                 # table, and rightly.
                 _bind_arrow(spark, name, t["arrow"])
             else:
-                spark.sql(f"CREATE OR REPLACE TEMP VIEW `{name}` AS "
-                          f"SELECT * FROM delta.`{t['location']}`")
+                # The LOCATION is backtick-quoted too, so it is escaped
+                # too: `delta.`<path>`` is an identifier position, and a
+                # backtick in the path ends it exactly as one in a name does.
+                spark.sql(f"CREATE OR REPLACE TEMP VIEW {quote_ident(name)} AS "
+                          f"SELECT * FROM delta.{quote_ident(t['location'])}")
             bound.add(name)
         except Exception as exc:  # noqa: BLE001
             # A name we cannot bind must not be left bound to something older.
             try:
-                spark.sql(f"DROP VIEW IF EXISTS `{name}`")
+                spark.sql(f"DROP VIEW IF EXISTS {quote_ident(name)}")
             except Exception:  # noqa: BLE001
                 pass
             errors.append(f"{name}: {exc}")

@@ -14,13 +14,15 @@
     "with their reason instead of being silently excluded. An excluded directory teaches nobody",
     "anything; an entry naming the host set is reviewable.",
     "",
-    "THE MEASURED BASELINE, as of the change that taught R1 the stdlib `ssl` dialect and added",
-    "archive-extraction-unchecked: 73 findings across 576 non-test source files, in 65 distinct",
-    "(file, rule, symbol) keys -- ALL of them listed below, and EIGHT MORE that are NOT, because",
-    "they were fixed in the same changes rather than recorded.",
+    "THE MEASURED BASELINE, as of the change that added sql-identifier-interpolated (R8): 93",
+    "findings across 578 non-test source files, in 85 distinct (file, rule, symbol) keys -- ALL of",
+    "them listed below, and SEVENTEEN MORE that are NOT, because they were fixed in the same",
+    "changes rather than recorded. The file count is restated from a measured run: the prose here",
+    "claimed 576 while the gate was printing 577, and 578 is that plus",
+    "python/spark_agent/sqlident.py.",
     "",
-    "THE FIRST of those eight is why this file exists. internal/akv set InsecureSkipVerify on the",
-    "whole transport from FABRIC_ENTRA_TLS_INSECURE (docker-compose.yml sets it true;",
+    "THE FIRST of those seventeen is why this file exists. internal/akv set InsecureSkipVerify on",
+    "the whole transport from FABRIC_ENTRA_TLS_INSECURE (docker-compose.yml sets it true;",
     "docs/04-configuration.md documents it as being for entra-emulator's cert), on the one client",
     "whose allowlist deliberately admits a real *.vault.azure.net -- so a secret could be fetched",
     "from a real vault over a connection nobody authenticated, while the https requirement",
@@ -53,6 +55,62 @@
     "two assignments that build the unverified context and cannot see the host guard above them, so",
     "the sites still match. Their `hosts` field names what the guard actually admits, which is the",
     "whole point: loopback/link-local/private ADDRESSES, *.localhost, *.internal, host.docker.internal and bare compose service names, and nothing else -- a public host verifies whether it is spelled as a name or as an IPv6 literal, which took a repair and a host table over both copies to be true rather than merely claimed.",
+    "",
+    "R8, sql-identifier-interpolated, IS THE NEWEST AND ITS LEDGER READS DIFFERENTLY FROM THE REST.",
+    "A name spliced into SQL text is SQL SYNTAX, not a value: backticks around it look like quoting",
+    "and are not, because a backtick inside the name closes the pair and the rest is parsed. The",
+    "measured asymmetry is the whole story. The GO side of this tree was already correct everywhere",
+    "-- internal/tds.principalName doubles `]` -> `]]`, quotedID doubles `'` -> `''`,",
+    "internal/server's sqlIdent/sqlLiteral are the same pair one package over, and enterDelegated",
+    "leans on SQL Server's own QUOTENAME -- while the PYTHON side doubled not one backtick anywhere",
+    "in python/spark_agent, including onelake_security.apply, which installs the temp view that",
+    "ENFORCES OneLake row- and column-level security. A lakehouse table is a FOLDER under Tables/",
+    "created by whoever can write to OneLake, and nothing in internal/onelake rejects a backtick in",
+    "a path segment, so that name is data the whole way round: folder -> catalog.register -> SHOW",
+    "TABLES -> the view that decides which rows a principal sees.",
+    "",
+    "SO THE EIGHT PYTHON SYMBOLS WERE FIXED and the SIX GO SYMBOLS ARE RECORDED, and the six",
+    "entries below say 'this is right and must stay right' rather than 'this is allowed'. The reason",
+    "they are recorded at all is a stated limit of the rule: its Go half is regex and",
+    "brace-scanning rather than a parser, so it reads the enclosing FUNCTION and cannot see the",
+    "escape sitting in the argument list, where its Python half can. The Python half DOES recognise",
+    "the escape, which is what makes the repaired sites report clean -- and that matters more than",
+    "it sounds. Had escaped sites gone on reporting, each would have needed an entry here, and then",
+    "deleting the quote_ident call would have left that entry valid and the build green: a guard",
+    "that has stopped guarding and still reports success. Removing an escape now takes `--strict`",
+    "to exit 1 -- and that is the direction the EIGHTH python symbol was found in.",
+    "",
+    "THE EIGHTH IS delta_ops.execute_ctas, AND IT WAS INVISIBLE TO R8 ITSELF for this rule's first",
+    "release. Its callee is the bare name `original_sql`, which delta_ops binds to spark.sql and",
+    "passes as a parameter, so the rule's METHOD requirement -- measured, and right about `execute`",
+    "being a name anything may have -- walked straight past it. It spliced a catalog-supplied",
+    "schema location into LOCATION '{loc}' with nothing doubling an apostrophe, in the one package",
+    "R8's own scope sentence claimed to have swept, while catalog.register escaped the SAME sloc",
+    "one module over: remember_schema -> known_schema_location -> the registration statement, with",
+    "nothing on that path validating anything. The rule now accepts a bare call to a name THIS",
+    "FILE binds to a .sql/.execute attribute (_py_sql_aliases), so the fix ratchets instead of",
+    "being a correction nothing holds. Two sites in python/spark_agent are still beyond it and",
+    "were repaired anyway -- secure_view_sql RETURNS its SQL text, and _drop binds its templates",
+    "to a variable first -- and docs/63 §6 lists both as what this rule does not do.",
+    "",
+    "`values` IS REQUIRED ON EVERY R8 ENTRY, and is to this rule what `hosts` is to R1: what decides",
+    "whether spliced SQL is safe is WHAT is interpolated and WHAT escapes it, so an entry that names",
+    "neither records the site without recording the thing worth reviewing. For the six Go entries it",
+    "is the only place the escape is written down at all. The thirteen e2e and example entries are",
+    "there because every value they interpolate is one that file itself wrote -- a module constant, a",
+    "literal in the loop it iterates -- which sits exactly ONE dataflow step past the rule's",
+    "constant narrowing; following that step is taint analysis, which this rule does not do, so they",
+    "are recorded rather than narrowed away, and a probe that starts interpolating a name from the",
+    "catalog becomes a finding again.",
+    "",
+    "ONE R8 ENTRY IS NEITHER A GUARD NOR A HARNESS: onelake_security.apply, which splices the policy",
+    "author's OWN row filter as the view's source. That is the feature -- rewriting user SQL would",
+    "mean parsing it, and the module's docstring notes that a parser 95% right is a security control",
+    "5% absent -- so the splice is recorded the way python-shell-injection records the places this",
+    "repo executes submitted code. Its entry also names the limitation it creates: the ledger key is",
+    "(file, rule, symbol), so once that symbol is recorded for `sql` the gate can no longer tell an",
+    "escaped `name` from a raw one there. Verified, not assumed. For that one symbol the guard is",
+    "python/tests/test_spark_agent_sql_ident.py, which pins the emitted statement text.",
     "",
     "Three rules ship with a zero baseline and are pure regression guards, so they appear nowhere",
     "below: weak-random-for-secrets (no non-test Go file imports math/rand at all),",
@@ -596,6 +654,146 @@
         "$FABRIC / localhost -- the emulator's own Livy surface, what `make spark` points at"
       ],
       "why": "The deep Spark check `make spark` runs against a local stack: Livy -> spark-agent -> sail, all on loopback or the compose network. A developer-facing diagnostic over the self-signed dev cert, which is the transport docs/05-tls-and-hosts.md documents for exactly this."
+    },
+    {
+      "file": "internal/tds/principal.go",
+      "symbol": "EnsurePrincipal",
+      "values": "The caller's Entra object id, twice, in both quoting contexts: as a bracket-quoted IDENTIFIER through `principalName`, which doubles `]` -> `]]`, and as an N'...' LITERAL through `quotedID`, which doubles `'` -> `''`. The generated password goes through the same `'` doubling. Nothing else is interpolated. This is the pattern python/spark_agent/sqlident.py was written to mirror.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "internal/tds/principal.go",
+      "symbol": "revokePrincipal",
+      "values": "`quotedID` and `name` ONLY, and both arrive pre-escaped from EnsurePrincipal -- the literal already `'`-doubled, the identifier already `]`-doubled. The role names are from `principalRights`, a fixed in-source list of T-SQL fixed database roles, not from data.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "internal/tds/principal.go",
+      "symbol": "SyncOneLakeMemberships",
+      "values": "The object id as an N'...' literal via `quotedID` (`'` -> `''`) and as a bracket-quoted identifier via `principalName` (`]` -> `]]`), plus each OneLake role name escaped BOTH ways inline for its two positions -- `strings.ReplaceAll(r, \"'\", \"''\")` for the literal and `strings.ReplaceAll(r, \"]\", \"]]\")` for the identifier. The role names come from the item's policy, so they are data, and they are escaped.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "internal/tds/principal.go",
+      "symbol": "SyncShortcutAccess",
+      "values": "Shortcut TABLE names and COLUMN names -- data, from the lakehouse's shortcuts and the source item's column grants. Each is bracket-quoted with `]` doubled (`strings.ReplaceAll(t, \"]\", \"]]\")`), and the resulting identifier is then `'`-doubled again where it is embedded as an N'...' literal for sp_executesql. NOT the three symbols this rule's plan predicted: measurement found a FOURTH in the same file, escaping the same way, and it is recorded here rather than left out because the plan's count was written before the sweep ran.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "internal/server/onelakesync.go",
+      "symbol": "syncOneLakeRoles",
+      "values": "OneLake role names and table names, from the item's security policy. Both go through the file's own pair -- `sqlIdent` (`[` + `]` -> `]]`) for an identifier and `sqlLiteral` (N' + `'` -> `''`) for a literal -- which is the same pair as internal/tds's principalName/quotedID one package over. The nested sp_executesql layer re-escapes the already-bracketed identifier as a literal, which is why `sqlLiteral(ident)` appears rather than `sqlLiteral(name)`.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "internal/server/dataaccessmode.go",
+      "symbol": "enterDelegated",
+      "values": "Security-policy names and GRANT statements, and this one is escaped by SQL SERVER ITSELF rather than by Go: `policies` is read back in enterUserIdentity by a query that builds each name with `QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name)`, and QUOTENAME bracket-quotes and doubles `]`. So the raw `%s` in `ALTER SECURITY POLICY %s` receives a name the server already quoted, and the `%s` inside `N'...'` is `'`-doubled by `strings.ReplaceAll(p, \"'\", \"''\")`. Worth naming because it is the one site here whose escape is NOT visible in this repository's own source.",
+      "why": "RECORDS A SITE THAT IS ALREADY CORRECT, and must stay correct. R8 reports this symbol because its Go half reads the enclosing FUNCTION rather than the expression substituted into the format string -- it is regex and brace-scanning, not a parser (docs/63 §6), so unlike the Python half it cannot see the escape sitting in the argument list. The escape is there, and the `values` field names it. This entry is a REGRESSION GUARD: if someone drops the doubling, the finding stays and this entry goes on excusing it, so the guard is the entry PLUS the Go tests that pin the emitted text -- which is why the `values` field, not the `why`, is the part worth re-reading in review.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "python/spark_agent/onelake_security.py",
+      "symbol": "apply",
+      "values": "TWO values with deliberately OPPOSITE treatment, which is the whole reason this entry exists. `name` is DATA -- a OneLake `Tables/` folder name, created by whoever can write there and arriving here via catalog registration and SHOW TABLES -- and is escaped with `sqlident.quote_ident`, which doubles the backtick. `sql` is `secure_view_sql`'s output and is spliced RAW, because its relation half is the policy author's OWN row filter: the module's docstring explains that rewriting user SQL would mean parsing it, and 'a parser that is 95% right is a security control that is 5% absent', so the filter is used as the view's source instead. Column names in that projection come from the same policy.",
+      "why": "SPLICING AUTHOR-WRITTEN POLICY SQL IS THE FEATURE; splicing a NAME was the defect, and the name half is fixed rather than recorded. A OneLake row filter IS SQL text by design -- the principalAccess API returns it as text precisely so a third-party engine can apply it, which is what this module does on Fabric's behalf -- so there is no version of this that does not place author SQL into a statement. The entry is here so the set of places this repository splices policy SQL stays enumerated, exactly as python-shell-injection records the set of places it executes submitted code. The identifier it sits beside is escaped, and R8 would report this symbol again if that stopped being true. AND THE LIMITATION THIS ENTRY CREATES, stated because it is not obvious and it is the reason the test table exists: the ledger key is (file, rule, symbol), so once this symbol is recorded for the `sql` splice the checker can no longer tell `quote_ident(name)` from a raw `{name}` here -- both are the same finding under the same key, and both report green. Verified rather than assumed: reverting the name to raw leaves `--strict` at exit 0. So for THIS symbol the guard is not the gate but python/tests/test_spark_agent_sql_ident.py, which pins the emitted CREATE OR REPLACE TEMP VIEW text and fails on exactly that revert. Every other repaired site in spark_agent is NOT ledgered and is therefore held by the gate itself: removing an escape there is an unrecorded finding and exit 1.",
+      "rule": "sql-identifier-interpolated"
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "delta_time_travel_sql",
+      "values": "`p`, a local assigned `_table_path(\"t_tt_sql\")` -- the module constant WAREHOUSE joined to a literal leaf. A `delta.`<path>`` target, not a catalog name.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "delta_merge_registered_table",
+      "values": "`p`, a local assigned `_table_path(\"t_merge_reg\")` -- WAREHOUSE (a module constant) joined to a literal. Reaches a LOCATION clause for a fixed table name `m_reg`.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "delta_merge_path_target",
+      "values": "`p`, a local assigned `_table_path(\"t_merge_path\")` -- WAREHOUSE joined to a literal, spliced as a `delta.`<path>`` MERGE target.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "sql_create_table_defaults_to_delta",
+      "values": "`p`, a local assigned `_table_path(\"t_ctas_default\")` -- WAREHOUSE joined to a literal, into a LOCATION clause.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "sql_describe_registered_delta_table",
+      "values": "`p`, a local assigned from `_table_path` over a literal leaf, into a LOCATION clause for the fixed name `d_reg`.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "sql_describe_detail_registered_delta",
+      "values": "`p`, a local assigned from `_table_path` over a literal leaf, into a LOCATION clause for the fixed name `dd_reg`.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/onelake-security-bypass/probe.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "main",
+      "values": "`name`, the loop variable over the literal tuple `((\"sales\", ...), (\"secret\", ...))` written three lines above, used as both the table name and the DATA path leaf. Nothing in this probe reads a name from the catalog or a response.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/type-map/probe.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "write_through_spark",
+      "values": "`select`, a projection joined from the module constants COLUMNS, NESTED and SENTINEL -- column names and type expressions this file declares as its own oracle.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "e2e/type-map/probe.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "read_through_tds",
+      "values": "`sname` from the module constant SENTINEL, and TABLE, also a module constant. A T-SQL `SELECT <col> FROM <table>` over this probe's own fixture names.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "examples/medallion-advanced-pyspark/gold_star.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "<module>",
+      "values": "`st['lakehouse']`, a bracket-quoted T-SQL identifier read from THIS example's own summary artifact -- `st = load()` reads the JSON an earlier step of the same example wrote, holding the lakehouse name the example itself chose. The only entry in this group that is file data rather than a constant, which is why it is named separately; it is still this example's own output, not a tenant's input.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "examples/medallion-advanced-dbt-fabricspark/gold_star.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "<module>",
+      "values": "`st['lakehouse']`, identical to the pyspark half of this pair -- scripts/check_example_parity.py requires these two files to differ only in silver, so the two entries are the same site twice by construction.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "examples/medallion-dbt-fabricspark/silver_session.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "register",
+      "values": "`schema` and `table`, loop variables over `(LAKEHOUSE, SCHEMA)` and `SOURCES`, all three module constants, plus `onelake(table)` into a LOCATION clause.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
+    },
+    {
+      "file": "examples/medallion-dbt-fabricspark/silver_session.py",
+      "rule": "sql-identifier-interpolated",
+      "symbol": "main",
+      "values": "`model`, the loop variable over the literal tuple `(\"silver_customers\", \"silver_orders\", \"silver_quarantine_orders\")`, and `SCHEMA`, a module constant.",
+      "why": "EVERY INTERPOLATED VALUE IS ONE THIS FILE ITSELF WROTE -- a module-level constant, a literal in the loop it iterates, or a path this probe built from one. R8's narrowing skips an interpolation whose holes are all literals or module constants, and these sit exactly ONE dataflow step past it: a loop variable over a literal tuple, or a local assigned from a constant. Following that step is taint analysis, which this rule deliberately does not do (docs/63 §6 says so), so these are recorded rather than narrowed away -- recorded, because a probe that starts interpolating a name from the CATALOG or from a response should become a finding again, and a narrowing would have made that invisible. Harness and example code that ships in no artifact, driving containers this repo starts."
     }
   ]
 }
