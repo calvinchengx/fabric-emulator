@@ -23,6 +23,32 @@ WHAT WAS MEASURED, at the commit that added this:
     streaming it through a DECODER went through none.
   * 0 benchmarks, and 9 `regexp.MustCompile` sites, all 9 at package scope.
 
+WHAT WAS MEASURED when the TDS half was added, which is the surface everything
+above could not see:
+
+  * TWO listeners, not one. cmd/fabric-emulator/main.go serves HTTP on one
+    (`http.Serve(ln, srv.Handler())` -- the ONLY serve site in the tree) and the
+    SQL/TDS endpoint on a second net.Listener of its own, `srv.TDS.Serve(tln)`.
+  * 0 checks on the accumulated length of a TDS message:
+    `grep -c 'MaxMessageBytes|maxMessageBytes' internal/tds/*.go` returned 0
+    across all 40 files of that package.
+  * 8 TDS read sites (3 in server.go, 2 in client.go, 2 in splice.go, plus the
+    loop in packet.go itself), ALL of them funnelling through `ReadMessage`. One
+    ceiling there therefore covers the whole listener, which is why this is one
+    anchored assertion rather than eight.
+
+Everything above anchors on `r.Body`, `http.MaxBytesReader` and
+internal/httpx/body.go, so it is HTTP-only BY CONSTRUCTION -- there is no
+`r.Body` on a raw TCP listener for an outer bound to wrap. And the TDS side held
+the same shape the HTTP side spent a whole change closing: `tds.ReadMessage`
+concatenated packets until one set the EOM status bit, with no cap on the total.
+Each `ReadPacket` is self-limiting at 64 KiB because the length field is a
+uint16, which is exactly why the loop read as bounded and was not: a peer that
+never sets EOM chose how much the emulator allocated. Repaired in the same
+change by `tds.DefaultMaxMessageBytes` (settable at start-up through
+`tds.SetMaxMessageBytes`, wired to FABRIC_MAX_TDS_MESSAGE_BYTES), so this kind
+too ships at zero entries rather than as a recorded allowance.
+
 The 68 decoder sites are the exposure: a streaming decoder allocates as it
 reads, so before the outer bound landed any client could make the emulator
 allocate whatever it chose to send, on any of them, and a 69th added tomorrow
@@ -31,7 +57,7 @@ would inherit that invisibly. That is closed by ONE bound at the root handler
 checker's ledger ships nearly empty instead of 70 entries deep -- a ledger with
 70 accepted entries would document the problem rather than close it.
 
-WHAT IS FLAGGED. Four kinds, and two of them are about the repair rather than
+WHAT IS FLAGGED. Six kinds, and four of them are about the repair rather than
 the original shape, because a bound that exists is not the same as a bound that
 still applies:
 
@@ -64,6 +90,43 @@ still applies:
     package-level today, so this ships empty; the kind is defined so a future
     per-call compile lands as a decision recorded here rather than an unnoticed
     cost, the same precedent `long-sleep` set in check_vitest_test_flakiness.py.
+  * `unbounded-frame-accumulation` -- the whole CHAIN the TDS bound travels
+    through internal/tds/packet.go, in four links: `DefaultMaxMessageBytes` is
+    declared with a value this can read; the effective ceiling is initialised
+    FROM it; the exported `ReadMessage` -- the single entry point all 8 TDS read
+    sites go through -- routes it; and the function holding the packet join
+    ORDERS something against the bound it was handed, at or before the append
+    that would cross it.
+    Four links because each is separately satisfiable while the bound does
+    nothing, and THIS KIND'S OWN FIRST VERSION proved it. That version checked
+    only that `ReadMessage` mentioned the constant. By the time it shipped,
+    `ReadMessage` was a one-line delegation to a helper -- so it did mention the
+    constant, and deleting the comparison from the HELPER left the ceiling
+    declared, derived, passed around, never compared against, and this checker
+    reporting the tree healthy. The accumulating function is therefore located
+    from the join itself rather than named here: a name stays satisfied by a
+    function that merely still exists, while the join is satisfied only by the
+    line that grows the buffer. Zero recognised joins is itself a finding.
+    What this does NOT claim, so nobody reads more into a green run than is
+    there: that the comparison is arithmetically correct -- that the accumulated
+    length is what is on the other side of it, and that the bound is inclusive.
+    Those are held by internal/tds/maxmessage_test.go, which exercises the
+    refusal and its tightness. This holds the half no test can: that the
+    comparison is still there, after a refactor nothing would fail on.
+  * `unbounded-serve-root` -- every `http.Serve` / `http.ListenAndServe` /
+    `http.ListenAndServeTLS` / `&http.Server{...}` site under the scan roots
+    must be handed an expression that calls `.Handler()`, which is the single
+    place the outer HTTP bound is installed. Exactly one such site exists today
+    (cmd/fabric-emulator/main.go, handed `srv.Handler()`), so the kind ships
+    empty; its purpose is that a SECOND HTTP listener handed `s.mux`, a bare
+    `http.HandlerFunc` or no Handler field at all (which means
+    http.DefaultServeMux) lands as a finding rather than as an unnoticed bypass
+    of the 68 decoder sites' only ceiling. The check is that the root handler is
+    in the chain, not that it is the outermost wrapper -- `middleware(
+    srv.Handler())` is fine, because the bound is still installed. Zero
+    recognised serve sites is itself a finding: a sweep that covers nothing
+    passes vacuously, and a serve call moved behind a helper this regex does not
+    know would do exactly that.
 
 WHAT IS DELIBERATELY NOT FLAGGED, with the false-positive rate that ruled it
 out. The loop-shaped heuristics one reaches for first were probed over this tree
@@ -76,6 +139,15 @@ and are too noisy to gate on:
     POSITIVE: the defer is inside a goroutine closure, not the loop body, so it
     runs per connection exactly as intended. A brace-depth walk cannot tell those
     apart, which is the whole problem with the class.
+  * `append-in-loop` -- the generic form of the TDS defect, and the most
+    tempting one to add after fixing it. 643 `append(` sites under the scan
+    roots, 540 of them inside a loop by the same crude walk. Nearly all
+    accumulate a bounded, already-read collection, and a heuristic that cannot
+    tell "grow a slice per item of a list I already have" from "grow a slice per
+    frame a peer chooses to send" would bury the one case that matters under
+    five hundred that do not. So the TDS bound is held by the two anchored kinds
+    above -- the two listeners this emulator actually exposes -- rather than by
+    loop shape.
 
 Gating on any of them would mean a ledger of dozens of accepted entries that
 nobody reads, which is how a guard becomes decoration. They are recorded here so
@@ -119,6 +191,46 @@ CEILINGS_FILE = "internal/httpx/body.go"
 ROOT_HANDLER_FILE = "internal/server/server.go"
 OUTER_CONST = "DefaultMaxRequestBody"
 
+# The SECOND listener's ceiling. A raw TCP listener has no r.Body, so nothing
+# above can reach this surface: the assertion has to name the file directly.
+#
+# THREE names, not one, and the reason is the defect this kind was first shipped
+# with. It checked that `ReadMessage` -- the exported entry -- mentioned the
+# ceiling, which it did, as a one-line delegation to a helper. Deleting the
+# comparison from the HELPER left the constant declared, passed around, never
+# compared against, and this kind reported the tree healthy. So what is asserted
+# is not "a function names the constant" but the chain the bound actually travels:
+# the default is DECLARED, the effective ceiling DERIVES from it, the entry point
+# ROUTES it, and the function holding the join COMPARES against the bound it was
+# handed, at or before the append that would cross it.
+#
+# The accumulating function is deliberately NOT named here. It is located from
+# the join itself (`_TDS_JOIN`), because naming it is what went wrong: a name in
+# this file is satisfied by a function that still exists, while the join is
+# satisfied only by the line that actually grows the buffer.
+TDS_PACKET_FILE = "internal/tds/packet.go"
+TDS_CEILING = "DefaultMaxMessageBytes"
+TDS_EFFECTIVE = "maxMessageBytes"
+TDS_ENTRY_FUNC = "ReadMessage"
+
+# Where the zero-serve-sites finding is reported, which is the file that holds
+# the one real site. Named so the finding has somewhere to point rather than
+# being attributed to the whole tree.
+SERVE_ROOT_ANCHOR = "cmd/fabric-emulator/main.go"
+
+# The one handler expression a serve site may be handed: `srv.Handler()` is
+# where boundBodies is installed. Matched as a CALL, because a field or variable
+# named `handler` proves nothing about the bound.
+_HANDLER_CALL = re.compile(r"\.Handler\(\s*\)")
+# `http.Serve(` / `http.ListenAndServe(` / `http.ListenAndServeTLS(` and the
+# `http.Server{...}` composite literal. ListenAndServeTLS is listed before
+# ListenAndServe so the longer name wins the alternation, and `Serve` requires
+# the open paren so `http.ServeContent(`, `http.ServeFile(` and `http.ServeMux`
+# -- none of which install a handler -- do not match.
+_SERVE_SITE = re.compile(
+    r"\bhttp\.(?:ListenAndServeTLS|ListenAndServe|Serve)\s*\(|\bhttp\.Server\s*\{")
+_HANDLER_FIELD = re.compile(r"\bHandler\s*:\s*(.+)")
+
 # A request body read as bytes with no ceiling. Anchored on the RECEIVER name --
 # `r`, `req`, `request` -- because that is what distinguishes a body a caller
 # chose the size of from `resp.Body`, which is an engine we relayed to answering
@@ -128,6 +240,25 @@ _UNBOUNDED_READ = re.compile(rf"\bio\.ReadAll\(\s*{_REQ}\.Body\s*\)")
 _UNBOUNDED_COPY = re.compile(rf"\bio\.Copy\([^,]+,\s*{_REQ}\.Body\s*\)")
 
 _REGEXP = re.compile(r"\bregexp\.(?:MustCompile|Compile)\s*\(")
+_TDS_CEILING_DECL = re.compile(
+    rf"^\s*(?:const\s+)?{TDS_CEILING}\s*=\s*(.+?)\s*$", re.M)
+# The packet JOIN -- `data = append(data, p.Data...)`. Anchored on the PAYLOAD
+# being appended rather than on `append(` alone, which would also match any
+# unrelated slice-building helper this file grows later and demand a ceiling
+# check inside it. If a refactor spells the join some other way this matches
+# nothing, and zero recognised joins is itself a finding: the same
+# covers-nothing-passes-vacuously direction `unbounded-serve-root` takes.
+_TDS_JOIN = re.compile(r"\bappend\s*\([^,]+,\s*[A-Za-z0-9_]+\.Data\s*\.\.\.")
+# `<` and `>` that ORDER two values. `<=`/`>=` included, `==` excluded (equality
+# is not a ceiling check), and shifts blanked before matching because `<<`
+# contains `<` and `320 << 20` is not a comparison.
+_ORDERING = r"(?:<=|>=|<|>)"
+_SHIFTS = re.compile(r"<<|>>")
+_INT_TYPE = re.compile(r"u?int(?:8|16|32|64)?")
+# `limit := expr` / `limit = expr`, so a bound read into a local is still a
+# bound. One name on the left only: a multi-assignment is not how a ceiling is
+# fetched, and accepting one would widen what counts as the bound for no gain.
+_ASSIGN = re.compile(r"^\s*([A-Za-z0-9_]+)\s*(?::=|=)\s*(.+)$")
 _FUNC = re.compile(r"^func\b")
 # `MaxFoo = 100 << 20` inside a const block, or a standalone
 # `const DefaultMaxRequestBody = 320 << 20`. The optional `const ` is not
@@ -235,6 +366,179 @@ def _func_name(line):
     return m.group(1) if m else "<anonymous>"
 
 
+def _func_span(clean_lines, name):
+    """`(first, last)` line indices of `func <name>(...)`, or None if it is gone.
+
+    Brace-counted forward from the `func` line, in the same crude tradition as
+    `_enclosing_func`: enough of Go's syntax to tell where a function ends, not
+    a parse. The TDS kind needs the SPAN rather than just the text, because it
+    has to compare the position of the ceiling comparison against the position
+    of the append -- "bounded" and "bounded before the allocation that would
+    cross the bound" are different claims, and packet.go makes the second one.
+    """
+    pat = re.compile(rf"^func\s+{re.escape(name)}\s*\(")
+    for start, line in enumerate(clean_lines):
+        if not pat.match(line):
+            continue
+        depth = 0
+        for j in range(start, len(clean_lines)):
+            depth += clean_lines[j].count("{") - clean_lines[j].count("}")
+            if depth <= 0 and "{" in "".join(clean_lines[start:j + 1]):
+                return start, j
+        return start, len(clean_lines) - 1
+    return None
+
+
+def _func_body(clean_lines, name):
+    """The lines of `func <name>(...)`, header included, or None if it is gone."""
+    span = _func_span(clean_lines, name)
+    return None if span is None else clean_lines[span[0]:span[1] + 1]
+
+
+def _bound_params(body_text):
+    """The integer-parameter names of a Go func -- the bounds it was HANDED.
+
+    `func readMessageBounded(r io.Reader, limit int64)` -> `["limit"]`. Needed
+    because the accumulation loop compares against the limit it was given, not
+    against the package constant, so a check that only looked for the constant's
+    name would report a helper that takes a bound and ignores it as healthy --
+    which is exactly how the first version of this kind failed.
+    """
+    m = re.match(r"^func\s+(?:\([^)]*\)\s*)?[A-Za-z0-9_]+", body_text)
+    if not m:
+        return []
+    i = body_text.find("(", m.end())
+    if i < 0:
+        return []
+    names, pending = [], []
+    for piece in _split_args(_balanced_from(body_text, i)):
+        parts = piece.split()
+        if len(parts) < 2:
+            # `a, b int` arrives here as the bare `a`, whose type is the NEXT
+            # piece's. Held until a piece names one.
+            pending.append(piece)
+            continue
+        group, pending = [*pending, parts[0]], []
+        if _INT_TYPE.fullmatch(" ".join(parts[1:]).strip()):
+            names.extend(group)
+    return names
+
+
+def _derived_locals(lines):
+    """Local names assigned FROM the ceiling: `limit := maxMessageBytes.Load()`.
+
+    Without this the kind would be enforcing a code LAYOUT rather than a bound.
+    A loop that reads the effective ceiling into a local and orders the
+    accumulated length against that local is correctly guarded, and flagging it
+    because the bound arrived as an assignment rather than as a parameter is the
+    kind of false positive that gets a guard argued with instead of fixed --
+    `defer-in-loop`'s whole history in this file.
+    """
+    out = []
+    for line in lines:
+        m = _ASSIGN.match(line)
+        if m and (TDS_CEILING in m.group(2) or TDS_EFFECTIVE in m.group(2)):
+            out.append(m.group(1))
+    return out
+
+
+def _ordering_line(lines, names):
+    """The first index in `lines` that ORDERS something against one of `names`.
+
+    None when nothing does, which is the finding: a bound that is never on
+    either side of a `<`, `<=`, `>` or `>=` is a bound nothing is checked
+    against. What this does NOT claim is that the comparison is arithmetically
+    right -- that the accumulated length is what is on the other side of it, and
+    that the bound is inclusive. Those are held by internal/tds/maxmessage_test.go,
+    which exercises the refusal and its tightness. This holds the half a test
+    cannot: that the comparison is still THERE, in the function that joins, after
+    a refactor no test would fail on.
+    """
+    for i, line in enumerate(lines):
+        text = _SHIFTS.sub("~", line)
+        for n in names:
+            esc = re.escape(n)
+            if re.search(rf"\b{esc}\b\s*{_ORDERING}", text) or \
+                    re.search(rf"{_ORDERING}\s*\b{esc}\b", text):
+                return i
+    return None
+
+
+def _balanced_from(text, start):
+    """The text inside the `(` or `{` at text[start], to its matching close.
+
+    Returns the remainder if it never closes, which is the safe direction: an
+    unterminated call reads as "everything after it" and so is checked for a
+    handler rather than silently skipped.
+    """
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "([{":
+            depth += 1
+        elif text[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+    return text[start + 1:]
+
+
+def _split_args(text):
+    """Comma-separated pieces at the TOP level of `text`.
+
+    `http.Serve(ln, mw(srv.Handler(), opts))` has two arguments, not three; a
+    naive split on commas would read the handler as `opts` and report a correct
+    site as unbounded.
+    """
+    out, depth, cur = [], 0, []
+    for ch in text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return [a.strip() for a in out if a.strip()]
+
+
+def serve_sites(path, source=None, root=None):
+    """Every HTTP serve site in one file, with the handler it is handed.
+
+    `handler` is "" when the site names none at all -- `http.Serve(ln, nil)`, or
+    an `&http.Server{...}` with no Handler field. Both mean
+    http.DefaultServeMux, which means no outer bound, so "" must read as a
+    finding rather than as "nothing to check".
+    """
+    text = source if source is not None else path.read_text(encoding="utf-8")
+    raw_lines = text.split("\n")
+    clean_lines = _strip_noise(text).split("\n")
+    rel = relkey(path, root)
+    out = []
+    for i, line in enumerate(clean_lines):
+        m = _SERVE_SITE.search(line)
+        if not m:
+            continue
+        # The call or composite literal may span lines, so the walk starts at
+        # the opening delimiter -- always the last character of the match -- and
+        # runs over the rest of the file rather than this line alone.
+        window = "\n".join(clean_lines[i:])
+        inner = _balanced_from(window, m.end() - 1)
+        if m.group(0).rstrip().endswith("{"):
+            field = _HANDLER_FIELD.search(inner)
+            pieces = _split_args(field.group(1)) if field else []
+            handler = pieces[0] if pieces else ""
+        else:
+            args = _split_args(inner)
+            handler = args[-1] if args else ""
+        out.append({"file": rel, "symbol": _enclosing_func(clean_lines, i),
+                    "line": i + 1, "handler": handler,
+                    "snippet": raw_lines[i].strip()})
+    return out
+
+
 def _value_of(expr):
     """`256 << 20` or a plain integer, as an int. None if it is neither.
 
@@ -296,16 +600,172 @@ def findings_for(path, source=None, root=None):
     return out
 
 
-def structural_findings(root=None):
-    """The two findings that are about the REPAIR rather than the original shape.
+def _tds_findings(base):
+    """The second listener's ceiling, checked along the chain the bound travels.
 
-    Both are absence-shaped, and absence is what a sweep cannot report: no line
-    anywhere says "the outer bound is missing". Without these the checker would
-    pass, in perpetuity, on a tree whose one ceiling had been refactored away --
-    reporting zero unbounded reads, which would be true and beside the point.
+    FOUR links, because every one of them is satisfiable while the bound does
+    nothing, and the first version of this kind proved it by checking only the
+    third:
+
+      1. DECLARED -- `DefaultMaxMessageBytes` exists with a value this can read.
+      2. DERIVED  -- the effective ceiling is initialised FROM that default, so
+         lowering the constant lowers the bound. A `maxMessageBytes.Store(1<<20)`
+         would leave the constant documenting a number nothing uses.
+      3. ROUTED   -- the exported entry every TDS read goes through hands the
+         effective ceiling (or the constant) to whatever does the joining. A
+         literal here would bound the listener at a number the constant and the
+         knob both disagree with.
+      4. COMPARED -- and this is the link that was missing: the function holding
+         the join must ORDER something against the bound it was handed, at or
+         before the append that would cross it. The join lives in a helper, so a
+         check pointed at the entry function read a one-line delegation, found
+         the constant's name in it, and called a loop with no comparison at all
+         healthy.
+
+    Link 4 is located from the join rather than from a function name on purpose.
+    A name in this file stays satisfied by a function that merely still exists;
+    the join is satisfied only by the line that actually grows the buffer.
+    """
+    def finding(symbol, snippet, line=0):
+        return {"file": TDS_PACKET_FILE, "symbol": symbol, "line": line,
+                "kind": "unbounded-frame-accumulation", "snippet": snippet}
+
+    path = base / TDS_PACKET_FILE
+    if not path.exists():
+        return [finding(TDS_CEILING, f"{TDS_PACKET_FILE} does not exist")]
+    clean_lines = _strip_noise(path.read_text(encoding="utf-8")).split("\n")
+    clean = "\n".join(clean_lines)
+
+    # 1. DECLARED.
+    decl = _TDS_CEILING_DECL.search(clean)
+    if not decl:
+        return [finding(
+            TDS_CEILING,
+            f"{TDS_CEILING} is not declared; the read loop joins packets until "
+            "one sets EOM, so with no ceiling a peer that never sets it chooses "
+            "how much the emulator accumulates")]
+    out = []
+    if _value_of(decl.group(1)) is None:
+        out.append(finding(
+            TDS_CEILING,
+            f"{TDS_CEILING} has a value this checker cannot read, so the "
+            "ceiling is unverified"))
+
+    # 2. DERIVED. One line naming both is enough -- the `init` that stores the
+    # default into the atomic -- and anything less specific would be satisfied by
+    # the two names merely coexisting in the file.
+    if not any(TDS_EFFECTIVE in ln and TDS_CEILING in ln for ln in clean_lines):
+        out.append(finding(
+            TDS_EFFECTIVE,
+            f"no line initialises {TDS_EFFECTIVE} from {TDS_CEILING}; the "
+            "effective ceiling no longer derives from the documented default, "
+            f"so {TDS_CEILING} documents a number nothing enforces"))
+
+    # 3. ROUTED.
+    entry = _func_span(clean_lines, TDS_ENTRY_FUNC)
+    entry_body = "" if entry is None else "\n".join(clean_lines[entry[0]:entry[1] + 1])
+    if entry is None:
+        out.append(finding(
+            TDS_ENTRY_FUNC,
+            f"{TDS_ENTRY_FUNC} is gone from {TDS_PACKET_FILE}; it was the single "
+            "entry point every TDS read went through, so the ceiling now has no "
+            "one place that installs it -- re-point this check rather than "
+            "deleting it"))
+    elif TDS_CEILING not in entry_body and TDS_EFFECTIVE not in entry_body:
+        out.append(finding(
+            TDS_ENTRY_FUNC,
+            f"{TDS_ENTRY_FUNC} passes on neither {TDS_CEILING} nor "
+            f"{TDS_EFFECTIVE}; the listener is bounded by some other number, "
+            "which the constant and FABRIC_MAX_TDS_MESSAGE_BYTES both disagree "
+            "with", entry[0] + 1))
+
+    # 4. COMPARED.
+    joins = [i for i, ln in enumerate(clean_lines) if _TDS_JOIN.search(ln)]
+    if not joins:
+        out.append(finding(
+            "<join>",
+            "no packet-payload join (`append(..., p.Data...)`) anywhere in "
+            f"{TDS_PACKET_FILE}; this kind locates the accumulation from the "
+            "join, so zero of them means it is checking nothing -- teach "
+            "_TDS_JOIN whatever replaced it"))
+    for i in joins:
+        name = _enclosing_func(clean_lines, i)
+        span = None if name == "<package>" else _func_span(clean_lines, name)
+        if span is None:
+            out.append(finding(
+                name,
+                f"the packet join at line {i + 1} is not inside a function this "
+                "checker can delimit, so the comparison that should guard it "
+                "cannot be located", i + 1))
+            continue
+        body = clean_lines[span[0]:span[1] + 1]
+        bounds = [TDS_CEILING, TDS_EFFECTIVE,
+                  *_bound_params("\n".join(body)), *_derived_locals(body)]
+        at = _ordering_line(body, bounds)
+        if at is None:
+            out.append(finding(
+                name,
+                f"{name} joins packet payloads without ordering anything against "
+                f"a ceiling ({', '.join(bounds)}); the bound is declared, "
+                "derived and passed in, and then never compared against -- the "
+                "shape a presence-only check reports as healthy", i + 1))
+        elif span[0] + at > i:
+            out.append(finding(
+                name,
+                f"{name} compares against its bound at line {span[0] + at + 1}, "
+                f"AFTER the join at line {i + 1}; the worst case held in memory "
+                "is then the ceiling plus whatever the peer had queued, not the "
+                "ceiling plus the one packet that tripped it", i + 1))
+    return out
+
+
+def _serve_findings(base, files=None):
+    """Every serve site not handed the root handler -- plus zero sites at all.
+
+    The outer HTTP bound lives in exactly one place, so a listener handed
+    anything else is a listener with no ceiling on any of the 68 decoder sites
+    behind it. That is not visible as a line in internal/server: the bypass is
+    written somewhere else entirely, which is why this sweeps rather than
+    asserts.
+    """
+    paths = files if files is not None else go_files(base)
+    out, total = [], 0
+    for path in paths:
+        for site in serve_sites(path, root=base):
+            total += 1
+            if _HANDLER_CALL.search(site["handler"]):
+                continue
+            named = site["handler"] or "no handler named, i.e. http.DefaultServeMux"
+            out.append({"file": site["file"], "symbol": site["symbol"],
+                        "line": site["line"],
+                        "kind": "unbounded-serve-root",
+                        "snippet": f"serves {named}, not Server.Handler(): the "
+                                   "outer request-body bound is installed there "
+                                   "and nowhere else"})
+    if total == 0:
+        out.append({"file": SERVE_ROOT_ANCHOR, "symbol": "<none>", "line": 0,
+                    "kind": "unbounded-serve-root",
+                    "snippet": "no http.Serve/ListenAndServe/http.Server site "
+                               f"anywhere under {', '.join(SCAN_ROOTS)}; a sweep "
+                               "that covers nothing passes vacuously, so teach "
+                               "_SERVE_SITE about whatever replaced it"})
+    return out
+
+
+def structural_findings(root=None, files=None):
+    """The findings that are about the REPAIR rather than the original shape.
+
+    All four are absence-shaped, and absence is what a sweep cannot report: no
+    line anywhere says "the outer bound is missing". Without these the checker
+    would pass, in perpetuity, on a tree whose one ceiling had been refactored
+    away -- reporting zero unbounded reads, which would be true and beside the
+    point. `files`, when given, is the sweep's file list, reused so the serve
+    sweep does not walk the tree a second time.
     """
     base = ROOT if root is None else pathlib.Path(root)
     out = []
+    out.extend(_tds_findings(base))
+    out.extend(_serve_findings(base, files))
 
     handler = base / ROOT_HANDLER_FILE
     if not handler.exists():
@@ -353,10 +813,11 @@ def structural_findings(root=None):
 
 def scan(files=None, root=None):
     """Every finding across the tree -- sweep kinds plus structural ones."""
+    paths = files if files is not None else go_files(root)
     out = []
-    for path in (files if files is not None else go_files(root)):
+    for path in paths:
         out.extend(findings_for(path, root=root))
-    out.extend(structural_findings(root))
+    out.extend(structural_findings(root, files=paths))
     return out
 
 
@@ -456,8 +917,10 @@ def main(argv):
             f"repaired nor recorded in {relkey(LEDGER)}:\n    {listing}\n"
             "  Per-request work whose size the caller chooses needs a ceiling: "
             "read bytes through httpx.ReadBounded, keep the root handler's "
-            "http.MaxBytesReader in place, hoist a regexp to package scope, or "
-            "record the site with its reason.")
+            "http.MaxBytesReader in place, hoist a regexp to package scope, "
+            f"keep {TDS_CEILING} derived, routed by tds.{TDS_ENTRY_FUNC} and "
+            "compared against where the packet join happens, hand every serve "
+            "site Server.Handler(), or record the site with its reason.")
     if stale:
         problems.append(
             f"{len(stale)} ledger entr(y/ies) name a site that is no longer "

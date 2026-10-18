@@ -119,6 +119,16 @@ only way to ever reuse it is to extract a repository. It costs nothing to keep
 the door open, and the rest of the layer — the store rows, the DFS surface —
 stays internal where it belongs.
 
+**Which makes its exports a contract, and they are ledgered as one.** An
+importable package is one another module's build depends on by name, so its 51
+exported identifiers — `Effective`, `AccessEntry.Why`, `DecisionRule.Constraints`
+and the rest — are recorded in `docs/compat-surface.json` as the `goAPI` surface
+and held by `scripts/check_backward_compat.py`. Adding one is a stale ledger,
+fixed by running that script with `--update`; removing one fails the build until
+it is written into the baseline's `removed` list with the release it went away in
+and why. The gate reads names and not signatures, so it catches a rename or a
+deletion and not a changed parameter list.
+
 ### 3. Two consumers, neither owning the rules
 
 **The data plane.** [`internal/onelake/onelake.go`](../internal/onelake/onelake.go)

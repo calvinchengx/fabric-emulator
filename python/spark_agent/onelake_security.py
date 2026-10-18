@@ -40,6 +40,8 @@ reads of a secured table for non-privileged users -- not in the engine.
 import json
 import urllib.request
 
+from sqlident import quote_ident, quote_literal
+
 
 def fetch_access(base_url, workspace, item, principal, token, opener=None):
     """Effective access for one principal, from the OneLake security API.
@@ -78,9 +80,26 @@ def secure_view_sql(table, entry):
     Columns narrow the projection, rows narrow the relation, and both compose:
     the row filter is the author's own SQL, so it is used as the source rather
     than pasted into a WHERE we would have to parse.
+
+    NAMES ARE QUOTED HERE AND THE ROW FILTER IS NOT, which is the same split
+    `apply` makes one function down and for the same reason. The column names
+    and the table name are DATA -- they come from the item's policy and from a
+    OneLake folder -- so each is escaped with `quote_ident`; `entry["rows"]` is
+    the policy author's own SELECT and is parenthesised rather than escaped,
+    because using it as the SOURCE is precisely how this module avoids parsing
+    user SQL (see the module docstring).
+
+    R8 CANNOT SEE THIS SITE, and it is fixed anyway. This function RETURNS a
+    string rather than calling `.sql()`, so the checker -- which inspects the
+    argument at the call -- never looks at it (docs/63 §6). It is the same
+    names on the same enforcement path, and a column-only grant on a table
+    whose name carries a backtick spliced straight through here before this
+    change. A repair that stopped where the checker's vision stops would have
+    left the CLS path as the one unescaped route.
     """
-    cols = ", ".join(entry["columns"]) if entry["columns"] else "*"
-    src = f"({entry['rows']})" if entry["rows"] else table
+    cols = ", ".join(quote_ident(c) for c in entry["columns"]) \
+        if entry["columns"] else "*"
+    src = f"({entry['rows']})" if entry["rows"] else quote_ident(table)
     return f"SELECT {cols} FROM {src}"
 
 
@@ -111,7 +130,7 @@ def schemas_holding(spark, name):
         return found
     for db in dbs:
         try:
-            rows = spark.sql(f"SHOW TABLES IN `{db}`").collect()
+            rows = spark.sql(f"SHOW TABLES IN {quote_ident(db)}").collect()
         except Exception:  # noqa: BLE001 - a schema we cannot list holds nothing we can drop
             continue
         for row in rows:
@@ -153,14 +172,14 @@ def restore(spark, name, location_of, log=None):
                 "so the installed view is kept as-is")
         return False
     try:
-        spark.sql(f"DROP VIEW IF EXISTS {name}")
+        spark.sql(f"DROP VIEW IF EXISTS {quote_ident(name)}")
         # UNQUALIFIED, so it lands in the CURRENT database — which is the one
         # the filter's own unqualified SQL resolves against. Re-registering into
         # `default` looks equivalent and is not: the agent sets the current
         # database to the lakehouse schema (`lake`), so a table put back in
         # `default` is invisible to `SELECT ... FROM sales`.
-        spark.sql(f"CREATE TABLE IF NOT EXISTS `{name}` "
-                  f"USING delta LOCATION '{location}'")
+        spark.sql(f"CREATE TABLE IF NOT EXISTS {quote_ident(name)} "
+                  f"USING delta LOCATION {quote_literal(location)}")
         return True
     except Exception as exc:  # noqa: BLE001
         # Failing to restore is not failing to secure: the view is gone, so the
@@ -214,7 +233,15 @@ def apply(spark, access, tables, log=None, catalog_private=True, location_of=Non
             # ORDER IS LOAD-BEARING. The view is built from the real table, so
             # it must exist while the view is created and be gone before the
             # statement runs. Sweeping first would leave nothing to select from.
-            spark.sql(f"CREATE OR REPLACE TEMP VIEW {name} AS {sql}")
+            # `name` IS QUOTED AND `sql` IS NOT, and the asymmetry is the
+            # whole design. The name is data -- a OneLake folder name that
+            # arrived here through the catalog -- so it is escaped; `sql` is
+            # `secure_view_sql`'s output, whose relation half is the policy
+            # author's OWN row filter. Splicing author-written SQL is the
+            # feature (see this module's docstring on not parsing user SQL);
+            # splicing a name is the defect R8 was written for.
+            spark.sql(f"CREATE OR REPLACE TEMP VIEW {quote_ident(name)} "
+                      f"AS {sql}")
             holders = _sweep_qualified(spark, name)
             if log:
                 where = f", qualified names dropped from {holders}" if holders else ""
@@ -232,7 +259,8 @@ def _sweep_qualified(spark, name):
     hit = []
     for db in schemas_holding(spark, name):
         try:
-            spark.sql(f"DROP TABLE IF EXISTS `{db}`.`{name}`")
+            spark.sql("DROP TABLE IF EXISTS "
+                      f"{quote_ident(db)}.{quote_ident(name)}")
             hit.append(db)
         except Exception:  # noqa: BLE001 - report what was dropped, not what was tried
             pass
@@ -243,7 +271,15 @@ def _drop(spark, name, log=None):
     # The qualified sweep first: a denied table must lose every spelling, and
     # `DROP TABLE <name>` alone only reaches the current database.
     _sweep_qualified(spark, name)
-    for stmt in (f"DROP VIEW IF EXISTS {name}", f"DROP TABLE IF EXISTS {name}"):
+    # QUOTED HERE TOO, although R8 cannot see this site: the template is bound
+    # to `stmt` before `spark.sql(stmt)` reads it, and the rule inspects the
+    # argument AT the call rather than following a variable back to the
+    # f-string that built it (docs/63 §6). It is the same name on the same
+    # enforcement path, so it gets the same escape -- a fix that stopped where
+    # the checker's vision stops would leave the withholding path, the one that
+    # runs when a table must NOT be readable, as the only unescaped one.
+    ident = quote_ident(name)
+    for stmt in (f"DROP VIEW IF EXISTS {ident}", f"DROP TABLE IF EXISTS {ident}"):
         try:
             spark.sql(stmt)
         except Exception:  # noqa: BLE001 - whichever kind it was, it is gone now
