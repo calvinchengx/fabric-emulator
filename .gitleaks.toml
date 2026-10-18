@@ -34,6 +34,11 @@ regexes = [
   # Base64 of "not-a-blob": a fixture whose whole purpose is to be rejected as
   # an invalid key blob. Decoded and verified before allowlisting.
   '''^bm90LWEtYmxvYg=*$''',
+  # The signature of the FABRICATED SAS in internal/onelake/trace_test.go --
+  # invented so the redactor has something to remove, never issued by anyone.
+  # Allowlisted by its exact text rather than by shape, so a real `sig=` is
+  # still caught: this weakens the rule for one literal and no further.
+  '''9%2FabcDEF123secretsignature%3D''',
 ]
 
 paths = [
