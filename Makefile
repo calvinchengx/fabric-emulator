@@ -78,6 +78,9 @@ help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
 
+sbom: ## Write a CycloneDX SBOM of every locked dependency to sbom.cdx.json
+	@$(PY) scripts/gen_sbom.py --out sbom.cdx.json
+
 doctor: ## Check the toolchain and the docker context this Makefile needs
 	@sh scripts/doctor.sh
 
@@ -179,10 +182,15 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# there yesterday is there today. check_route_coverage comes
 	@# closest and stores `registered` as a COUNT, so deleting a served
 	@# route reads in review as `174 -> 173` and never names itself.
-	@# Below HTTP nothing looked at all: 28 CLI flags, 2 subcommands and
-	@# 37 FABRIC_* knobs that every compose file, CI job and README
+	@# Below HTTP nothing looked at all: 30 CLI flags, 2 subcommands and
+	@# 41 FABRIC_* knobs that every compose file, CI job and README
 	@# snippet here is written against, and a rename would break all of
-	@# them while every check above stayed green. Offline like its
+	@# them while every check above stayed green. The fifth surface it
+	@# holds is served over no wire: the 51 exported ids of `pkg/`,
+	@# which is a COMPILE-TIME contract -- that directory exists so
+	@# another module CAN import it, where Go's internal rule would
+	@# forbid it, so dropping `AccessEntry.Why` breaks a downstream
+	@# BUILD while every gate here stays green. Offline like its
 	@# neighbour -- the Go source and nothing else -- so it answers
 	@# before a push. Asymmetric on purpose: an addition is a stale
 	@# ledger you fix with --update, a removal fails until someone
@@ -305,6 +313,34 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# net/http's generic refusal. A 256 MiB outer bound -- equal to
 	@# MaxBlobWrite, the ceiling `fab cp` has actually crossed -- would have
 	@# shipped that defect looking correct.
+	@#
+	@# And the SECOND LISTENER, which all of the above is blind to by
+	@# construction: it anchors on `r.Body`, and cmd/fabric-emulator/main.go
+	@# serves the SQL/TDS endpoint on its own net.Listener where there is no
+	@# `r.Body` for an outer bound to wrap. tds.ReadMessage joined packets
+	@# until one set the EOM status bit with no cap on the total -- each
+	@# ReadPacket is self-limiting at 64 KiB because the length field is a
+	@# uint16, which is exactly why the loop around it read as bounded and
+	@# was not. Measured when this landed: 1 http.Serve site in the tree, 1
+	@# TDS listener beside it, and 0 accumulated-length checks across all 40
+	@# files of internal/tds -- against 8 TDS read sites, all funnelling
+	@# through ReadMessage, so one ceiling there covers the whole listener.
+	@# Repaired by tds.DefaultMaxMessageBytes (320 MiB, the HTTP listener's
+	@# own default, so neither listener is the narrower surface), behind
+	@# FABRIC_MAX_TDS_MESSAGE_BYTES with 0 meaning unlimited for the same
+	@# released-binary reason the HTTP knob has one -- and the direction it
+	@# narrows is the RELAY one, since splice.go reads the sidecar's result
+	@# sets through the same function.
+	@#
+	@# Held by two more kinds. The first asserts the whole CHAIN the bound
+	@# travels -- declared, derived from the default, routed by ReadMessage,
+	@# and COMPARED against in the function that joins, before the append
+	@# that would cross it -- because its own first version checked only
+	@# that ReadMessage named the constant, which a one-line delegation to a
+	@# helper satisfies while the helper compares against nothing. The
+	@# second requires every serve site to be handed Server.Handler(), so a
+	@# future second HTTP listener handed the bare mux lands as a finding
+	@# rather than as a silent bypass.
 	@$(PY) scripts/check_perf_regressions.py --strict
 	@# ...and the dimension none of the guards above can see either: whether
 	@# this repository's own source is WRITTEN in a shape that leaks a
@@ -325,13 +361,78 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# seeded secrets, self-signed TLS, an unauthenticated admin API -- and a
 	@# checker that reported those would be argued with rather than fixed.
 	@# So the emulator-only sites are LEDGERED with the host set each client
-	@# reaches (docs/security-footguns.json), and 30 are. Two rules ship at
+	@# reaches (docs/security-footguns.json), and 85 are. Three rules ship at
 	@# zero as pure regression guards; the first run found one real defect --
 	@# internal/akv disabled certificate verification transport-wide from a
 	@# flag documented for entra-emulator's cert, on the one client whose
 	@# allowlist deliberately admits a real *.vault.azure.net, so a secret
 	@# could come from a real vault over a connection nobody authenticated
 	@# while the https check that exists for that reason still passed.
+	@#
+	@# AND THEN THE SAME DEFECT SIX MORE TIMES, from one spelling the TLS rule
+	@# had never learned. R1 claimed to cover every certificate-verification
+	@# skip in this tree and matched requests' `verify=False` only -- not the
+	@# stdlib pair `verify_mode = ssl.CERT_NONE` / `check_hostname = False`,
+	@# which is what this repository's OWN Python writes, in the spark agent,
+	@# in fabric-target, in the Sail launcher and across 28 e2e harnesses. 39
+	@# sites were unexamined; six carried a credential over the unverified
+	@# connection, and eventstream_kafka._fabric_request sent a bearer token
+	@# to a FABRIC_API_URL DEFAULTING to api.fabric.microsoft.com -- so the
+	@# default configuration reached a real Microsoft endpoint with the trust
+	@# check off. Four more POST ENTRA_CLIENT_SECRET. All six are now scoped
+	@# per host (python/spark_agent/tls_scope.py and fabric_target's
+	@# _tls_context, both citing akv.hostScopedTLS) rather than recorded.
+	@#
+	@# The seventh rule is the host-escape shape R5/R6 did not cover: an
+	@# archive member extracted with nothing checking where it lands.
+	@# filepath.Join CLEANS its result, so Join("/out", "../../etc/x") is a
+	@# perfectly clean /etc/x -- which is why the shape reads as safe -- and
+	@# tarfile's filter="data" only becomes the default in 3.14 against this
+	@# repo's 3.12 floor. e2e/azcopy/run.py unpacked an aka.ms download with
+	@# bare extractall in both branches; both were repaired, so the rule
+	@# ships empty. Its Go half has never had a finding because no non-test
+	@# Go file here imports archive/zip or archive/tar, and the docstring
+	@# says so rather than implying a measurement.
+	@#
+	@# AND AN EIGHTH, whose asymmetry runs the OTHER way: a name spliced into
+	@# SQL text is SQL SYNTAX, not a value, and backticks around it look like
+	@# quoting until the name contains one. Measured when this landed, every
+	@# GO site in this tree already escaped correctly -- principalName doubles
+	@# `]`, quotedID doubles `'`, internal/server's sqlIdent/sqlLiteral are
+	@# the same pair, enterDelegated leans on SQL Server's own QUOTENAME --
+	@# while NOT ONE backtick was doubled anywhere in python/spark_agent,
+	@# onelake_security.apply included. That one builds the temp view which
+	@# ENFORCES OneLake row- and column-level security, from a name that is a
+	@# OneLake folder created by whoever can write there, so a breakout picks
+	@# the body of the view deciding which rows a principal sees rather than
+	@# raising a syntax error. Eight symbols repaired onto sqlident's
+	@# quote_ident/quote_literal/quote_name (the Go pair, mirrored rather than
+	@# half of it); the six correct Go symbols are LEDGERED as regression guards,
+	@# because that half of the rule reads the enclosing function and cannot
+	@# see an escape in the argument list where the Python half can.
+	@#
+	@# The Python half recognising the escape is what makes the repair a
+	@# RATCHET rather than twenty more ledger entries: an escaped site reports
+	@# clean, so deleting a quote_ident call becomes an unrecorded finding and
+	@# exit 1. Two of the eight the rule CANNOT see -- secure_view_sql returns
+	@# SQL instead of running it, _drop binds its statements to a variable
+	@# first -- and both were fixed anyway, since they are the column-only and
+	@# the table-withholding routes of the same enforcement.
+	@#
+	@# A THIRD WAS INVISIBLE TO R8 ITSELF, and it is the sharpest of the eight:
+	@# delta_ops.execute_ctas is reached as original_sql(...), a bare NAME that
+	@# delta_ops binds to spark.sql and passes as a parameter, so the rule's
+	@# METHOD requirement -- right about `execute` being a name anything may
+	@# have -- walked past it. It spliced a catalog-supplied schema location
+	@# into LOCATION '{loc}' with nothing doubling an apostrophe, inside the one
+	@# package R8's scope sentence claimed to have swept, while catalog.register
+	@# escaped the SAME value one module over. The rule now accepts a bare call
+	@# to a name THIS FILE binds to a .sql/.execute attribute, so that repair
+	@# ratchets too.
+	@#
+	@# Ordinary names come back byte-identical, which is the only reason a
+	@# change touching every statement the agent builds moved no fixture or
+	@# e2e output.
 	@$(PY) scripts/check_security_footguns.py --strict
 	@# ...and the dimension the three above cannot see either: whether this
 	@# emulator says anything at all when it fails. Measured when this landed:

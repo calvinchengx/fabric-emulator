@@ -1,12 +1,13 @@
 r"""The backward-compatibility gate, held to the standard it holds the tree to.
 
 check_backward_compat answers the question its four HTTP siblings cannot: does
-the surface an external user BOUND TO still exist. It has four extractors and a
+the surface an external user BOUND TO still exist. It has five extractors and a
 three-way ratchet, and EVERY ONE OF THEM FAILS AS A HEALTHY TREE:
 
   * An extractor that resolves NOTHING -- `fs` renamed, the subcommand switch
-    moved, a package relocated -- makes the baseline comparison match nothing
-    against nothing for that surface. The gate then passes forever having
+    moved, a package relocated, a Go declaration form the parser cannot read --
+    makes the baseline comparison match nothing against nothing for that
+    surface. The gate then passes forever having
     stopped measuring, which reads exactly like a clean tree. THIS IS THE
     DANGEROUS ONE.
   * A removal that --update can launder is not a gate, it is a changelog
@@ -99,6 +100,82 @@ func (a *API) register(mux *http.ServeMux) {
 }
 '''
 
+# pkg/ as this repository writes it: the single and grouped const forms, a
+# grouped `type (` block, both receiver spellings, a one-line struct body, and
+# an unexported twin of every one of those so the exclusions are asserted
+# against something rather than merely absent.
+PKG_GO = '''
+package widgets
+
+type Effect string
+
+const EffectPermit Effect = "Permit"
+
+const (
+	AccessRead   = "Read"
+	accessHidden = "hidden"
+)
+
+type (
+	Pair struct {
+		Left  string
+		right string
+	}
+	hidden struct{ Thing string }
+)
+
+var Registry = map[string]string{}
+var registry = map[string]string{}
+
+type Widget struct {
+	Name  string
+	Size  int
+	inner string
+}
+
+type hiddenWidget struct{ Field string }
+
+func New(name string) *Widget { return &Widget{Name: name} }
+
+func helper() string { return "" }
+
+func (w *Widget) Describe() string { return w.Name }
+
+func (w Widget) Area() int { return w.Size }
+
+func (w *Widget) hide() string { return w.inner }
+
+func (h *hiddenWidget) Exported() string { return h.Field }
+'''
+
+# A test file in the same package. Its exports are not a surface: no importing
+# module can see them, so a `_test.go` symbol in the ledger would be a promise
+# about a file that ships nowhere.
+PKG_TEST_GO = '''
+package widgets
+
+type Fixture struct{ Rows int }
+
+func NewFixture() *Fixture { return &Fixture{} }
+'''
+
+# Every id the synthetic package is expected to carry, written out rather than
+# derived, because a derived expectation is a second copy of the parser.
+PKG_IDS = [
+    "widgets.AccessRead",
+    "widgets.Effect",
+    "widgets.EffectPermit",
+    "widgets.New",
+    "widgets.Pair",
+    "widgets.Pair.Left",
+    "widgets.Registry",
+    "widgets.Widget",
+    "widgets.Widget.Area",
+    "widgets.Widget.Describe",
+    "widgets.Widget.Name",
+    "widgets.Widget.Size",
+]
+
 # A configuration table naming one of the synthetic knobs and not the others,
 # so the docs cross-check has something to find and something to skip.
 CONFIG_DOC = """# 04 — Configuration
@@ -124,10 +201,16 @@ def tree(tmp_path, monkeypatch):
     api.mkdir(parents=True)
     (api / "routes.go").write_text(ROUTES_GO, encoding="utf-8")
 
+    pkg = tmp_path / "pkg" / "widgets"
+    pkg.mkdir(parents=True)
+    (pkg / "widgets.go").write_text(PKG_GO, encoding="utf-8")
+    (pkg / "widgets_test.go").write_text(PKG_TEST_GO, encoding="utf-8")
+
     (tmp_path / "04-configuration.md").write_text(CONFIG_DOC, encoding="utf-8")
 
     monkeypatch.setattr(bc, "MAIN_GO", main / "main.go")
     monkeypatch.setattr(bc, "ENV_SOURCES", (tmp_path / "internal", tmp_path / "cmd"))
+    monkeypatch.setattr(bc, "PKG_SOURCES", (tmp_path / "pkg",))
     monkeypatch.setattr(bc, "CONFIG_DOC", tmp_path / "04-configuration.md")
     monkeypatch.setattr(bc, "BASELINE", tmp_path / "compat-surface.json")
     # The route surface comes from check_route_coverage, so its sources move too.
@@ -184,6 +267,126 @@ def test_a_read_form_the_parser_does_not_know_is_named_not_dropped(tree):
     assert bc.main_for_test(strict=True) == 1
 
 
+# --- the exported Go API ------------------------------------------------------
+
+def test_every_exported_go_declaration_form_is_collected(tree):
+    """A COMPILE-TIME contract, which is why it is in this ledger at all.
+
+    `pkg/` exists so another MODULE can import it -- Go's internal rule would
+    forbid that one directory over -- so every id here is something a
+    downstream build binds to by name. Written out as a whole-list equality
+    rather than a set of `in` checks, because the interesting failure is an id
+    this parser invents or drops, and an `in` check sees neither.
+    """
+    assert bc.go_api() == PKG_IDS
+
+
+@pytest.mark.parametrize("hidden", [
+    "accessHidden",      # a grouped const entry
+    "hidden",            # a grouped `type (` entry, with a field inside it
+    "Thing",             # …that field: an exported name on an unexported type
+    "registry",          # a package-level var
+    "hiddenWidget",      # a type, and its exported method and field
+    "helper",            # a package-level func
+    "hide",              # a method on an exported receiver
+    "right",             # a field of an exported struct
+    "inner",
+])
+def test_what_no_other_module_can_name_is_not_in_the_ledger(tree, hidden):
+    """Go's export rule IS the scope, and the exclusions are deliberate.
+
+    An unexported receiver, type, field or grouped entry cannot be written
+    down by an importing module, so promising it would be promising something
+    nobody can hold us to -- and a ledger of ids nobody binds to is how a
+    ledger stops being read. `hiddenWidget.Exported` is the sharp case: the
+    METHOD is exported and is still unreachable, because its receiver is not.
+    """
+    assert not [i for i in bc.go_api() if hidden in i]
+
+
+def test_a_test_file_declares_no_surface(tree):
+    """`_test.go` ships in no module, so its exports are nobody's contract."""
+    assert "widgets.Fixture" not in bc.go_api()
+    assert "widgets.NewFixture" not in bc.go_api()
+
+
+def test_a_declaration_form_the_parser_cannot_read_is_named_not_dropped(tree,
+                                                                        capsys):
+    """THE SAME GUARD the env reader has, and the same reason it exists.
+
+    A generic func is the live example: this parser reads `func Name(` and a
+    type parameter list is not that, so without this guard `Generic` would
+    simply be absent -- a shrinking ledger, which reads in review as a clean
+    tree. NOT --strict: a parser that has stopped reading is a broken gate
+    rather than drift, so the bare run must fail too.
+    """
+    (tree / "pkg" / "widgets" / "widgets.go").write_text(
+        PKG_GO + "\nfunc Generic[T any](x T) T { return x }\n", encoding="utf-8")
+    assert bc.unparsed_exports() == [
+        ((tree / "pkg" / "widgets" / "widgets.go").as_posix(),
+         "func Generic[T any](x T) T { return x }")]
+    assert bc.main_for_test() == 1
+    assert "teach go_api()" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("comment", [
+    # A wrapped sentence that happens to end on an opening brace: the body
+    # never closes, so everything after it was swallowed.
+    "\t// a note about the shape it carries: {\n",
+    # …and the other direction, which closes the body early.
+    "\t// a note about the shape it carries: }\n",
+    # A trailing comment on a field line, not a line of its own.
+    "\tTrailing string // shapes like map[string]int{\n",
+])
+def test_a_brace_inside_a_comment_does_not_swallow_the_rest_of_the_file(tree,
+                                                                       comment):
+    """THE SILENT SHRINK, asserted rather than hoped for.
+
+    `_braced` counts braces and `_struct_fields` strips comments, so if only
+    one of them does the two disagree about where a type's body ENDS and an
+    unbalanced brace in a comment extends it over the declarations that
+    follow. Those declarations are then SKIPPED rather than misread, so
+    unparsed_exports() has nothing to name -- the exact shape that guard
+    exists to prevent, arriving through the guard's own blind spot.
+
+    Driven over the real tree before the fix, one such comment inside
+    AccessEntry took extraction from 51 ids to 45 and reported no surprises:
+    a false BREAKING CHANGE for six live functions, whose printed remedy is to
+    write them into `removed` and launder real API; and, with the comment
+    already in the baseline, a new export that is never extracted at all --
+    no STALE LEDGER, no report, exit 0. `pkg/onelakesec/rowfilter.go` already
+    carries brace-bearing comments, so this is one wrapped line away.
+
+    A whole-list equality, because the interesting failure is a MISSING id and
+    an `in` check cannot see one.
+    """
+    (tree / "pkg" / "widgets" / "widgets.go").write_text(
+        PKG_GO.replace("\tName  string\n", "\tName  string\n" + comment),
+        encoding="utf-8")
+    # The trailing-comment leg declares a field of its own, so it is one id
+    # LARGER rather than equal: a comment must cost nothing, and the line it
+    # rides on must still count.
+    expected = sorted(PKG_IDS + (["widgets.Widget.Trailing"]
+                                 if "Trailing string" in comment else []))
+    assert bc.go_api() == expected
+    assert bc.unparsed_exports() == []
+
+
+def test_an_empty_pkg_tree_names_the_directory_it_read(tree, monkeypatch, capsys):
+    """The dangerous failure, and the report has to say WHERE it looked.
+
+    `pkg/` relocating or being emptied leaves this surface matching nothing
+    against nothing, and the gate would go on passing having stopped
+    measuring. The surface name alone is not enough to act on -- the path is
+    what tells a reader which directory the parser was pointed at.
+    """
+    monkeypatch.setattr(bc, "PKG_SOURCES", (tree / "nowhere",))
+    (tree / "nowhere").mkdir()
+    assert bc.main_for_test() == 1
+    err = capsys.readouterr().err
+    assert "goAPI: 0 entries" in err and "nowhere" in err
+
+
 # --- the zero-extraction guard ------------------------------------------------
 
 @pytest.mark.parametrize("surface,break_it", [
@@ -197,6 +400,10 @@ def test_a_read_form_the_parser_does_not_know_is_named_not_dropped(tree):
     ("envVars", lambda t: (t / "internal" / "config" / "config.go").unlink()),
     # …and the same for the route registrations.
     ("routes", lambda t: (t / "internal" / "api" / "routes.go").unlink()),
+    # The exported Go API, whose package moved out from under the scan. This
+    # one has a second failure shape the four above do not: a declaration
+    # written in a form the parser cannot read. See the guard tests below.
+    ("goAPI", lambda t: (t / "pkg" / "widgets" / "widgets.go").unlink()),
 ])
 def test_a_zero_extraction_fails_rather_than_passing_vacuously(tree, surface, break_it,
                                                                capsys):
@@ -247,6 +454,68 @@ def test_a_removed_subcommand_is_a_breaking_change(tree, capsys):
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "BREAKING CHANGE" in out and "healthcheck" in out
+
+
+def test_a_deleted_export_is_a_breaking_change(tree, capsys):
+    """What the four existing surfaces could not see: a build that breaks.
+
+    Deleting `Describe` and `Widget.Size` is not a 404 anybody discovers at
+    runtime -- it is an importing module that stops compiling, and before this
+    surface existed every gate in `make check` stayed green through it.
+    """
+    assert bc.main_for_test(update=True) == 0
+    (tree / "pkg" / "widgets" / "widgets.go").write_text(
+        PKG_GO.replace("func (w *Widget) Describe() string", "func (w *Widget) describe() string")
+              .replace("\tSize  int\n", ""), encoding="utf-8")
+    assert bc.main_for_test(strict=True) == 1
+    out = capsys.readouterr().out
+    assert "BREAKING CHANGE" in out
+    assert "widgets.Widget.Describe" in out and "widgets.Widget.Size" in out
+
+
+def test_update_cannot_launder_a_deleted_export(tree, capsys):
+    """…and regenerating is not the fix for it, on this surface either."""
+    assert bc.main_for_test(update=True) == 0
+    (tree / "pkg" / "widgets" / "widgets.go").write_text(
+        PKG_GO.replace("func (w *Widget) Describe() string",
+                       "func (w *Widget) describe() string"), encoding="utf-8")
+    assert bc.main_for_test(update=True) == 1
+    assert "cannot launder a removal" in capsys.readouterr().err
+    assert "widgets.Widget.Describe" in baseline(tree)["goAPI"]
+    # …and once the removal is a written-down decision, it is silent.
+    rewrite(tree, lambda d: d["removed"].append({
+        "surface": "goAPI", "id": "widgets.Widget.Describe",
+        "removedIn": "v0.99.0",
+        "reason": "The description moved onto the Pair it was computed from.",
+    }))
+    assert bc.main_for_test(strict=True) == 0
+
+
+def test_a_resurrected_export_fails(tree, capsys):
+    """A stale exemption on a compile-time contract excuses it just as well."""
+    assert bc.main_for_test(update=True) == 0
+    rewrite(tree, lambda d: d["removed"].append({
+        "surface": "goAPI", "id": "widgets.New", "removedIn": "v0.99.0",
+        "reason": "Recorded as gone while the constructor is right there.",
+    }))
+    assert bc.main_for_test(strict=True) == 1
+    out = capsys.readouterr().out
+    assert "back in the tree" in out and "widgets.New" in out
+
+
+def test_a_go_symbol_is_not_a_user_settable_knob(tree, capsys):
+    """The docs cross-check reads flags and env vars, and must not grow.
+
+    docs/04-configuration.md is a table of things a USER SETS. An exported Go
+    identifier is not one, so reporting `widgets.New` as an undocumented knob
+    would be noise in the one section of this gate that reports rather than
+    fails -- and noise there is what trains people to skim it.
+    """
+    assert bc.main_for_test(update=True) == 0
+    assert bc.main_for_test(strict=True) == 0
+    out = capsys.readouterr().out
+    assert "REPORT ONLY" in out          # it still has flags to report
+    assert "widgets." not in out
 
 
 def test_a_declared_removal_passes(tree):
