@@ -1,0 +1,40 @@
+name: Dependabot rebase
+
+# A Dependabot pull request that sits for a few days goes STALE: its branch
+# falls behind the base, and checks the base has already fixed keep failing on
+# the branch. GitHub only rebases automatically when there is a CONFLICT, so a
+# stale-but-clean branch stays red until somebody asks it to rebase.
+#
+# Asking is one comment, and this is the place to make it: the alternative is
+# noticing by hand, which is exactly how four branches rotted for five commits
+# in October 2026 and had to be merged up manually.
+on:
+  schedule:
+    # Off the hour, and off the :00/:30 slots the family's other sweeps use.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Dependabot to rebase the branches that fell behind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh pr list --author "app/dependabot" --state open --limit 100 \
+            --json number,headRefName,baseRefName \
+            --jq '.[] | "\(.number) \(.headRefName) \(.baseRefName)"' |
+          while read -r pr branch base; do
+            behind=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${branch}" \
+              --jq '.behind_by // 0' 2>/dev/null || echo 0)
+            if [ "${behind:-0}" -gt 0 ]; then
+              echo "PR #${pr} is ${behind} commit(s) behind ${base} — asking for a rebase"
+              gh pr comment "${pr}" --body "@dependabot rebase"
+            fi
+          done
