@@ -85,10 +85,73 @@ fifteen `# noqa: S###` directives in the tree were written as though it did.
 that is decidable from source text, offline, on every push and in `make check`:
 TLS verification skips, non-cryptographic randomness for security material,
 non-constant-time secret comparison, a credential value reaching a log or error,
-Python shell and dynamic-execution misuse, and world-writable file modes. Its
-first run found one real defect — `internal/akv` disabled certificate
-verification for its whole transport, on the one client whose allowlist
-deliberately admits a real `*.vault.azure.net`.
+Python shell and dynamic-execution misuse, world-writable file modes, unchecked
+archive extraction, and SQL assembled by interpolating a name. Its first run
+found one real defect —
+`internal/akv` disabled certificate verification for its whole transport, on the
+one client whose allowlist deliberately admits a real `*.vault.azure.net`.
+
+The TLS rule then found the same defect class **six more times** once it was
+taught the spelling it had been missing. It matched `requests`' `verify=False`
+and not the standard library's `verify_mode = ssl.CERT_NONE` /
+`check_hostname = False`, which is the pair this repository's own Python
+actually writes — so 39 sites were unexamined, and six of them sent a client
+secret or a bearer token over the unverified connection. One sent a bearer token
+to a `FABRIC_API_URL` **defaulting to `api.fabric.microsoft.com`**, so the
+default configuration reached a real Microsoft endpoint with the trust check
+off. All six are now scoped per host, as `internal/akv` was. The same change
+added the archive rule and fixed its two findings — an archive downloaded over
+the network and unpacked without checking where its members land.
+
+That is worth stating plainly rather than as a win: **a rule whose scope
+sentence claimed to cover every verification skip in this tree covered one
+library's spelling of it for two releases.** Each rule here covers the
+spellings someone thought of, which is the limit most worth distrusting.
+
+**And the guard that replaced those six skips shipped with a hole of the same
+kind.** It decided whether a host was local from the *shape of the name* and
+ended on "no dot, so it cannot be public" — but no IPv6 address contains a
+dot, so every IPv6 literal was read as local and authenticated nothing, and
+`127.0.0.1.evil.com` is a public name with a loopback-shaped prefix. Both
+halves were reachable from the same configuration that carries the client
+secret, and nothing in either test suite asserted the boundary at all. The
+repair decides an address literal on the parsed address, and the behaviour is
+now pinned by a host table over both copies of the helper. See
+[docs/63-security-footguns.md](docs/63-security-footguns.md) §4.
+
+**The newest rule found the same kind of asymmetry one layer down, and this
+time the Go half was the one that was right.** A name spliced into SQL text is
+SQL *syntax*, not a value — backticks around it look like quoting until the
+name contains one. Measured: every Go site in this tree already escaped
+correctly (`internal/tds.principalName` doubles `]`, `quotedID` doubles `'`,
+`internal/server` has the same pair, and `enterDelegated` leans on SQL Server's
+own `QUOTENAME`), while **not one backtick was doubled anywhere in
+`python/spark_agent`** — including `onelake_security.apply`, which builds the
+temp view that *enforces* OneLake row- and column-level security. A lakehouse
+table is a folder under `Tables/` created by whoever can write to OneLake and
+nothing rejects a backtick in a path segment, so a name that broke out of that
+statement would choose the body of the view deciding which rows a principal
+sees. Eight symbols were repaired onto one escape helper; the six correct Go
+symbols are recorded as regression guards, because that half of the rule reads
+the enclosing function and cannot see an escape in the argument list.
+
+Three of the eight the rule could not see, and **two it still cannot** — one
+returns SQL text instead of executing it, one binds its statement to a variable
+first. Both were fixed anyway, since they are the column-only and the
+table-withholding paths of the same enforcement. That is the honest shape of
+this gate: it is a floor, and where the floor does not reach, a test table does.
+
+**And the third of those three was the rule's own blind spot, in the package
+its scope sentence named.** It required a *method* call, on the sound reasoning
+that `execute` is a name anything may have — which does not reach a bare name
+that **is** `spark.sql`, and `delta_ops` writes exactly that and passes it as a
+parameter. The site hidden behind it spliced a catalog-supplied storage
+location into a quoted SQL literal with nothing doubling an apostrophe, while
+the same value was escaped one module over. The rule now recognises a bare call
+to a name the file itself binds to `.sql`, so that repair fails the build if it
+is removed. Three times now in this document a rule's confident scope sentence
+has outrun its implementation, and each time a person re-reading the claim
+against the tree is what found it.
 
 It is a floor, not a ceiling: a source-shape checker, not a taint analysis. The
 sites where this emulator's documented local-by-design posture legitimately
@@ -148,8 +211,10 @@ and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
   to match against advisories. Dependabot's bumps are the whole of the
   coverage there. The decision, and the reason, are recorded in `SCANNERS` in
   `scripts/check_dependency_risk.py`, where the fourth invariant reads them.
-- **Nothing produces an SBOM, and nothing checks licences.** There is no
-  inventory artifact for a downstream consumer to ingest.
+- **Nothing checks licences.** `make sbom` (`scripts/gen_sbom.py`) writes a
+  deterministic CycloneDX 1.5 inventory of every locked Go, Python and npm
+  dependency, but lockfiles carry no licence data, so the SBOM has none, and
+  Dockerfile and GitHub Actions pins are not resolved sets and are not in it.
 
 **What keeps the Dependabot half honest.** A scanner configuration that has
 quietly stopped matching the repository reports clean on precisely the

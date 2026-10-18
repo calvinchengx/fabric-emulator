@@ -138,6 +138,24 @@ def azcopy_url():
     raise RuntimeError(f"unsupported OS for azcopy: {sysname}")
 
 
+def _refuse_escaping_member(name):
+    """Refuse a zip member whose name would write outside the destination.
+
+    Three ways out, all of which `ZipFile.extractall` would honour, and all
+    checked on the NAME rather than on the joined result: an absolute path, a
+    Windows drive letter (`C:\\...`, which `os.path.join` treats as absolute on
+    that platform and as an ordinary segment elsewhere), and any `..`
+    component. Checked as a COMPONENT, not as a substring, so a member
+    legitimately called `..azcopy` is not refused.
+    """
+    parts = name.replace("\\", "/").split("/")
+    if name.startswith("/") or name.startswith("\\") or ".." in parts \
+            or (len(name) > 1 and name[1] == ":"):
+        raise RuntimeError(
+            f"azcopy archive member {name!r} would extract outside the "
+            "destination; refusing to unpack it")
+
+
 def fetch_azcopy(dest_dir):
     url = azcopy_url()
     log(f"downloading azcopy from {url}")
@@ -145,12 +163,31 @@ def fetch_azcopy(dest_dir):
     urllib.request.urlretrieve(url, arch_path)
     extract = os.path.join(dest_dir, "azcopy_extract")
     os.makedirs(extract, exist_ok=True)
+    # THE ARCHIVE COMES OFF THE NETWORK, from an aka.ms redirect, and a member's
+    # path is chosen by whoever built it rather than by anything here. A bare
+    # `extractall` writes each member exactly where the member's own name
+    # points, so one `../../` component lands outside WORK — which on a CI
+    # runner is the checkout, and on a laptop is the home directory. Neither
+    # half of this is hypothetical enough to leave to the redirect's good
+    # manners, so both are bounded.
     if zipfile.is_zipfile(arch_path):
+        # zipfile has no `filter=`, so the containment check is explicit and
+        # the checked names are handed back as `members=` — the extraction is
+        # then over a list this function built, not over whatever the archive
+        # happens to contain.
         with zipfile.ZipFile(arch_path) as z:
-            z.extractall(extract)
+            names = z.namelist()
+            for name in names:
+                _refuse_escaping_member(name)
+            z.extractall(extract, members=names)
     else:
+        # `filter="data"` is tarfile's own containment filter: it refuses
+        # absolute and `..` member names, plus links pointing out of the
+        # destination. Available on this repo's >=3.12 floor, and the default
+        # only from 3.14 — so naming it is what makes the behaviour the same
+        # on the interpreter CI actually runs.
         with tarfile.open(arch_path) as t:
-            t.extractall(extract)
+            t.extractall(extract, filter="data")
     for root, _dirs, files in os.walk(extract):
         for f in files:
             if f == "azcopy" + EXE:

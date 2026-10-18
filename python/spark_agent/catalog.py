@@ -23,6 +23,8 @@ tested.
 import os
 import traceback
 
+from sqlident import quote_ident, quote_literal
+
 # How a session was isolated, and — the part that matters to OneLake security —
 # whether it got a catalog of its OWN.
 #
@@ -206,7 +208,7 @@ def register(spark, session, schema, tables, schemas=None, claims=None, isolated
     claims = claims if claims is not None else Claims()
     registered, failed, conflicts = [], [], []
     try:
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{schema}`")
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quote_ident(schema)}")
     except Exception:
         return {"registered": 0, "error": f"could not create schema {schema}: {_last_line()}"}
     for s in schemas or []:
@@ -214,7 +216,8 @@ def register(spark, session, schema, tables, schemas=None, claims=None, isolated
         if not sname or not sloc:
             continue
         try:
-            spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{sname}` LOCATION '{sloc}'")
+            spark.sql(f"CREATE SCHEMA IF NOT EXISTS {quote_ident(sname)} "
+                      f"LOCATION {quote_literal(sloc)}")
             # Recorded for delta_ops: a CTAS naming this schema must land at
             # this location, and Sail's own CTAS placement ignores it.
             _remember_schema_location(sname, sloc)
@@ -226,8 +229,9 @@ def register(spark, session, schema, tables, schemas=None, claims=None, isolated
         if not name or not loc:
             continue
         try:
-            spark.sql(f"CREATE TABLE IF NOT EXISTS `{tschema}`.`{name}` "
-                      f"USING delta LOCATION '{loc}'")
+            spark.sql(f"CREATE TABLE IF NOT EXISTS "
+                      f"{quote_ident(tschema)}.{quote_ident(name)} "
+                      f"USING delta LOCATION {quote_literal(loc)}")
             registered.append(name)
             # Record where it lives so a statement naming this table can be
             # resolved without asking the engine. Sail cannot answer
@@ -305,8 +309,9 @@ def _make_unqualified_resolve(spark, session, schema, tables, registered,
                     f"wrong lakehouse, use `{schema}`.`{name}`")
                 continue
         try:
-            spark.sql(f"CREATE TABLE IF NOT EXISTS `default`.`{name}` "
-                      f"USING delta LOCATION '{loc}'")
+            spark.sql(f"CREATE TABLE IF NOT EXISTS "
+                      f"`default`.{quote_ident(name)} "
+                      f"USING delta LOCATION {quote_literal(loc)}")
             mirrored.append(name)
             _remember_location(name, loc, "default")
         except Exception:

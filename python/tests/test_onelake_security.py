@@ -84,9 +84,15 @@ def test_a_row_filter_becomes_the_relation():
 
 
 def test_columns_narrow_the_projection_and_compose_with_rows():
-    assert ols.secure_view_sql("t", {"rows": "", "columns": ["a", "b"]}) == "SELECT a, b FROM t"
+    # The expected text carries BACKTICKS now, and that is the fix rather than
+    # a cosmetic change: this assertion pinned `SELECT a, b FROM t` -- the
+    # column and table names spliced raw -- so it was pinning the defect
+    # `sql-identifier-interpolated` was written to find. The row filter is
+    # still spliced unescaped, because it is the policy author's own SQL.
+    assert ols.secure_view_sql("t", {"rows": "", "columns": ["a", "b"]}) \
+        == "SELECT `a`, `b` FROM `t`"
     both = ols.secure_view_sql("t", {"rows": "SELECT * FROM t WHERE x", "columns": ["a"]})
-    assert both == "SELECT a FROM (SELECT * FROM t WHERE x)"
+    assert both == "SELECT `a` FROM (SELECT * FROM t WHERE x)"
 
 
 def test_a_wildcard_grant_covers_tables_the_policy_did_not_name():
@@ -311,9 +317,11 @@ def test_a_restore_that_fails_says_so_and_leaves_no_table_behind():
                                 "columns": []}}, ["sales"],
               location_of=lambda _n: "abfss://lake/Tables/sales", log=lines.append)
     assert any("could not be restored" in x for x in lines), lines
-    assert "DROP VIEW IF EXISTS sales" in spark.ran, spark.ran
+    # Backtick-quoted since sqlident landed; an ordinary name is otherwise
+    # byte-identical, so this is the only part of the trace that moved.
+    assert "DROP VIEW IF EXISTS `sales`" in spark.ran, spark.ran
     assert not [q for q in spark.ran if q.startswith("CREATE TABLE") and "boom" not in q
-                and q in spark.ran[spark.ran.index("DROP VIEW IF EXISTS sales") + 2:]], \
+                and q in spark.ran[spark.ran.index("DROP VIEW IF EXISTS `sales`") + 2:]], \
         "a table was registered after the restore reported failure"
 
 
@@ -395,7 +403,8 @@ def test_a_narrowed_table_is_filtered_and_sent_as_rows():
     assert got[0]["name"] == "sales" and got[0]["filtered"] is True
     assert "location" not in got[0], "a path was handed over instead of the rows"
     # The FILTER is what ran, not the table.
-    assert spark.filtered == ["SELECT region_id FROM (SELECT * FROM sales WHERE r = 1)"]
+    assert spark.filtered == [
+        "SELECT `region_id` FROM (SELECT * FROM sales WHERE r = 1)"]
     table = decode(got[0]["arrow"])
     assert table.num_rows == 2
     assert table.column_names == ["region_id", "amount"]
