@@ -164,6 +164,18 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			_, err := sqlv.Validate(token)
 			return err
 		}, Strict: cfg.TSQLStrict}
+		// The accumulated-message ceiling for the SECOND listener. Installed
+		// here, once, rather than carried per connection: the TDS read path is
+		// package-level functions reached from every session's goroutine (the
+		// trace hook below is package-level for the same reason), and this is
+		// the one place that knows the configuration.
+		//
+		// 0 means unlimited, exactly as FABRIC_MAX_REQUEST_BYTES=0 does, so a
+		// Config built literally in a test leaves the TDS listener unbounded and
+		// is unaffected by the bound -- the same deliberate asymmetry the HTTP
+		// ceiling has, and the reason the default is applied by
+		// config.FromEnvPartial rather than by Finish.
+		tds.SetMaxMessageBytes(cfg.MaxTDSMessageBytes)
 		// FABRIC_TDS_TRACE logs every client→server TDS message to stderr: which
 		// message type carries a statement decides what a SQL rewriter has to
 		// parse (docs/29-tsql-parity.md, T6a). Off unless set — an unset trace hook

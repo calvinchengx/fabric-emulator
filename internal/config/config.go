@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/httpx"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
 
 // Config is the resolved emulator configuration.
@@ -297,6 +298,33 @@ type Config struct {
 	// mean 320 MiB, which is the one value it must not mean.
 	MaxRequestBytes int64
 
+	// MaxTDSMessageBytes is the outer ceiling on a single accumulated TDS
+	// message on the SQL/TDS listener, in bytes. 0 means NO limit.
+	//
+	// WHY IT IS A SECOND KNOB AND NOT COVERED BY MaxRequestBytes. The emulator
+	// exposes TWO listeners. MaxRequestBytes is installed by net/http's
+	// MaxBytesReader at the root HTTP handler and bounds an r.Body; the SQL/TDS
+	// endpoint is a raw net.Listener (cmd/fabric-emulator/main.go) where there is
+	// no r.Body for anything to wrap, so that bound cannot reach it by
+	// construction. The measured exposure this closes is tds.ReadMessage, which
+	// concatenated packets until one set the EOM status bit with no cap on the
+	// total: each frame is self-limiting at 64 KiB because the TDS length field
+	// is a uint16, which is exactly why the loop read as bounded and was not.
+	//
+	// Same escape-hatch shape as MaxRequestBytes, for the same reason -- it
+	// narrows what a released binary accepts -- and the direction that can
+	// legitimately be large here is the RESPONSE one: internal/tds/splice.go
+	// reads the sidecar's result sets through the same function, so a SELECT
+	// returning more than the default is refused where it previously worked. 0 is
+	// the documented way to keep doing it. See docs/62-performance-regressions.md.
+	//
+	// THE DEFAULT IS APPLIED BY FromEnvPartial, NOT BY Finish, and the ceiling
+	// itself lives in internal/tds as process-wide state installed once by
+	// internal/server -- both for the same reasons spelled out above
+	// MaxRequestBytes: Finish cannot supply a default without destroying the
+	// escape hatch, and a Config built literally in a test gets 0.
+	MaxTDSMessageBytes int64
+
 	// Version and Commit are stamped at build time — `-ldflags -X main.version`
 	// and `-X main.commit`, set by GoReleaser for the binaries and by a build
 	// arg for the image. Empty in a plain `go build`, which is honest: a source
@@ -347,7 +375,8 @@ func FromEnvPartial() *Config {
 		DatabricksTLSInsecure:  boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
 		ARMURL:                 os.Getenv("FABRIC_ARM_URL"),
 		ARMPollSeconds:         intEnv("FABRIC_ARM_POLL_SECONDS"),
-		MaxRequestBytes:        maxRequestBytesEnv("FABRIC_MAX_REQUEST_BYTES"),
+		MaxRequestBytes:        maxBytesEnv("FABRIC_MAX_REQUEST_BYTES", httpx.DefaultMaxRequestBody),
+		MaxTDSMessageBytes:     maxBytesEnv("FABRIC_MAX_TDS_MESSAGE_BYTES", tds.DefaultMaxMessageBytes),
 		RetryAfterSeconds:      1,
 	}
 }
@@ -451,22 +480,31 @@ func customActivityEnabled(v string) bool {
 	return !strings.EqualFold(strings.TrimSpace(v), "off")
 }
 
-// maxRequestBytesEnv reads the outer body bound, and must distinguish UNSET from
-// SET-TO-ZERO the way envDefault does for DataDir -- intEnv cannot, because it
-// answers 0 for both, and here those are opposite instructions: unset means
-// "use the 320 MiB default" and 0 means "no limit at all".
+// maxBytesEnv reads one of the two outer size bounds -- the HTTP body ceiling
+// and the TDS accumulated-message ceiling -- and must distinguish UNSET from
+// SET-TO-ZERO the way envDefault does for DataDir. intEnv cannot, because it
+// answers 0 for both, and here those are opposite instructions: unset means "use
+// the default" and 0 means "no limit at all".
 //
 // An unparseable value reads as the DEFAULT rather than as unlimited. A typo
-// must not silently remove the bound: that is the permissive direction, and it
-// would restore the exact exposure this exists to close while looking configured.
-func maxRequestBytesEnv(key string) int64 {
+// must not silently remove a bound: that is the permissive direction, and it
+// would restore the exact exposure these exist to close while looking
+// configured.
+//
+// The default is a PARAMETER rather than a constant in the body because the two
+// listeners are bounded by two different packages (internal/httpx for HTTP,
+// internal/tds for the SQL endpoint) and they are free to diverge. They happen
+// to agree on 320 MiB today, which is deliberate -- see
+// tds.DefaultMaxMessageBytes -- but a shared literal here would make that
+// coincidence look like a requirement.
+func maxBytesEnv(key string, def int64) int64 {
 	v, ok := os.LookupEnv(key)
 	if !ok || strings.TrimSpace(v) == "" {
-		return httpx.DefaultMaxRequestBody
+		return def
 	}
 	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
 	if err != nil || n < 0 {
-		return httpx.DefaultMaxRequestBody
+		return def
 	}
 	return n
 }
