@@ -1,10 +1,11 @@
 {
   "_comment": [
     "The subsystem tags this emulator's operational log lines are allowed to carry, the",
-    "call sites recorded as exempt from carrying one, and the pre-FABRIC_* names of log",
-    "knobs that are still read. `subsystems` is DERIVED and written by",
-    "scripts/check_logging_quality.py --update; `exemptions` and `legacyEnvNames` are",
-    "HAND-WRITTEN and are preserved across --update.",
+    "call sites recorded as exempt from carrying one, the pre-FABRIC_* names of log knobs",
+    "that are still read, and the log lines excused from the credential-redaction rule.",
+    "`subsystems` is DERIVED and written by scripts/check_logging_quality.py --update;",
+    "`exemptions`, `legacyEnvNames` and `redactionExemptions` are HAND-WRITTEN and are",
+    "preserved across --update.",
     "",
     "THE MEASURED BASELINE when this landed: 30 `log.*` call sites across 12 non-test Go",
     "files, in a tree of 212 non-test Go sources. Exactly ONE test in the whole tree",
@@ -13,6 +14,28 @@
     "(`[onelake-dfs]`), colon (`livy:`), space-delimited (`notebook drive job=`) and no",
     "tag at all -- so no single grep could select one subsystem's lines out of a compose",
     "log. docs/64-logging-quality.md carries the findings table with file:line evidence.",
+    "",
+    "ROUND 2's BASELINE, re-measured from a clean checkout before anything changed: 35",
+    "call sites across 13 non-test files naming 14 subsystems, in a tree of 224 non-test",
+    "Go sources (563 total), with 4 test files now asserting a log line. And the finding",
+    "round 1 did not measure: 214 non-test call sites write a 500 and 268 write some 5xx,",
+    "across 47 files and seven error writers (writeErr alone is 150) -- and not one of",
+    "them logged anything. All 35 existing lines belonged to background drivers, traces",
+    "and lifecycle paths, so the single status that always means \"the emulator is broken,",
+    "rather than the request\" was the one class of failure with no server-side record.",
+    "The detail was not lost, it went the wrong way: writeErr echoes err.Error() into the",
+    "response body, so the CLIENT learned what happened and the operator reading the",
+    "compose log learned nothing. internal/server/fault.go closes that at the root.",
+    "",
+    "WHY `fault` NAMES AN EVENT CLASS RATHER THAN A COMPONENT, which every other tag in",
+    "this list does. A 5xx observed at the root has not yet been attributed to a",
+    "subsystem -- that is the same argument the main.go exemption below already makes",
+    "about log.Fatal, and the same one internal/server/server.go's boundBodies makes about",
+    "answering 413 in the control plane's error shape: \"a request refused before routing",
+    "has not yet been attributed to a surface\". Attributing the fault would mean either",
+    "editing the 214 sites or guessing from the path, and a guessed tag is worse than an",
+    "honest one, because `grep 'fault: '` would then select an incomplete set while",
+    "looking complete.",
     "",
     "THE FAILURE SHAPE is the one this repository has written down twice already, in",
     "python/tests/test_make_check_runs_in_ci.py's words: a check that passes is",
@@ -27,18 +50,22 @@
     "The gate is asymmetric in the same direction as docs/compat-surface.json. A tag in",
     "the tree and not here is a STALE LEDGER: run --update and let the diff be the review",
     "of what vocabulary the log now speaks. An entry here and not in the tree fails until",
-    "someone deletes it -- a tag nobody emits goes on blessing a spelling, and an",
-    "exemption whose call site is gone goes on excusing a file.",
+    "someone deletes it -- a tag nobody emits goes on blessing a spelling, an exemption",
+    "whose call site is gone goes on excusing a file, and a redaction exemption whose",
+    "call site is gone goes on excusing a credential in a diagnostic.",
     "",
     "IT SAYS NOTHING ABOUT WHETHER A LINE IS TRUE, or about whether the right things are",
-    "logged at all. It holds the shape: a tag a reader can grep for, no library that",
-    "exits the process out from under its caller, and a log knob the surface ledger can",
-    "see."
+    "logged at all, and it still does not record SEVERITY -- docs/64-logging-quality.md's",
+    "F3, deferred twice now, with the argument restated there. It holds the shape: a tag",
+    "a reader can grep for, no library that exits the process out from under its caller,",
+    "a log knob the surface ledger can see, and no log argument that reaches a credential",
+    "without passing through a redactor."
   ],
   "counts": {
     "subsystems": 15,
     "exemptions": 1,
-    "legacyEnvNames": 1
+    "legacyEnvNames": 1,
+    "redactionExemptions": 0
   },
   "subsystems": [
     "arm-capacities",
@@ -74,5 +101,6 @@
       ],
       "reason": "The pre-FABRIC_* spelling of the OneLake request trace, shipped in released binaries and still honoured so an existing shell export or compose override keeps working. It is also the reason this audit found anything at all: because it is not named FABRIC_*, check_backward_compat.py's env literal pattern matches only FABRIC_[A-Z0-9_]+ and could not see it, so it appeared in no docs/, in no envVars list, and in no docsUndocumented reason -- unlike its sibling FABRIC_TDS_TRACE, which carries both. A knob outside the surface ledger can be renamed or deleted with every gate in this repository staying green. To be retired in a release whose notes say so; until then this entry is what keeps the guard from reporting a knob somebody is deliberately still honouring."
     }
-  ]
+  ],
+  "redactionExemptions": []
 }
