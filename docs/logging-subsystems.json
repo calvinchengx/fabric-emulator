@@ -36,13 +36,14 @@
     "see."
   ],
   "counts": {
-    "subsystems": 14,
+    "subsystems": 15,
     "exemptions": 1,
     "legacyEnvNames": 1
   },
   "subsystems": [
     "arm-capacities",
     "eventstream",
+    "fault",
     "lineage",
     "livy",
     "notebook",
