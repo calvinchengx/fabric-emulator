@@ -204,19 +204,23 @@ A row filter or column allow-list that no longer matches its table's schema used
 ## The enforcing scripts are inventoried
 
 Of the 68 scripts under `scripts/`, 30 were named by no prose page outside the
-historical release notes, and 17 of those are wired, enforcing gates — 14 run
-from `make check`, one from `make portal-types`, one from `make sbom`, and the
-advisory scan from `security.yml`. Unlike the REST ledgers docs/65 explained,
-fourteen of the seventeen write no artifact at all: their baselines live in
+historical release notes, and 18 of those are wired, enforcing gates — 14 run
+from `make check`, one from `make portal-types`, one from `make sbom`, the
+advisory scan from `security.yml`, and the container smoke test from its own
+`ci.yml` job. Unlike the REST ledgers docs/65 explained, sixteen of the
+eighteen write no artifact at all, and fourteen of those keep their baseline in
 their own source as a `WAIVED` dict, an `UNDOCUMENTED` set, a `SINGLE_SOURCED`
 map, a freshness constant. There was no file to open, so each gate's
 denominator, what it asserts and how a new case is accepted were reviewable
 only by reading the checker.
 
-A new chapter states those four facts for each of the seventeen, groups them by
+A new chapter states those four facts for each of the eighteen, groups them by
 what they guard — offline source, a vendored oracle, documentation and workflow
-config, reachability, dependencies — and names the 13 build and vendor scripts
-it leaves out rather than dropping them silently. It lands no new checker and
+config, reachability, dependencies, the container — and names the 12 build and
+vendor scripts it leaves out rather than dropping them silently. What makes a
+script a gate here is that something fails when it fails, not which file
+invokes it: that is why the advisory scan and the container smoke test are in
+even though no `make` target reaches either. It lands no new checker and
 changes no gate; the inventory's own completeness is gated by nothing, so the
 one-line command that re-derives it is printed in the page.
 

@@ -1,14 +1,19 @@
-# 66 — The gate inventory: seventeen enforcing checks no prose page named
+# 66 — The gate inventory: eighteen enforcing checks no prose page named
 
-**Status: of the 68 scripts under `scripts/`, 30 are named by no prose page in
-this repository outside the historical release notes. 17 of those 30 are wired,
+**Status: of the 68 scripts under `scripts/`, 30 were named by no prose page in
+this repository outside the historical release notes. 18 of those 30 are wired,
 enforcing gates — 14 run from `make check`, one from `make portal-types`, one
-from `make sbom`, and `scripts/check_advisories.py` from
-`.github/workflows/security.yml`. For each of the 17, its denominator, its
+from `make sbom`, `scripts/check_advisories.py` from
+`.github/workflows/security.yml`, and `scripts/docker-smoke.sh` from its own
+`.github/workflows/ci.yml` job. For each of the 18, its denominator, its
 ratchet direction and the command that updates it were reviewable only by
 reading its source. This document is the missing half.**
 
-The other 13 are build, vendor and developer tooling, counted and named below
+**The past tense is load-bearing.** This page names all 30, so from the commit
+that adds it the derivation below has to exclude this page to reproduce the
+figure — and it does, the same way it already excludes the release notes.
+
+The other 12 are build, vendor and developer tooling, counted and named below
 rather than dropped, because a chapter that lists only what it covers reads as
 complete.
 
@@ -29,10 +34,14 @@ JSON under `docs/`: every evidence ledger in that directory now has a chapter
 naming it. The decay it argues against is one directory over, and in a sharper
 form.
 
-A ledger under `docs/` at least leaves a reviewable artifact. These 17 gates
-mostly do not. **Fourteen of them write nothing at all** — their baselines live
-in their own source, as a `WAIVED` dict, an `UNDOCUMENTED` set, a
-`SINGLE_SOURCED` map, a `MAX_AGE_DAYS` constant. There is no file to open. The
+A ledger under `docs/` at least leaves a reviewable artifact. These 18 gates
+mostly do not. **Sixteen of them write no artifact at all**, and **fourteen of
+those sixteen keep their baseline in their own source** — as a `WAIVED` dict, an
+`UNDOCUMENTED` set, a `SINGLE_SOURCED` map, a `MAX_AGE_DAYS` constant. There is
+no file to open. (The other two of the sixteen:
+`scripts/check_advisories.py` keeps its holds in `docs/advisory-holds.json`, and
+`scripts/docker-smoke.sh` has no baseline at all — it is one scenario that
+either runs or does not.) The
 only route to "what does this gate actually assert, and what would I change to
 accept a new case" was to read the checker, which is precisely the state
 [`scripts/check_doc_drift.py`](../scripts/check_doc_drift.py) argues against in
@@ -55,10 +64,20 @@ than asserted:
 ```bash
 for f in scripts/*.py scripts/*.sh; do
   b=$(basename "$f")
-  n=$(grep -rlF "$b" docs --include='*.md' | grep -v '^docs/release-notes/' | wc -l)
+  n=$(grep -rlF "$b" docs --include='*.md' \
+        | grep -v '^docs/release-notes/' \
+        | grep -v '^docs/66-gate-inventory.md' | wc -l)
   [ "$n" -eq 0 ] && echo "$b"
 done
 ```
+
+**It excludes this page as well as the release notes, and that is not a
+convenience.** This chapter names all 30 scripts, so without the second
+exclusion the command returns 0 on any tree that contains it — a reader
+following it to check the headline would get a flat contradiction. With the
+exclusion it returns 30 here, and it still fails loudly in the direction that
+matters: a gate added tomorrow and documented nowhere is named by neither this
+page nor a release note, so it appears in the output.
 
 The denominator is `scripts/*.py` and `scripts/*.sh` — 61 Python files and 7
 shell scripts. [`scripts/check_script_test_coverage.py`](../scripts/check_script_test_coverage.py)
@@ -94,8 +113,9 @@ ledgers, and it is why this page exists for the same reason that one did.
 | `scripts/check_kind_exhaustiveness.py` | `internal/store/bus.go`, `portal/src/eventKinds.ts` | declaring a new event kind in Go **breaks the portal's TypeScript build** | `make portal-types` | mutates and restores `internal/store/bus.go` |
 | `scripts/gen_sbom.py` | `go.mod`, every tracked `uv.lock`, `pnpm-lock.yaml` | a CycloneDX inventory can be built from committed lock data alone; exits 1 if a present manifest yields nothing | `make sbom` | `sbom.cdx.json` |
 | `scripts/check_advisories.py` | every tracked `uv.lock`, `pnpm-lock.yaml` | no locked version carries an open advisory that is not held in `docs/advisory-holds.json` | `.github/workflows/security.yml` | none |
+| `scripts/docker-smoke.sh` | the production `Dockerfile`, built and run with default config on a fresh volume | the distroless nonroot user opens its SQLite DB, serves `healthcheck`, and leaves `fabric-emulator.db` and `tls/cert.pem` on the volume | `.github/workflows/ci.yml` (`docker-smoke`) | none |
 
-**Thirteen of the seventeen also run as their own step in the `witnesses` job**
+**Thirteen of the eighteen also run as their own step in the `witnesses` job**
 in `.github/workflows/ci.yml`, so a local `make check` and CI reach them by two
 independent routes. `scripts/check_kind_exhaustiveness.py` has the same double
 route, through CI's `portal-types` job.
@@ -106,7 +126,14 @@ mentions of it in `ci.yml`, `.github/workflows/codeql.yml` and
 `make-targets.yml` are comments pointing at it, not invocations — so a grep for
 its name in the workflows reads as wiring that is not there.
 
-**None of the seventeen takes an update flag.** That is worth stating plainly,
+`scripts/docker-smoke.sh` is the opposite case: one route and no second. No
+`make` target invokes it, so it is reachable only from the `docker-smoke` job in
+`.github/workflows/ci.yml`, and it is in the documentation lane's skip set
+(`if: needs.changes.outputs.docs_only != 'true'`). It needs Docker and a full
+image build, which is why it is not in `make check` — `check` is deliberately
+runnable with nothing but Python.
+
+**None of the eighteen takes an update flag.** That is worth stating plainly,
 because it is the difference between this family and
 [docs/65](65-api-surface-coverage.md)'s: there is no baseline to regenerate and
 no diff to review. Accepting a new case means editing a named constant in the
@@ -296,8 +323,9 @@ Python.
 
 ## Dependency and SBOM gates
 
-`scripts/check_advisories.py` is the only one of the seventeen that
-`make check` cannot reach, and its header explains the split. It needs the
+`scripts/check_advisories.py` is one of two gates here that `make check` cannot
+reach — `scripts/docker-smoke.sh` is the other — and its header explains the
+split. It needs the
 network and a third-party binary, while the guards under `scripts/` are offline
 invariants, so it lives in `.github/workflows/security.yml` — which runs on
 push, pull request, a weekly cron *and* dispatch, so it is exercised on every
@@ -330,18 +358,51 @@ so regenerating from an unchanged tree is byte-identical and a diff of two SBOMs
 is a diff of the dependencies. It does not resolve licences, which `SECURITY.md`
 records as a known gap.
 
-## The 13 that are not gates
+## The container gate
+
+`scripts/docker-smoke.sh` is the one shell script in this inventory, and it is
+here on the same rule that admits `scripts/check_advisories.py`: **what makes a
+script a gate is that something fails when it fails, not which file invokes
+it.** It runs from a workflow rather than a `make` target, has a dedicated CI
+job, and `set -eu` plus an explicit `exit 1` on each branch means a failure is a
+red check and not a warning in a log.
+
+What it asserts is narrow and was measured the hard way. The production image is
+distroless nonroot, and the bug it exists for is that **the nonroot user could
+not open its SQLite DB under `/data`** — which, in its own header's words,
+"shipped untested because nothing in CI ran the container." Every other suite
+either runs the emulator from source or builds its own compose stack with its
+own mounts, so the one path a `docker run` user actually takes was the one path
+nothing exercised.
+
+It is also careful about the thing [docs/10](10-testing.md#the-failure-this-codebase-keeps-producing)'s
+first category is about — a check that cannot fail. Health alone would not do
+it: the server answering `healthcheck` proves it started, not that it wrote
+anything durable, and a server that silently fell back to an in-memory DB would
+answer exactly the same. So the assertion has a second half that reads the
+volume from a *separate* container and requires `fabric-emulator.db` and
+`tls/cert.pem` to be on it. And it does not wait out its thirty tries on a
+container that has already died: it inspects `.State.Running` each iteration and
+fails fast with the logs, so "crashed immediately" and "slow to start" are
+distinguishable rather than both arriving as a timeout.
+
+It writes no artifact and ratchets nothing. There is no denominator, no baseline
+and no accepted-case list — which is why it is the shortest entry here, not why
+it was nearly left out.
+
+## The 12 that are not gates
 
 Out of scope here, and named rather than quietly dropped. None asserts an
-invariant; each is build, vendor or developer tooling, and a chapter explaining
-`make check` is not where they belong:
+invariant that something fails on; each is build, vendor or developer tooling,
+and a chapter explaining `make check` is not where they belong. Several do
+`exit 1`, but on a build or fetch failing rather than on a claim about the tree
+being false:
 
 | Script | Role |
 |---|---|
 | `scripts/assemble_site.py` | assembles the published site from the built landing page and docs (`make docs-build`) |
 | `scripts/build_landing_data.py` | generates the landing page's data |
 | `scripts/coverage_badges.py` | renders the coverage badges |
-| `scripts/docker-smoke.sh` | smoke-tests a built image |
 | `scripts/doctor.sh` | `make doctor` — toolchain and docker-context diagnosis |
 | `scripts/port_conflict.sh` | prints the diagnosis when `make up` cannot bind |
 | `scripts/fetch_spark_jars.sh` | fetches Spark jars for the JVM image |
