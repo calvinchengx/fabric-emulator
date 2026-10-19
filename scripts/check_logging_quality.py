@@ -19,7 +19,7 @@ that stops logging its failure path reads exactly like a handler that has no
 failures -- silence where the signal would be, and no diff to notice, because
 what is missing is a line that is not there.
 
-THE FOUR INVARIANTS, each one measured against the tree before it was written:
+THE FIVE INVARIANTS, each one measured against the tree before it was written:
 
   R1  TAGGED. Every `log.Print*`/`log.Fatal*`/`log.Panic*` whose first argument
       is a string literal must begin `<tag>: ` (or be exactly `<tag>:`, which is
@@ -64,9 +64,45 @@ THE FOUR INVARIANTS, each one measured against the tree before it was written:
       FABRIC_ONELAKE_TRACE is what put it inside; this rule is what keeps the
       next one from landing outside.
 
+  R5  A LOG LINE DOES NOT CARRY A CREDENTIAL. A `log.*` call whose argument text
+      reaches a credential-bearing source must pass that value through a
+      redactor, or be recorded in `redactionExemptions` with the reason.
+
+      THE ASYMMETRY THIS CLOSES was inside one repository. The
+      FABRIC_ONELAKE_TRACE lines printed `r.URL.RawQuery` and the
+      `x-ms-copy-source` and `x-ms-rename-source` headers VERBATIM, and all
+      three carry an Azure SAS in ordinary use -- a SAS *is* a query string
+      (`sv=…&se=…&sig=…`), a copy source is by convention a full SAS URL, and
+      renameSource's own comment says the header "may carry a sas/query
+      suffix". Meanwhile internal/server/record.go refuses to record response
+      headers AT ALL, and says why: "the Authorization header carries a bearer
+      token, and a recording written to a file that CI may upload as an
+      artifact is exactly the place a token should never be." One package over,
+      the sibling diagnostic printed the same class of credential to stderr,
+      which compose captures and CI uploads by the identical route.
+
+      DETECTED TWO WAYS, as R3 already is, because each catches what the other
+      cannot:
+
+        BY SOURCE   the argument text names a field or header known to carry a
+                    credential -- `.RawQuery`, `Header.Get("Authorization")`,
+                    `x-ms-copy-source`, `x-ms-rename-source`,
+                    `x-ms-encryption-key`, `Cookie`.
+        BY NAME     an identifier in the argument text reads as a secret --
+                    token, secret, password, sas, credential, bearer, apikey.
+
+      THE LIMIT, written down rather than papered over: R5 cannot see a
+      credential reached by an INNOCENT NAME (`conn.Password` is caught,
+      `conn.Username` carrying a key is not), nor one composed into a variable
+      a call or two away and then logged under a plain name. It is a gate on
+      the convention -- a log argument that LOOKS like a credential must show a
+      redactor -- and what makes it worth having is that the convention is
+      checkable at all. That is the same shape of limit R3 documents about
+      itself, for the same reason.
+
   R4  --UPDATE TOUCHES ONLY THE DERIVED LIST. `subsystems` is regenerated from
-      the tree; `exemptions` and `legacyEnvNames` are hand-written decisions and
-      must survive. Otherwise regenerating is how an exemption gets laundered
+      the tree; `exemptions`, `legacyEnvNames` and `redactionExemptions` are
+      hand-written decisions and must survive. Otherwise regenerating is how an exemption gets laundered
       into a clean diff -- the refusal check_backward_compat.py's --update makes
       explicit for the same reason.
 
@@ -74,8 +110,10 @@ BOTH DIRECTIONS, like docs/test-flakiness.json and docs/script-test-coverage.jso
 before it. A tag in the tree and not in the ledger is a stale ledger, fixed with
 --update. An entry in the ledger and not in the tree FAILS: a tag nobody emits
 goes on blessing a spelling, an exemption whose call site is gone goes on
-excusing a file, and a legacy env name nobody reads goes on excusing a knob that
-is no longer there. A one-directional ledger only ever grows.
+excusing a file, a legacy env name nobody reads goes on excusing a knob that is
+no longer there, and a redaction exemption whose call site is gone goes on
+excusing a leak that would silently be re-excused if the call came back. A
+one-directional ledger only ever grows.
 
 WHAT THIS DELIBERATELY DOES NOT CHECK. Whether a line is TRUE, whether the right
 things are logged, and whether a line carries a SEVERITY. The third is a real
@@ -94,6 +132,7 @@ Usage:
     check_logging_quality.py --update   rewrite the derived `subsystems` list
 """
 import argparse
+import itertools
 import json
 import pathlib
 import re
@@ -138,6 +177,56 @@ _LOG_KNOB_NAME = re.compile(r"(?:^|_)(?:TRACE|DEBUG|VERBOSE|LOG|LOGGING|SPEW)(?:
 # included because internal/server installs the TDS trace hook that way rather
 # than calling log itself at that point.
 _EMITS_LOG = re.compile(r"\blog\.[A-Z]|SetTraceFunc|SetOutput")
+
+
+# R5: credential-bearing SOURCES a log argument can reach. Each one is a field
+# or header this tree actually touches, not a generic list:
+#
+#   .RawQuery / RawQuery           an Azure SAS IS a query string
+#   x-ms-copy-source               by convention a full SAS URL (blob.go)
+#   x-ms-rename-source             "may carry a sas/query suffix" (onelake.go)
+#   x-ms-encryption-key            a customer-provided encryption key
+#   Authorization / Cookie         the bearer token record.go refuses to record
+_LEAKY_SOURCE = re.compile(
+    r"\.RawQuery\b"
+    r'|Header\.Get\(\s*"(?i:authorization|cookie|set-cookie'
+    r"|x-ms-copy-source|x-ms-rename-source|x-ms-encryption-key"
+    r'|x-ms-encryption-key-sha256)"'
+    r'|"(?i:x-ms-copy-source|x-ms-rename-source|x-ms-encryption-key)"')
+
+# R5: identifiers that READ as a credential.
+#
+# MATCHED AGAINST WORDS, NOT SUBSTRINGS, which is what makes this a rule rather
+# than noise: a substring scan for "sas" fires on any format string containing
+# those three letters ("assassination" is the one that turned up), and one for
+# "name" fires on `Username`. Identifiers are split on non-letters AND at
+# camelCase boundaries, then each word -- and each ADJACENT PAIR joined -- is
+# looked up here. The pair is why `apiKey` is caught: it splits to {api, key},
+# and `key` alone is far too common to list (primaryKey, keyspace, blockid).
+#
+# `sig` IS DELIBERATELY ABSENT. It is a SAS parameter name, but as an identifier
+# it collides with `sigChan`, `sigint` and `signal`, and a gate that fires on a
+# signal handler is a gate people switch off. The SAS `sig` is reached through
+# `.RawQuery` or a copy-source header, which the BY-SOURCE rule above already
+# catches -- so dropping the word costs nothing real and buys the absence of a
+# false positive. Noted rather than silently omitted.
+_SECRET_WORDS = frozenset((
+    "token", "tokens", "secret", "secrets", "password", "passwords", "passwd",
+    "sas", "credential", "credentials", "creds", "bearer", "signature",
+    "apikey", "privatekey", "accesskey", "secretkey", "sharedkey", "authkey",
+))
+
+# A redactor in the argument text is what satisfies R5. Deliberately a NAME
+# convention -- anything spelled `redact*`/`*Redact*`/`*scrub*`/`*mask*` -- for
+# the same reason R1 is a prefix convention: it is decidable from the source
+# text, where "does this function actually remove the secret" is not. The
+# redactor's own tests are what hold that part (internal/onelake/trace_test.go).
+_REDACTOR = re.compile(r"(?i)redact|scrub|sanitiz|mask")
+
+# Splits an expression into the words _SECRET_WORDS is checked against: on
+# non-letters, and at camelCase boundaries, so `redactSASURL` yields
+# {redact, sasurl} ... and `sasParams` yields {sas, params}.
+_WORD_SPLIT = re.compile(r"[^A-Za-z]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 def relkey(path, root=None):
@@ -371,6 +460,38 @@ def tag_of(literal):
     return m.group(1) if m else None
 
 
+def arg_words(call_text):
+    """The lowercased words of a call expression, plus adjacent pairs joined.
+
+    The pairs are what let `apiKey` and `accessKey` be listed without listing
+    `key`, which appears in primaryKey, keyspace and half the store package.
+    """
+    words = [w.lower() for w in _WORD_SPLIT.split(call_text) if w]
+    out = set(words)
+    out.update(a + b for a, b in itertools.pairwise(words))
+    return out
+
+
+def leak_reason(call_text):
+    """Why this log call looks like it logs a credential, or None.
+
+    SATISFIED BY A REDACTOR IN THE ARGUMENT TEXT, checked FIRST -- which is why
+    `log.Printf("...", redactSAS(r.URL.RawQuery))` passes even though it still
+    names RawQuery, and why `redactSASURL` does not trip the `sas` word rule
+    against itself.
+    """
+    if _REDACTOR.search(call_text):
+        return None
+    if _LEAKY_SOURCE.search(call_text):
+        return ("the argument reaches a credential-bearing source (a query "
+                "string, or a header carrying a token, SAS or key)")
+    hit = sorted(arg_words(call_text) & _SECRET_WORDS)
+    if hit:
+        return (f"an argument reads as a credential ({', '.join(hit)}) and no "
+                "redactor is applied")
+    return None
+
+
 def env_log_knobs(root=None):
     """Env variables that gate log output, as (file, line, name) triples.
 
@@ -475,6 +596,25 @@ def load_ledger(path=None):
                 "for one call means one of them is not being read")
         exemptions[key] = entry
 
+    redaction = {}
+    for entry in data.get("redactionExemptions", []):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{relkey(p)}: every redactionExemptions entry must "
+                             f"be an object, got {entry!r}")
+        missing = [k for k in ("file", "call", "reason") if not entry.get(k)]
+        if missing:
+            raise KeyError(
+                f"a redaction exemption is missing {', '.join(missing)}: "
+                f"{entry!r}. A log line excused from R5 with no reason is the "
+                "shape the audit found in the first place -- a credential in a "
+                "diagnostic that nobody had decided to put there.")
+        key = (entry["file"], re.sub(r"\s+", " ", entry["call"]).strip())
+        if key in redaction:
+            raise ValueError(
+                f"{relkey(p)}: {key[0]} {key[1]} is redaction-exempt twice; two "
+                "reasons for one call means one of them is not being read")
+        redaction[key] = entry
+
     legacy = {}
     for entry in data.get("legacyEnvNames", []):
         if not isinstance(entry, dict):
@@ -490,7 +630,7 @@ def load_ledger(path=None):
             raise ValueError(f"{relkey(p)}: {entry['name']} is recorded twice")
         legacy[entry["name"]] = entry
     return {"subsystems": sorted(subsystems), "exemptions": exemptions,
-            "legacy": legacy, "raw": data}
+            "legacy": legacy, "redaction": redaction, "raw": data}
 
 
 def scan(root=None, ledger=None):
@@ -500,12 +640,16 @@ def scan(root=None, ledger=None):
                     does not know.
     exits           R2: log.Fatal*/Panic* outside cmd/.
     unprefixed_env  R3: a log knob not named FABRIC_* and not recorded.
+    leaky_args      R5: a log call whose argument looks like a credential and
+                    passes through no redactor.
     stale_tags      a ledgered tag nothing emits.
     stale_exempt    an exemption whose call site is gone.
     stale_legacy    a recorded legacy env name nothing reads.
+    stale_redaction a redaction exemption whose call site is gone.
     """
     led = load_ledger() if ledger is None else ledger
     known, exempt = set(led["subsystems"]), led["exemptions"]
+    redaction = led.get("redaction", {})
     sites = log_sites(root)
 
     untagged, emitted, matched = [], set(), set()
@@ -524,6 +668,20 @@ def scan(root=None, ledger=None):
         else:
             emitted.add(s["tag"])
 
+    # R5 IS SCANNED OVER EVERY SITE, including the ones R1 exempts: a
+    # credential in a log line is a problem whether or not the line names a
+    # subsystem, and `exemptions` excuses the missing TAG, nothing else.
+    leaky_args, matched_redaction = [], set()
+    for s in sites:
+        key = (s["file"], s["call"])
+        why = leak_reason(s["call"])
+        if why is None:
+            continue
+        if key in redaction:
+            matched_redaction.add(key)
+            continue
+        leaky_args.append(dict(s, why=why))
+
     exits = [s for s in sites
              if s["func"].startswith(("Fatal", "Panic"))
              and s["file"].split("/")[0] != EXIT_ALLOWED]
@@ -538,9 +696,11 @@ def scan(root=None, ledger=None):
         "untagged": untagged,
         "exits": exits,
         "unprefixed_env": unprefixed_env,
+        "leaky_args": leaky_args,
         "stale_tags": sorted(known - emitted),
         "stale_exempt": sorted(set(exempt) - matched),
         "stale_legacy": sorted(n for n in led["legacy"] if n not in read_names),
+        "stale_redaction": sorted(set(redaction) - matched_redaction),
         "sites": sites,
         "emitted": sorted(emitted),
     }
@@ -549,10 +709,12 @@ def scan(root=None, ledger=None):
 def write_ledger(emitted, previous, path=None):
     """Rewrite the ledger, regenerating ONLY the derived `subsystems` list.
 
-    `exemptions` and `legacyEnvNames` are decisions someone wrote down, and
-    --update must not be able to erase them: otherwise regenerating is how an
-    exemption gets laundered into a clean diff, which is the refusal
-    check_backward_compat.py's --update makes explicit for the same reason. The
+    `exemptions`, `legacyEnvNames` and `redactionExemptions` are decisions
+    someone wrote down, and --update must not be able to erase them: otherwise
+    regenerating is how an exemption gets laundered into a clean diff, which is
+    the refusal check_backward_compat.py's --update makes explicit for the same
+    reason. That matters most for `redactionExemptions`, where a laundered entry
+    does not merely excuse an untagged line -- it excuses a credential. The
     `_comment` block is preserved too -- it carries the measured baseline, and a
     regenerated file that dropped the reasoning would leave the next reader with
     a list and no account of why it exists.
@@ -564,11 +726,13 @@ def write_ledger(emitted, previous, path=None):
         "subsystems": len(out["subsystems"]),
         "exemptions": len(out.get("exemptions", [])),
         "legacyEnvNames": len(out.get("legacyEnvNames", [])),
+        "redactionExemptions": len(out.get("redactionExemptions", [])),
     }
     # Key order is fixed so --update produces a reviewable diff rather than a
     # reshuffled file: the derived list sits between the prose and the two
     # hand-written maps, where the diff reads as what it is.
-    order = ["_comment", "counts", "subsystems", "exemptions", "legacyEnvNames"]
+    order = ["_comment", "counts", "subsystems", "exemptions", "legacyEnvNames",
+             "redactionExemptions"]
     ordered = {k: out[k] for k in order if k in out}
     ordered.update({k: v for k, v in out.items() if k not in ordered})
     p.write_text(json.dumps(ordered, indent=2) + "\n", encoding="utf-8")
@@ -602,7 +766,8 @@ def main(argv=None):
 
     if args.update:
         if previous is None:
-            previous = {"raw": {}, "subsystems": [], "exemptions": {}, "legacy": {}}
+            previous = {"raw": {}, "subsystems": [], "exemptions": {},
+                        "legacy": {}, "redaction": {}}
         # Derived from every tag the tree ACTUALLY emits, including tags the
         # ledger does not yet know -- that is what makes --update the fix for a
         # stale ledger. Exempt sites contribute nothing, by construction: they
@@ -631,8 +796,8 @@ def main(argv=None):
     if not sites:
         print(f"check_logging_quality: found zero log call sites across "
               f"{len(sources)} Go source(s). The tree had 30 when this gate "
-              "landed, so the scanner has stopped matching rather than the "
-              "logging having gone away.", file=sys.stderr)
+              "landed and 36 at round 2, so the scanner has stopped matching "
+              "rather than the logging having gone away.", file=sys.stderr)
         return 1
 
     if not args.strict:
@@ -643,17 +808,22 @@ def main(argv=None):
                   f"{EXIT_ALLOWED}/")
         for e in found["unprefixed_env"]:
             print(f"ENVNAME   {e['file']}:{e['line']} {e['name']} is not FABRIC_*")
+        for s in found["leaky_args"]:
+            print(f"LEAKY     {s['file']}:{s['line']} log.{s['func']} -- {s['why']}")
         for tag in found["stale_tags"]:
             print(f"STALE     subsystem {tag!r} is in the ledger and nothing emits it")
         for f, call in found["stale_exempt"]:
             print(f"STALE     exemption {f} {call} -- that call site is gone")
         for name in found["stale_legacy"]:
             print(f"STALE     legacy env name {name} -- nothing reads it")
+        for f, call in found["stale_redaction"]:
+            print(f"STALE     redaction exemption {f} {call} -- that call site is gone")
         print(f"\ncheck_logging_quality: {len(sites)} log call site(s) across "
               f"{len({s['file'] for s in sites})} file(s); "
               f"{len(found['emitted'])} subsystem(s) emitted; "
               f"{len(previous['exemptions'])} exemption(s), "
-              f"{len(previous['legacy'])} legacy env name(s)")
+              f"{len(previous['legacy'])} legacy env name(s), "
+              f"{len(previous.get('redaction', {}))} redaction exemption(s)")
         return 0
 
     problems = []
@@ -691,12 +861,30 @@ def main(argv=None):
             "rename or deletion that every gate here reports as green. That is "
             "exactly how ONELAKE_TRACE went unledgered. Rename it FABRIC_*, or "
             "record it in `legacyEnvNames` with the reason it is still read.")
+    if found["leaky_args"]:
+        problems.append(
+            f"{len(found['leaky_args'])} log call site(s) may put a credential "
+            "in the log:\n    " + "\n    ".join(
+                f"{s['file']}:{s['line']} log.{s['func']} -- {s['why']}"
+                for s in found["leaky_args"]) + "\n"
+            "  internal/server/record.go refuses to record response headers at "
+            "all, because \"the Authorization header carries a bearer token, and "
+            "a recording written to a file that CI may upload as an artifact is "
+            "exactly the place a token should never be\" -- and a log line goes "
+            "to stderr, which compose captures and CI uploads by the same route. "
+            "An Azure SAS is a query string, and x-ms-copy-source is a SAS URL. "
+            "Pass the value through a redactor (internal/onelake/trace.go), log "
+            "something that is not the credential, or record the site in "
+            "`redactionExemptions` with the reason it is safe.")
+
     stale = ([f"subsystem {t!r} is in the ledger and nothing emits it"
               for t in found["stale_tags"]]
              + [f"exemption {f} {c} -- that call site is gone"
                 for f, c in found["stale_exempt"]]
              + [f"legacy env name {n} -- nothing reads it"
-                for n in found["stale_legacy"]])
+                for n in found["stale_legacy"]]
+             + [f"redaction exemption {f} {c} -- that call site is gone"
+                for f, c in found["stale_redaction"]])
     if stale:
         problems.append(
             f"{len(stale)} ledger entr(y/ies) record something the tree no "
@@ -713,7 +901,9 @@ def main(argv=None):
           f"{len({s['file'] for s in sites})} file(s), every one naming one of "
           f"{len(found['emitted'])} subsystem(s); no log.Fatal/Panic outside "
           f"{EXIT_ALLOWED}/; every log knob FABRIC_*-prefixed "
-          f"({len(previous['legacy'])} legacy name(s) recorded)")
+          f"({len(previous['legacy'])} legacy name(s) recorded); no log "
+          f"argument reaches a credential un-redacted "
+          f"({len(previous.get('redaction', {}))} exemption(s) recorded)")
     return 0
 
 

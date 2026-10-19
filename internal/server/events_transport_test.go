@@ -304,3 +304,43 @@ func tail(s string) string {
 	}
 	return s
 }
+
+// TestFlowStreamStillSeesAFlusherThroughTheFaultWrapper.
+//
+// THE REGRESSION TEST FOR THE ONE REAL RISK in the 5xx fault log
+// (internal/server/fault.go). logFaults now wraps the ResponseWriter at the
+// root, inside Handler(), so it sits in front of this endpoint — and the
+// handler's first act is `w.(http.Flusher)`, a DIRECT assertion that does not
+// follow Unwrap. A wrapper that merely embedded the writer would make it fail,
+// and every flow-stream connection would be refused with the same 500
+// TestFlowStreamRefusesAConnectionItCannotStream asserts for a genuinely
+// unstreamable connection. That refusal is itself a 5xx, so the new log would
+// have recorded the outage it caused, which is the worst available outcome.
+//
+// This is the positive direction, through Server.Handler(): a writer that CAN
+// stream must get a stream. TestFlowStreamRefusesAConnectionItCannotStream is
+// the negative half and already runs through the same wrapper.
+func TestFlowStreamStillSeesAFlusherThroughTheFaultWrapper(t *testing.T) {
+	f := newFixture(t)
+	f.srv.Store.PublishJobEvent(streamWS, "item", "job-1", "Pipeline", "Manual", "Completed", "")
+	waitForSeqs(t, f, 0, 1, "the seeded event to become replayable")
+
+	w := newGatedWriter()
+	req := httptest.NewRequest("GET", "/_emulator/events?since=0", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { f.srv.Handler().ServeHTTP(w, req.WithContext(ctx)); close(done) }()
+
+	waitFor(t, w.written, "the first SSE frame through the fault wrapper")
+	cancel()
+	waitForClose(t, done, "the handler to return")
+
+	body := w.text()
+	if strings.Contains(body, "streaming unsupported") {
+		t.Fatalf("the handler could not assert http.Flusher through the fault wrapper, "+
+			"so it refused a connection it can stream:\n%s", body)
+	}
+	if !strings.Contains(body, "data: ") {
+		t.Fatalf("no SSE frame reached the writer:\n%s", body)
+	}
+}

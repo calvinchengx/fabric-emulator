@@ -269,6 +269,19 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 // account-prefixed path /onelake/{workspace}/… reaches the Blob surface on
 // any host — the account name is always the literal "onelake", as
 // documented.
+//
+// THREE WRAPPERS, AND WHICH SITS WHERE MATTERS. Outermost to innermost:
+//
+//   - boundBodies -- the request-body ceiling. Outermost because it must refuse
+//     an oversized body before anything reads it, and because its own 413 is a
+//     4xx that the fault log should not report as a fault.
+//   - logFaults -- the 5xx record (fault.go). Inside the body bound and OUTSIDE
+//     the host router, so one wrapper covers the control plane, the portal, the
+//     Purview Data Map and both OneLake dialects. That placement is the whole
+//     point: 214 non-test sites write a 500 and not one of them logged, so the
+//     fix had to sit somewhere every one of them passes through.
+//   - record -- the conformance recorder, scoped to the mux alone for the
+//     reason given below.
 func (s *Server) Handler() http.Handler {
 	// RECORDING WRAPS ONLY THE CONTROL PLANE, not the OneLake data plane.
 	//
@@ -294,7 +307,7 @@ func (s *Server) Handler() http.Handler {
 			recorded.ServeHTTP(w, r)
 		}
 	})
-	return s.boundBodies(routed)
+	return s.boundBodies(s.logFaults(routed))
 }
 
 // boundBodies installs the ONE outer ceiling on every inbound request body.

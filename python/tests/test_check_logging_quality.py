@@ -45,6 +45,7 @@ LEDGER = {
     "subsystems": ["livy", "onelake-dfs", "tds"],
     "exemptions": [],
     "legacyEnvNames": [],
+    "redactionExemptions": [],
 }
 
 
@@ -310,6 +311,159 @@ def test_a_knob_is_a_log_knob_by_its_guarded_block_too(tree, tmp_path):
 
 
 # --------------------------------------------------------------------------
+# R5: a log line does not carry a credential.
+#
+# THE FINDING, reproduced below as the first two tests: the FABRIC_ONELAKE_TRACE
+# lines printed `r.URL.RawQuery` and the `x-ms-copy-source` and
+# `x-ms-rename-source` headers VERBATIM, and all three carry an Azure SAS in
+# ordinary use. The asymmetry was inside one repository -- internal/server/
+# record.go refuses to record response headers AT ALL because "a recording
+# written to a file that CI may upload as an artifact is exactly the place a
+# token should never be", while the sibling diagnostic one package over printed
+# the same class of credential to stderr, which compose captures and CI uploads
+# by the identical route.
+# --------------------------------------------------------------------------
+
+def test_a_log_line_carrying_a_raw_query_is_reported(tree, tmp_path):
+    """The DFS trace site as it stood. An Azure SAS IS a query string."""
+    tree.write("internal/a/a.go",
+               'func f() { log.Printf("livy: %s?%s", r.URL.Path, r.URL.RawQuery) }\n')
+    found = c.scan(root=tree.root, ledger=write_ledger(tmp_path))
+    assert [(s["file"], s["line"]) for s in found["leaky_args"]] == [("internal/a/a.go", 5)]
+    assert "credential-bearing source" in found["leaky_args"][0]["why"]
+    # ...and R1 is satisfied, so R5 is doing the work rather than the tag rule.
+    assert found["untagged"] == []
+
+
+def test_a_log_line_carrying_a_credential_header_is_reported(tree, tmp_path):
+    """The Blob trace site. `x-ms-copy-source` is by convention a full SAS URL,
+    and `x-ms-rename-source`'s own handler comment says it "may carry a
+    sas/query suffix"."""
+    for hdr in ("x-ms-copy-source", "x-ms-rename-source", "Authorization",
+                "Cookie", "x-ms-encryption-key"):
+        tree.write("internal/a/a.go",
+                   f'func f() {{ log.Printf("livy: %q", r.Header.Get("{hdr}")) }}\n')
+        found = c.scan(root=tree.root, ledger=write_ledger(tmp_path))
+        assert len(found["leaky_args"]) == 1, f"{hdr} was not caught"
+
+
+def test_a_log_line_naming_a_secret_identifier_is_reported(tree, tmp_path):
+    """The BY-NAME half of the rule, which is what catches a credential that
+    reached the call under a variable rather than straight off a header."""
+    for expr in ("token", "t.Secret", "creds.Password", "sasURL", "theBearer",
+                 "conn.Credentials", "apiKey", "accessKey", "sharedKey",
+                 "theSignature"):
+        tree.write("internal/a/a.go",
+                   f'func f() {{ log.Printf("livy: %v", {expr}) }}\n')
+        found = c.scan(root=tree.root, ledger=write_ledger(tmp_path))
+        assert len(found["leaky_args"]) == 1, f"{expr} was not caught"
+        assert "reads as a credential" in found["leaky_args"][0]["why"]
+
+
+def test_a_redacted_call_does_not_fire(tree, tmp_path):
+    """The fix, as it landed. The redactor is checked FIRST, which is why the
+    call passes even though it still names RawQuery -- and why `redactSASURL`
+    does not trip the `sas` word rule against itself."""
+    tree.write("internal/a/a.go",
+               'func f() {\n'
+               '\tlog.Printf("livy: %s?%s rename=%q", r.URL.Path,\n'
+               '\t\tredactSAS(r.URL.RawQuery),\n'
+               '\t\tredactSASURL(r.Header.Get("x-ms-rename-source")))\n}\n')
+    found = c.scan(root=tree.root, ledger=write_ledger(tmp_path))
+    assert found["leaky_args"] == []
+
+
+def test_an_innocent_log_line_does_not_fire(tree, tmp_path):
+    """The near-miss that decides whether R5 is a rule or noise.
+
+    A substring scan for "sas" would fire on any format string containing those
+    three letters, and on `Username` for "name". The word split is what keeps
+    the rule about identifiers rather than about letters.
+    """
+    for expr in ('"livy: lakehouse %s did not mount", id',
+                 '"livy: user %s", conn.Username',
+                 '"livy: %s sessions, %d assassinations", n, m',
+                 '"livy: signal %v", sigChan',
+                 '"livy: shutting down on %v", sigint',
+                 '"livy: item %s", it.PrimaryKey',
+                 '"livy: %s", r.URL.Path'):
+        tree.write("internal/a/a.go", f'func f() {{ log.Printf({expr}) }}\n')
+        found = c.scan(root=tree.root, ledger=write_ledger(tmp_path))
+        assert found["leaky_args"] == [], f"false positive on {expr}"
+
+
+def test_the_real_fault_line_does_not_fire(tree, tmp_path):
+    """internal/server/fault.go logs the PATH and never the query, for exactly
+    this reason -- and that line is UNCONDITIONAL, unlike the trace, so a
+    credential in it would reach every compose log of every run."""
+    tree.write("internal/a/a.go",
+               'func f() { log.Printf("livy: %s %s -> %d%s", r.Method, r.URL.Path, '
+               'fw.status, fw.codeSuffix()) }\n')
+    assert c.scan(root=tree.root, ledger=write_ledger(tmp_path))["leaky_args"] == []
+
+
+def test_a_recorded_redaction_exemption_suppresses_the_finding(tree, tmp_path):
+    tree.write("internal/a/a.go",
+               'func f() { log.Printf("livy: %s", r.URL.RawQuery) }\n')
+    ledger = write_ledger(tmp_path, redactionExemptions=[
+        {"file": "internal/a/a.go", "call": 'log.Printf("livy: %s", r.URL.RawQuery)',
+         "reason": "this surface has no SAS; the query is a documented filter"}])
+    found = c.scan(root=tree.root, ledger=ledger)
+    assert found["leaky_args"] == []
+    assert found["stale_redaction"] == []
+
+
+def test_a_stale_redaction_exemption_fails(tree, tmp_path):
+    """The direction nobody thinks to check, and here it is the sharper one: a
+    redaction exemption whose call site is gone does not merely excuse an
+    untagged line, it goes on excusing a CREDENTIAL -- and would silently
+    re-excuse it if the call came back."""
+    tree.write("internal/a/a.go", 'func f() { log.Printf("livy: fine") }\n')
+    ledger = write_ledger(tmp_path, redactionExemptions=[
+        {"file": "internal/a/a.go", "call": 'log.Printf("livy: %s", r.URL.RawQuery)',
+         "reason": "gone"}])
+    found = c.scan(root=tree.root, ledger=ledger)
+    assert found["stale_redaction"] == [
+        ("internal/a/a.go", 'log.Printf("livy: %s", r.URL.RawQuery)')]
+
+
+def test_a_redaction_exemption_with_no_reason_is_refused(tmp_path):
+    path = tmp_path / "l.json"
+    path.write_text(json.dumps({
+        "subsystems": ["livy"],
+        "redactionExemptions": [{"file": "a.go", "call": 'log.Printf("%s", q)'}],
+    }), encoding="utf-8")
+    with pytest.raises(KeyError, match="reason"):
+        c.load_ledger(path)
+
+
+def test_a_duplicate_redaction_exemption_is_refused(tmp_path):
+    entry = {"file": "a.go", "call": 'log.Printf("%s", q)', "reason": "r"}
+    path = tmp_path / "l.json"
+    path.write_text(json.dumps({"subsystems": [],
+                                "redactionExemptions": [entry, dict(entry, reason="r2")]}),
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="redaction-exempt twice"):
+        c.load_ledger(path)
+
+
+def test_r5_is_scanned_even_on_a_tag_exempt_site(tree, tmp_path):
+    """`exemptions` excuses the missing TAG and nothing else.
+
+    A site exempt from R1 is still a log line, and a credential in it is still a
+    credential. Skipping those sites would have made the one exemption in the
+    real ledger a hole in R5 as well as a decision about R1.
+    """
+    tree.write("cmd/e/main.go", "func main() { log.Fatal(theToken) }\n")
+    ledger = write_ledger(tmp_path, exemptions=[
+        {"file": "cmd/e/main.go", "call": "log.Fatal(theToken)",
+         "reason": "the whole message IS the error"}])
+    found = c.scan(root=tree.root, ledger=ledger)
+    assert found["untagged"] == []       # R1 excused
+    assert len(found["leaky_args"]) == 1  # R5 not
+
+
+# --------------------------------------------------------------------------
 # The ledger, in both directions.
 # --------------------------------------------------------------------------
 
@@ -407,10 +561,17 @@ def test_update_preserves_the_hand_written_maps(tmp_path, monkeypatch):
     path = tmp_path / "logging-subsystems.json"
     original = {
         "_comment": ["the measured baseline and why this file exists"],
-        "counts": {"subsystems": 1, "exemptions": 1, "legacyEnvNames": 1},
+        "counts": {"subsystems": 1, "exemptions": 1, "legacyEnvNames": 1,
+                   "redactionExemptions": 1},
         "subsystems": ["stale-tag-nothing-emits"],
         "exemptions": [{"file": "cmd/e/main.go", "call": "log.Fatal(err)", "reason": "keep me"}],
         "legacyEnvNames": [{"name": "ONELAKE_TRACE", "reason": "keep me too"}],
+        # A laundered redaction exemption does not merely excuse an untagged
+        # line, it excuses a credential -- so this is the entry whose survival
+        # across --update matters most.
+        "redactionExemptions": [{"file": "internal/a/a.go",
+                                 "call": 'log.Printf("livy: %s", r.URL.RawQuery)',
+                                 "reason": "keep me as well"}],
     }
     path.write_text(json.dumps(original), encoding="utf-8")
     monkeypatch.setattr(c, "LEDGER", path)
@@ -421,12 +582,14 @@ def test_update_preserves_the_hand_written_maps(tmp_path, monkeypatch):
     assert after["subsystems"] == ["livy", "record"]
     assert after["exemptions"] == original["exemptions"]
     assert after["legacyEnvNames"] == original["legacyEnvNames"]
+    assert after["redactionExemptions"] == original["redactionExemptions"]
     assert after["_comment"] == original["_comment"]
-    assert after["counts"] == {"subsystems": 2, "exemptions": 1, "legacyEnvNames": 1}
+    assert after["counts"] == {"subsystems": 2, "exemptions": 1, "legacyEnvNames": 1,
+                               "redactionExemptions": 1}
     # Key order is fixed, so the diff reads as what it is rather than as a
     # reshuffle nobody can review.
     assert list(after) == ["_comment", "counts", "subsystems", "exemptions",
-                           "legacyEnvNames"]
+                           "legacyEnvNames", "redactionExemptions"]
 
 
 def test_update_refuses_to_write_an_empty_list(tmp_path, monkeypatch):
@@ -473,7 +636,68 @@ def test_the_scan_still_finds_this_repositorys_log_lines():
     # The two surfaces this audit renamed, asserted by tag rather than by count.
     emitted = {s["tag"] for s in sites}
     assert {"onelake-dfs", "onelake-blob", "record", "notebook-drive",
-            "spark-job-drive", "arm-capacities"} <= emitted
+            "spark-job-drive", "arm-capacities", "fault"} <= emitted
+
+
+def test_the_real_tree_has_no_leaky_log_argument():
+    """R5 against this repository, which is the assertion that matters most.
+
+    A FALSE POSITIVE breaks `make check` for everyone -- which is why the
+    near-miss tests above are specific rather than illustrative. A FALSE
+    NEGATIVE is invisible: the tree is clean, so a rule that stopped matching
+    reports the same green as a rule that works. The negative control is the
+    next test, which drives the rule against the text as it stood BEFORE the
+    redaction landed.
+    """
+    found = c.scan()
+    assert found["leaky_args"] == [], found["leaky_args"]
+    assert found["stale_redaction"] == [], found["stale_redaction"]
+
+
+def test_r5_would_have_caught_the_trace_lines_as_they_stood():
+    """THE NEGATIVE CONTROL for the test above.
+
+    These are the two call expressions verbatim as they were before this audit
+    redacted them -- internal/onelake/onelake.go and blob.go, under
+    FABRIC_ONELAKE_TRACE. Both printed `r.URL.RawQuery`, and between them the
+    `x-ms-copy-source` and `x-ms-rename-source` headers, all three of which
+    carry an Azure SAS in ordinary use. Without this, "the real tree is clean"
+    would be a statement about the rule never firing rather than about the tree.
+    """
+    pre_fix = [
+        'log.Printf("onelake-dfs: %s %s?%s range=%q x-ms-range=%q rename=%q -> %d (%dB)", '
+        'r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Range"), '
+        'r.Header.Get("x-ms-range"), r.Header.Get("x-ms-rename-source"), tw.status, tw.n)',
+        'log.Printf("onelake-blob: %s %s?%s inm=%q copy=%q -> %d (%dB)", '
+        'r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("If-None-Match"), '
+        'r.Header.Get("x-ms-copy-source"), tw.status, tw.n)',
+    ]
+    for call in pre_fix:
+        assert c.leak_reason(call) is not None, f"R5 no longer catches {call!r}"
+
+    # ...and the lines as they stand now do not fire, which is the fix.
+    sites = {s["file"]: s["call"] for s in c.log_sites()
+             if s["file"].startswith("internal/onelake/")}
+    assert len(sites) == 2, f"the two OneLake trace sites moved: {sites}"
+    for f, call in sites.items():
+        assert c.leak_reason(call) is None, f"{f} still logs a credential: {call!r}"
+        assert "redact" in call.lower(), f"{f} no longer passes through a redactor"
+
+
+def test_the_fault_log_landed_and_names_its_subsystem():
+    """F6's fix, asserted from the ledger side.
+
+    The Go tests pin what the line SAYS; this pins that the tag exists and is
+    registered, which is the property that makes the subsystem going quiet a
+    failing build rather than a silent absence.
+    """
+    sites = [s for s in c.log_sites() if s["file"] == "internal/server/fault.go"]
+    assert len(sites) == 1, f"expected one log site in fault.go, got {sites}"
+    assert sites[0]["tag"] == "fault"
+    assert "fault" in c.load_ledger()["subsystems"]
+    # The path, never the query -- the line is unconditional, so a SAS in it
+    # would reach every compose log of every run.
+    assert "RawQuery" not in sites[0]["call"]
 
 
 def test_the_knob_rename_actually_landed():
@@ -510,6 +734,7 @@ def violating(tree, tmp_path, monkeypatch):
     tree.write("internal/a/a.go",
                'func f() {\n\tlog.Printf("untagged prose: %v", err)\n'
                '\tlog.Fatalf("livy: exiting from a library")\n'
+               '\tlog.Printf("livy: %s", r.URL.RawQuery)\n'
                '\tif os.Getenv("ONELAKE_TRACE") != "" {\n'
                '\t\tlog.Printf("livy: tracing")\n\t}\n}\n')
     ledger = tmp_path / "logging-subsystems.json"
@@ -517,6 +742,8 @@ def violating(tree, tmp_path, monkeypatch):
         "subsystems": ["livy", "a-tag-nothing-emits"],
         "exemptions": [{"file": "gone.go", "call": "log.Fatal(err)", "reason": "stale"}],
         "legacyEnvNames": [{"name": "NOTHING_READS_THIS", "reason": "stale too"}],
+        "redactionExemptions": [{"file": "also-gone.go",
+                                 "call": 'log.Printf("%s", q)', "reason": "stale as well"}],
     }), encoding="utf-8")
     monkeypatch.setattr(c, "ROOT", tree.root)
     monkeypatch.setattr(c, "LEDGER", ledger)
@@ -531,9 +758,11 @@ def test_strict_reports_every_rule_and_exits_non_zero(violating, capsys):
         "internal/a/a.go",                   # ...named by file
         "log.Fatalf",                        # R2, the library exit
         "ONELAKE_TRACE",                     # R3, the unprefixed knob
+        "credential",                        # R5, the leaked query string
         "a-tag-nothing-emits",               # stale derived tag
         "gone.go",                           # stale exemption
         "NOTHING_READS_THIS",                # stale legacy name
+        "also-gone.go",                      # stale redaction exemption
     ]:
         assert want in err, f"strict output never mentions {want!r}:\n{err}"
 
@@ -544,7 +773,8 @@ def test_report_mode_names_the_same_findings_and_exits_zero(violating, capsys):
     the direction a "flag what is new" reader would never think to ask about."""
     assert c.main([]) == 0
     out = capsys.readouterr().out
-    for want in ["UNTAGGED", "EXIT", "ENVNAME", "STALE", "log call site(s)"]:
+    for want in ["UNTAGGED", "EXIT", "ENVNAME", "LEAKY", "STALE",
+                 "log call site(s)", "redaction exemption"]:
         assert want in out, f"report output never mentions {want!r}:\n{out}"
 
 
