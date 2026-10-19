@@ -315,3 +315,42 @@ func TestTerminalPlainRequestsDoNotCaptureTheConnection(t *testing.T) {
 		t.Fatalf("the connection was captured by ttyd: status=%d body=%q", r2.StatusCode, b2)
 	}
 }
+
+// TestTheTerminalUpgradeSurvivesTheFaultWrapper.
+//
+// THE REGRESSION TEST FOR THE ONE REAL RISK in the 5xx fault log (fault.go).
+// logFaults wraps the ResponseWriter at the root so it can observe the final
+// status, and this route reaches PAST that interface: the upgrade above does
+// `w.(http.Hijacker)`, a direct assertion that does NOT follow Unwrap. A
+// wrapper that merely embedded the writer would make that assertion fail and
+// the terminal would answer TerminalMisconfigured — a 500, which the new log
+// would then dutifully record as the breakage it had just caused.
+//
+// Driven through the wrapper against a real listener rather than through
+// faultWriter in isolation (fault_test.go does that), because the property at
+// stake is that the two compose: the splice has to reach ttyd.
+func TestTheTerminalUpgradeSurvivesTheFaultWrapper(t *testing.T) {
+	addr, seen := fakeTTYD(t)
+	s := terminalServer(t, &config.Config{TerminalURL: "http://" + addr, TerminalToken: "tok"})
+
+	srv := httptest.NewServer(s.logFaults(s.mux))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_emulator/portal/terminal/ws?token=tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	if resp, rerr := http.DefaultTransport.RoundTrip(req); rerr == nil {
+		defer resp.Body.Close()
+	}
+
+	select {
+	case <-seen:
+		// The hijack succeeded and the upgrade reached ttyd.
+	default:
+		t.Fatal("the terminal upgrade never reached the upstream through the fault " +
+			"wrapper — faultWriter has lost its Hijack")
+	}
+}

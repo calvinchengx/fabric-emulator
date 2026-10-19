@@ -175,9 +175,13 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 		tw := &traceWriter{ResponseWriter: w, status: 200}
 		w = tw
 		defer func() {
+			// REDACTED, NOT OMITTED -- as on the DFS surface, and here the
+			// copy source is the sharper case: `x-ms-copy-source` is by
+			// convention a FULL SAS URL, so printing it verbatim put a working
+			// credential in the log. trace.go keeps the parameter names.
 			log.Printf("onelake-blob: %s %s?%s inm=%q copy=%q -> %d (%dB)",
-				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("If-None-Match"),
-				r.Header.Get("x-ms-copy-source"), tw.status, tw.n)
+				r.Method, r.URL.Path, redactSAS(r.URL.RawQuery), r.Header.Get("If-None-Match"),
+				redactSASURL(r.Header.Get("x-ms-copy-source")), tw.status, tw.n)
 		}()
 	}
 	p, err := s.Auth.ValidateRequest(r)
