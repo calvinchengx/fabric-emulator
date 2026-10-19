@@ -477,9 +477,16 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tw := &traceWriter{ResponseWriter: w, status: 200}
 		w = tw
 		defer func() {
+			// REDACTED, NOT OMITTED. The query and the rename source both carry
+			// an Azure SAS in ordinary use -- renameSource's own comment says
+			// the header "may carry a sas/query suffix" -- and a trace line
+			// goes to stderr, which compose captures and CI uploads. The
+			// parameter NAMES survive, so a reader still sees which SAS fields
+			// were presented; see trace.go for why that is the useful shape.
 			log.Printf("onelake-dfs: %s %s?%s range=%q x-ms-range=%q rename=%q -> %d (%dB)",
-				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Range"),
-				r.Header.Get("x-ms-range"), r.Header.Get("x-ms-rename-source"), tw.status, tw.n)
+				r.Method, r.URL.Path, redactSAS(r.URL.RawQuery), r.Header.Get("Range"),
+				r.Header.Get("x-ms-range"), redactSASURL(r.Header.Get("x-ms-rename-source")),
+				tw.status, tw.n)
 		}()
 	}
 	// Banned headers: ignore + echo.
