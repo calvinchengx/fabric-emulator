@@ -435,7 +435,9 @@ about, one level in: its detection can stop matching — a renamed directory, a
 tightened regex, a refactor that drops a branch — and it will go on printing its
 success line and exiting 0 forever. **A check that passes is indistinguishable
 from a check that is running**, and that sentence is as true of the checker as of
-the thing it checks.
+the thing it checks. Which gates these are, what each one reads and asserts,
+and where each runs is [66-gate-inventory.md](66-gate-inventory.md) — written
+because seventeen of them were named by no prose page at all.
 
 The measured gap when this landed: **11 of 51 scripts had no dedicated test
 module**, the largest `scripts/govern_ingest.py` at 717 lines, then

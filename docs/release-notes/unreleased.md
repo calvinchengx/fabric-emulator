@@ -200,3 +200,30 @@ nothing.
 ## A OneLake security role naming a missing column fails the sync loudly
 
 A row filter or column allow-list that no longer matches its table's schema used to silently narrow that role's grant to nothing — a Viewer in the role simply read less than intended. Fabric documents a louder reaction: "Row-level security policy references a column that no longer exists. Database enters error state until policy is fixed." (the same sentence for column-level security). The sync now fails with that message when this happens, for a role's own constraint and for a OneLake shortcut source's role alike, so every read through the endpoint fails until the role is fixed at its source — not only the affected role's. An RLS filter that is merely invalid syntax (Fabric's separate, documented "no rows being shown" case) still narrows to nothing rather than failing the sync; the two are now kept distinct. [docs/60](../60-sql-endpoint-access-modes.md)
+
+## The enforcing scripts are inventoried
+
+Of the 68 scripts under `scripts/`, 30 were named by no prose page outside the
+historical release notes, and 17 of those are wired, enforcing gates — 14 run
+from `make check`, one from `make portal-types`, one from `make sbom`, and the
+advisory scan from `security.yml`. Unlike the REST ledgers docs/65 explained,
+fourteen of the seventeen write no artifact at all: their baselines live in
+their own source as a `WAIVED` dict, an `UNDOCUMENTED` set, a `SINGLE_SOURCED`
+map, a freshness constant. There was no file to open, so each gate's
+denominator, what it asserts and how a new case is accepted were reviewable
+only by reading the checker.
+
+A new chapter states those four facts for each of the seventeen, groups them by
+what they guard — offline source, a vendored oracle, documentation and workflow
+config, reachability, dependencies — and names the 13 build and vendor scripts
+it leaves out rather than dropping them silently. It lands no new checker and
+changes no gate; the inventory's own completeness is gated by nothing, so the
+one-line command that re-derives it is printed in the page.
+
+Writing it found two stale counts in docs/10. It says `make check` runs
+thirty-one of these scripts and the `witnesses` job thirty; each now runs 37,
+and the two sets differ by two scripts in each direction, which nothing
+records. It also describes `make-targets.yml` as having three jobs where it
+declares two. Both are documented with each source named rather than edited, on
+the precedent docs/65 set with `docs/route-coverage.json`.
+[docs/66](../66-gate-inventory.md)
