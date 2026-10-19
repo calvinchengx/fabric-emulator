@@ -39,6 +39,10 @@ regexes = [
   # Allowlisted by its exact text rather than by shape, so a real `sig=` is
   # still caught: this weakens the rule for one literal and no further.
   '''9%2FabcDEF123secretsignature%3D''',
+  # The same literal after gitleaks percent-decodes it (`%2F` -> `/`, `%3D` ->
+  # `=`): the decoded pass reports the secret in this form, so both spellings
+  # need allowlisting.
+  '''9/abcDEF123secretsignature=''',
 ]
 
 paths = [
