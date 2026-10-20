@@ -426,10 +426,11 @@ recorded once so the tree cannot drift back to it.
 Everything above is a checker reading the tree. Nothing read the checkers.
 
 `scripts/` is where this repository keeps its enforcement: `make check` runs
-thirty-one of these scripts and the `witnesses` job runs thirty. Between them
+thirty-eight of these scripts and the `witnesses` job runs thirty-eight. Between them
 they assert that every supported parity claim names a witness, that no route the
 emulator serves is undocumented, that the sidebar is complete, that no Go comment
-teaches a retired justification, and that no test sleeps without a bound. A guard
+teaches a retired justification, that no test sleeps without a bound, and that
+no test's verdict turns on whether the run crossed UTC midnight. A guard
 script whose own behaviour nothing asserts has the property this whole document is
 about, one level in: its detection can stop matching — a renamed directory, a
 tightened regex, a refactor that drops a branch — and it will go on printing its
@@ -468,8 +469,13 @@ with no test and nothing says so. Two finding kinds:
   ledger would absorb a real regression without a word.
 
 Both directions, like `docs/test-flakiness.json`,
-`docs/python-test-flakiness.json` and `docs/vitest-test-flakiness.json` before
-it. A one-directional ledger only ever grows. Of the two kinds, STALE is the one that needs a checker: an unrecorded
+`docs/python-test-flakiness.json`, `docs/vitest-test-flakiness.json` and
+`docs/clock-test-flakiness.json` before it. A one-directional ledger only ever
+grows. The fourth of those is the odd one out and says so in its own header: the
+first three hold sites where the question is whether a *wait* is bounded, and it
+holds day-granular clock reads — an axis with no timing tell, where a repaired
+site goes on matching the pattern because the repair is downstream of the value.
+See [60-test-flakiness.md](60-test-flakiness.md) §9. Of the two kinds, STALE is the one that needs a checker: an unrecorded
 script is loud by construction — somebody adds a file and the build goes red the
 same day — while a stale entry is green, silent, and re-arms itself.
 
