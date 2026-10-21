@@ -526,6 +526,176 @@ def test_a_markdown_link_exempt_entry_is_scoped_to_its_own_document(tree):
     assert found[0][1] == "docs/b.md"
 
 
+# --- class 6: dead test references -------------------------------------------
+
+def test_a_dead_go_test_reference_fails(tree, tmp_path):
+    # THE PROPERTY THAT MATTERS, for the reason this module's docstring gives:
+    # prose here cites tests as EVIDENCE, so a citation pointing at nothing is
+    # a confident sentence with no witness under it.
+    tree({"docs/a.md": "measured, not assumed (`TestTheRenamedThing`)\n"},
+         files=["internal/onelake/onelakesec_test.go"])
+    (tmp_path / "internal/onelake/onelakesec_test.go").write_text(
+        "package onelake\n\nfunc TestTheLiveThing(t *testing.T) {}\n")
+    found = c.findings()
+    assert kinds(found) == ["test"]
+    assert found[0][3] == "TestTheRenamedThing"
+
+
+def test_a_live_go_test_reference_passes(tree, tmp_path):
+    tree({"docs/a.md": "measured, not assumed (`TestTheLiveThing`)\n"},
+         files=["internal/onelake/onelakesec_test.go"])
+    (tmp_path / "internal/onelake/onelakesec_test.go").write_text(
+        "package onelake\n\nfunc TestTheLiveThing(t *testing.T) {}\n")
+    assert c.findings() == []
+
+
+def test_a_dead_python_test_reference_fails(tree, tmp_path):
+    tree({"docs/a.md": "`test_the_agent_is_baked_into_its_image` holds it\n"},
+         files=["python/tests/test_packaging.py"])
+    (tmp_path / "python/tests/test_packaging.py").write_text(
+        "def test_the_agent_ships_inside_its_image():\n    pass\n")
+    found = c.findings()
+    assert kinds(found) == ["test"]
+    assert found[0][3] == "test_the_agent_is_baked_into_its_image"
+
+
+def test_a_live_python_test_reference_passes(tree, tmp_path):
+    tree({"docs/a.md": "`test_the_agent_ships_inside_its_image` holds it\n"},
+         files=["python/tests/test_packaging.py"])
+    (tmp_path / "python/tests/test_packaging.py").write_text(
+        "def test_the_agent_ships_inside_its_image():\n    pass\n")
+    assert c.findings() == []
+
+
+def test_a_test_defined_as_a_class_method_counts_as_defined(tree, tmp_path):
+    # An indented `def test_x(self)` is collected by every runner that finds
+    # the class, so reading only column zero would report correct prose as
+    # drift. The index is anchored with `\s*def` for exactly this.
+    tree({"docs/a.md": "`test_a_method_of_a_case_class` covers it\n"},
+         files=["python/tests/test_cases.py"])
+    (tmp_path / "python/tests/test_cases.py").write_text(
+        "class TestThing:\n    def test_a_method_of_a_case_class(self):\n        pass\n")
+    assert c.findings() == []
+
+
+def test_a_tracked_python_test_module_stem_counts_as_defined(tree, tmp_path):
+    # The concession, with the measurement that forced it: docs/10 says a
+    # dependency combination "took `test_delta_ops` down a path CI never runs".
+    # No FUNCTION of that name exists; the MODULE does, and prose names a
+    # module as readily as a function. Without this rule the class ships with a
+    # false positive on prose that is entirely correct.
+    tree({"docs/a.md": "took `test_delta_ops` down a path CI never runs\n"},
+         files=["python/tests/test_delta_ops.py"])
+    (tmp_path / "python/tests/test_delta_ops.py").write_text(
+        "def test_something_else_entirely():\n    pass\n")
+    assert "test_delta_ops" in c.test_name_index()
+    assert c.findings() == []
+
+
+def test_a_test_name_inside_a_fenced_block_is_not_read(tree):
+    # docs/21 shows a reader-authored `def test_publish_roundtrip(t)` in a
+    # ```python block, illustrating a pytest marker. That test is deliberately
+    # NOT supposed to exist here, so reading fences would report the
+    # illustration as drift.
+    tree({"docs/a.md":
+          "```python\n@pytest.mark.real\ndef test_publish_roundtrip(t): ...\n```\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_test_name_embedded_in_a_longer_span_is_not_read(tree):
+    # docs/28 carries this span verbatim: `test_main_sql` is dbt-fabric's own
+    # wrapper CTE, not a test. Extracting names from WITHIN spans reports it;
+    # requiring the span to BE the name does not. The span must be the whole
+    # candidate, which is the second of the two precision concessions.
+    tree({"docs/a.md": "dbt emits `with test_main_sql as ( select 1 )` around it\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_go_subtest_path_resolves_to_its_parent(tree, tmp_path):
+    # A suffix names a CASE WITHIN a test, and the parent is the only thing
+    # either language defines -- so `TestX/sub` must resolve to `TestX` rather
+    # than being reported as a test nothing declares.
+    tree({"docs/a.md": "see `TestTheLiveThing/the_narrowed_case`\n"},
+         files=["internal/onelake/onelakesec_test.go"])
+    (tmp_path / "internal/onelake/onelakesec_test.go").write_text(
+        "package onelake\n\nfunc TestTheLiveThing(t *testing.T) {}\n")
+    assert c.findings() == []
+
+
+def test_a_parametrized_id_suffix_resolves_to_its_test(tree, tmp_path):
+    tree({"docs/a.md": "see `test_a_case[the-id]` for that row\n"},
+         files=["python/tests/test_cases.py"])
+    (tmp_path / "python/tests/test_cases.py").write_text(
+        "def test_a_case(case):\n    pass\n")
+    assert c.findings() == []
+
+
+def test_a_trailing_call_suffix_is_stripped(tree, tmp_path):
+    tree({"docs/a.md": "`test_a_case()` asserts it\n"},
+         files=["python/tests/test_cases.py"])
+    (tmp_path / "python/tests/test_cases.py").write_text(
+        "def test_a_case():\n    pass\n")
+    assert c.findings() == []
+
+
+def test_a_suffix_does_not_rescue_a_dead_parent(tree, tmp_path):
+    # The control for the three above. Stripping a suffix must resolve the
+    # PARENT, not wave the reference through: a suffixed citation of a test
+    # that does not exist is exactly as dead as a bare one, and a strip that
+    # skipped the lookup would pass every one of them.
+    tree({"docs/a.md": "see `TestTheRenamedThing/the_case`\n"},
+         files=["internal/onelake/onelakesec_test.go"])
+    (tmp_path / "internal/onelake/onelakesec_test.go").write_text(
+        "package onelake\n\nfunc TestTheLiveThing(t *testing.T) {}\n")
+    found = c.findings()
+    assert kinds(found) == ["test"]
+    assert found[0][4] == "TestTheRenamedThing"
+
+
+def test_a_test_name_defined_outside_a_test_file_does_not_count(tree, tmp_path):
+    # The Go half of the index reads `*_test.go` and nothing else, which is
+    # what makes this a TEST class rather than a second Go-symbol class. A
+    # `Test`-prefixed func in ordinary source is not something `go test` will
+    # ever run, so prose citing it as the witness for a claim has no witness.
+    tree({"docs/a.md": "proved by `TestTheLiveThing`\n"},
+         files=["internal/onelake/helpers.go"])
+    (tmp_path / "internal/onelake/helpers.go").write_text(
+        "package onelake\n\nfunc TestTheLiveThing(t *testing.T) {}\n")
+    assert kinds(c.findings()) == ["test"]
+
+
+def test_the_go_prefix_match_is_loose_in_the_safe_direction(tree, tmp_path):
+    # `TestingHelperThing` starts with `Test`, so the index counts it even
+    # though `go test` would not collect it -- Go requires the character after
+    # `Test` to be non-lowercase. Tightening that is deliberately NOT done,
+    # because the two directions of being wrong here are not symmetric: a
+    # too-loose index credits a name and claims less coverage, while a
+    # too-tight one reports a func that is sitting right there in a test file
+    # as a test that does not exist. The second is the false positive that
+    # gets a checker muted, so the looseness is the safe direction and is
+    # pinned rather than left to be rediscovered as a bug.
+    tree({"docs/a.md": "proved by `TestingHelperThing`\n"},
+         files=["internal/onelake/onelakesec_test.go"])
+    (tmp_path / "internal/onelake/onelakesec_test.go").write_text(
+        "package onelake\n\nfunc TestingHelperThing(t *testing.T) {}\n")
+    assert c.findings() == []
+
+
+def test_a_test_reference_exempt_entry_is_scoped_to_its_own_document(tree):
+    # A doc may legitimately name a test worth HAVING -- docs/54 argues for a
+    # suite's discipline rather than claiming it exists. Exempting that must
+    # not silence the same dead name where it is a genuine stale citation.
+    tree({"docs/a.md": "worth having: `TestTheFutureThing`\n",
+          "docs/b.md": "measured by `TestTheFutureThing`\n"},
+         files=["docs/a.md", "docs/b.md"],
+         exempt={("docs/a.md", "TestTheFutureThing"): "a test worth writing"})
+    found = c.findings()
+    assert kinds(found) == ["test"]
+    assert found[0][1] == "docs/b.md"
+
+
 # --- scope, exemptions, reporting ---------------------------------------------
 
 def test_release_notes_are_skipped(tree):

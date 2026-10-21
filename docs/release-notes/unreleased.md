@@ -12,6 +12,47 @@ release notes and non-heading fragments such as line anchors. The first run
 fixed stale links in the medallion PySpark README and old anchors into the real
 compute and notebook capability docs. [docs/10](../10-testing.md#the-failure-this-codebase-keeps-producing)
 
+## Documentation drift catches dead test references
+
+`scripts/check_doc_drift.py` gained a sixth class: a backticked `TestX` or
+`test_x` cited in the prose must name a test the tree actually defines. This
+repo argues from tests constantly — "a scratch path in the same item is 403 —
+measured, not assumed (`TestX`)" — so a citation that resolves to nothing is a
+confident sentence with no witness under it, whether the name expired with a
+rename or was never right, and every existing gate stays green either way. Go
+test, benchmark and fuzz functions, pytest functions including those written as
+class methods, and tracked `test_*.py` module stems all count as defined: 4723
+distinct names on this tree — 2299 Go, 2304 Python, 120 modules.
+
+Two precision concessions, each measured against the tree before it was
+conceded. A fenced block is out of scope, because docs/21 illustrates a pytest
+marker with a reader-authored `def test_publish_roundtrip(t): ...` that is
+deliberately not supposed to exist here. And a reference is the whole inline
+code span rather than a name found inside one, because docs/28 quotes
+dbt-fabric's wrapper CTE, whose span opens `with test_main_sql as (`. A
+version without both rules returns 20 findings on this tree, 3 of them real.
+Eleven of the 17 false ones are a category neither concession predicts — a
+test-shaped substring inside a script path or identifier, such as the
+test_flakiness inside `scripts/check_python_test_flakiness.py` — and that is
+the strongest argument for whole-span matching. A third rule, a `test_*.py`
+module stem counting as defined, is what keeps docs/10's correct reference to
+`test_delta_ops` from being a fourth false positive.
+
+The first run fixed three live references, plus a fourth copy of one of them in
+a compose comment that no checker reads. **None of the four was a rename**:
+git shows each was mistyped in the same commit as the test it cites, so all
+four had been false from the day they were written. docs/54 cited a
+scratch-path test by a name that also inverted the assertion's polarity — the
+sentence claimed a 403 and named a test asserting the read succeeds.
+examples/README promised that a
+`test_every_fidelity_claim_names_a_suite_that_exists` stops its fidelity table
+"rot[ting] into a promise nobody keeps"; the real assertion is the Go test
+`TestEveryFidelityClaimNamesASuiteThatExists`, so the sentence guarding that
+table against rot had never been true itself. python/spark_agent/README cited
+`test_the_spark_agent_is_baked_into_its_image` for
+`test_the_spark_agent_ships_inside_its_image`.
+[docs/10](../10-testing.md#the-failure-this-codebase-keeps-producing)
+
 ## Doc drift slugs headings that contain links correctly
 
 A heading such as `## See [Foo](bar.md) now` is slugged by GitHub as

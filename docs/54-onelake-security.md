@@ -660,7 +660,7 @@ two contexts have separate engines. It has a better answer: **nowhere**.
 *Staging it in OneLake is impossible without corrupting the user's policy.* A
 narrowed caller can read only what their role grants, so a scratch path in the
 same item is 403 -- measured, not assumed
-(`TestCanANarrowedViewerReadAScratchPathInTheSameItem`). Making it readable
+(`TestANarrowedViewerCannotReadAScratchPathInTheSameItem`). Making it readable
 would mean the emulator writing its own plumbing into the item's
 `dataAccessRoles`, where the user can see it through the API. That is not a
 design.
