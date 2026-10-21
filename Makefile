@@ -275,10 +275,42 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# negative; rewritten onto src/testing.ts staysAbsent rather than
 	@# recorded, so the ledger it checks against ships empty.
 	@$(PY) scripts/check_vitest_test_flakiness.py --strict
-	@# ...and one level in from all three of them: every script in THIS
+	@# A FOURTH CHECKER RATHER THAN A WIDENED ONE, and on a different AXIS
+	@# from the three above rather than a fourth language. All three ask
+	@# whether a WAIT is bounded; docs/60-test-flakiness.md's own §6 named
+	@# what that leaves out -- "flakiness with no timing tell ... nothing
+	@# here covers within-test nondeterminism that the race detector cannot
+	@# see." This flags one sharply-defined member of that class: a
+	@# wall-clock read truncated to a DAY in test or e2e-harness code.
+	@#
+	@# Measured when this landed: 3 Go sites and 8 Python ones, of which 4
+	@# were LOAD-BEARING and 2 of those were separate defects. A test
+	@# performed operations whose audit events were stamped from the store's
+	@# clock, THEN read the wall clock a second time to compute "today", then
+	@# asserted those events appear in that day's window -- so a run crossing
+	@# UTC midnight between the two reads queries a day the events are not in
+	@# and fails on a missing CreateWorkspace. e2e/az-rest/driver.py had the
+	@# identical shape one surface over. No sleep to flag, no shared memory
+	@# for -race, no cross-test ordering for -shuffle=on: the whole failure is
+	@# two readings of one clock either side of a boundary, once a day, in a
+	@# sub-second window. Two more were found during the repair -- labels_test
+	@# and the pagination test reach the same window through a helper, so the
+	@# grep that measured the sweep could not see them.
+	@#
+	@# The repair is NOT a widened window: the API refuses bounds spanning two
+	@# days, and TestActivityEventsRequestValidation's `spans two days` case
+	@# pins that 400. So the day is captured ONCE before the mutations and the
+	@# straddle is DETECTED and unioned with the following day's single-day
+	@# query (internal/testsupport.UTCDaysSince, and activity_days in the
+	@# driver, which cannot import it -- it runs inside the azure-cli image).
+	@# What the checker can see is that a day was read; whether the straddle
+	@# is handled is held by internal/testsupport/clock_test.go instead, and
+	@# that split is written down rather than left implied.
+	@$(PY) scripts/check_clock_test_flakiness.py --strict
+	@# ...and one level in from all four of them: every script in THIS
 	@# directory has a dedicated python/tests/test_<stem>.py, or is
 	@# recorded with the reason it does not. These scripts ARE the
-	@# invariant enforcement -- the thirty-two lines above -- and a
+	@# invariant enforcement -- the thirty-eight lines above -- and a
 	@# guard whose own behaviour nothing asserts can stop guarding and
 	@# go on reporting green. That is the failure
 	@# python/tests/test_make_check_runs_in_ci.py was written about one
