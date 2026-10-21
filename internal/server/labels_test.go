@@ -3,6 +3,8 @@ package server_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
 type labelList struct {
@@ -144,6 +146,11 @@ func TestBulkLabelsPartialFailureAndValidation(t *testing.T) {
 // upgrade/downgrade classification that depends on label order.
 func TestLabelChangesAuditWithDocumentedSchema(t *testing.T) {
 	f := newFixture(t)
+	// Captured before the label operations below, for the reason given on
+	// activityWindow (activityevents_test.go). This test reads its four events
+	// IN ORDER, and the union activitySince returns is oldest-day-first, so a
+	// straddle preserves that order rather than merely preserving the count.
+	day := testsupport.UTCDay()
 	labels := f.labels(t)
 	var ws struct{ ID string }
 	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "label-audit"}, &ws)
@@ -163,7 +170,7 @@ func TestLabelChangesAuditWithDocumentedSchema(t *testing.T) {
 
 	// Collect this item's label events in order.
 	var events []map[string]any
-	for _, e := range f.activity(t, activityWindow()).ActivityEventEntities {
+	for _, e := range f.activitySince(t, day) {
 		op, _ := e["Operation"].(string)
 		if e["ArtifactId"] == it.ID &&
 			(op == "SensitivityLabelApplied" || op == "SensitivityLabelChanged" || op == "SensitivityLabelRemoved") {

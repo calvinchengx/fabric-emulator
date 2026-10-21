@@ -743,14 +743,77 @@ jobs:
       # python/tests/test_make_check_runs_in_ci.py requires of anything in
       # that target.
       - run: uv run --frozen --no-sync python scripts/check_vitest_test_flakiness.py --strict
-      # ONE LEVEL IN FROM ALL THREE. The three checkers above hold the
+      # A FOURTH CHECKER ON A DIFFERENT AXIS, not a fourth language. The three
+      # above all ask one question in three toolchains -- is this WAIT bounded?
+      # -- and docs/60-test-flakiness.md §6's first bullet named their shared
+      # blind spot in its own words: "flakiness with no timing tell ... nothing
+      # here covers within-test nondeterminism that the race detector cannot
+      # see." That bullet had been true and unaddressed since the Go sweep
+      # landed, and the class is not empty. This closes one sharply-defined
+      # member of it: a wall-clock read truncated to a DAY in test or
+      # e2e-harness code.
+      #
+      # Measured when this landed: 3 Go `time.Now().Format` sites and 8 Python
+      # `datetime.now`/`date.today` ones. The ports were already clean (every
+      # test listener binds 127.0.0.1:0) and nothing depended on external
+      # network, so the sweep came down to one real defect class -- A WALL-CLOCK
+      # DAY BOUNDARY -- present in two surfaces. internal/server/activityevents_test.go
+      # performed the operations whose audit events were stamped from the
+      # store's clock, THEN read the wall clock a second time to compute
+      # "today", then asserted those events appear in that day's window. The two
+      # reads are independent, so a run crossing UTC midnight between them
+      # queries a day the events are not in and fails on a missing
+      # CreateWorkspace. e2e/az-rest/driver.py had the identical shape one
+      # surface over, asserting CreateWorkspace/CreateArtifact in a day-scoped
+      # window computed AFTER the creates.
+      #
+      # WHY THE THREE EXISTING CHECKERS AND BOTH SWEEP FLAGS ARE BLIND TO IT.
+      # There is no sleep, so nothing to flag. There is no shared memory, so
+      # `-race` instruments nothing. There is no cross-test ordering, so
+      # `-shuffle=on` perturbs nothing. The entire failure is two readings of
+      # one clock landing either side of a boundary -- a sub-second window, once
+      # per day, which is precisely the "locally true, globally meaningless"
+      # verdict the whole lane exists to catch.
+      #
+      # TWO MORE SITES WERE FOUND BY THE REPAIR, not by the sweep, and that is
+      # worth recording rather than smoothing over: labels_test.go's
+      # four-events-in-order assertion and the 210-workspace pagination test
+      # reach the same window through a HELPER, so the grep that measured the
+      # surface could not see them. The pagination one is the sharpest of the
+      # four: a straddle SPLITS its events across two days rather than hiding
+      # them, so a single-day window comes back short and the failure reads as
+      # a paging bug.
+      #
+      # THE REPAIR IS NOT A WIDER WINDOW, and that is forced rather than
+      # chosen: the API refuses bounds spanning two days, and
+      # TestActivityEventsRequestValidation's own `spans two days` case pins
+      # that 400 four lines from the defect. So the day is captured ONCE before
+      # the mutations and a straddle is DETECTED and unioned with the following
+      # day's single-day query -- internal/testsupport.UTCDaysSince, and
+      # `activity_days` in the az-rest driver, which cannot import it because
+      # the driver is copied INTO the azure-cli image and run as
+      # `python3 /driver.py`.
+      #
+      # WHAT THE CHECKER CAN AND CANNOT SEE is written down rather than implied,
+      # because this ledger diverges from its three siblings. There, a repaired
+      # site STOPS MATCHING -- a bare sleep becomes a bounded poll. Here a
+      # repaired read is still a read: the repair is downstream of the value, so
+      # the checker can only see THAT a day was read. Whether the straddle is
+      # handled is held by internal/testsupport/clock_test.go, which brackets
+      # the call and accepts either reading's day -- and the repaired sites are
+      # absent from the ledger for a different reason, that they no longer read
+      # the clock themselves at all. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in that
+      # target.
+      - run: uv run --frozen --no-sync python scripts/check_clock_test_flakiness.py --strict
+      # ONE LEVEL IN FROM ALL FOUR. The four checkers above hold the
       # test suites; nothing held the scripts that do the holding. Every
       # script in `scripts/` must have a dedicated
       # python/tests/test_<stem>.py or be recorded in
       # docs/script-test-coverage.json with the reason.
       #
-      # This directory IS the invariant enforcement: this job runs thirty-three
-      # of these scripts and `make check` runs thirty-three too. A guard whose own
+      # This directory IS the invariant enforcement: this job runs thirty-eight
+      # of these scripts and `make check` runs thirty-eight too. A guard whose own
       # behaviour nothing asserts can stop guarding -- a renamed directory, a
       # tightened regex, a refactor that drops a branch -- and go on printing
       # its success line and exiting 0 forever. That is
