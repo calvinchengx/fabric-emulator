@@ -3,7 +3,7 @@
 #
 # Staging is dead: a narrowed caller can read only what their role grants, so a
 # scratch path in OneLake is 403 unless we mutate the item's policy
-# (internal/onelake, TestCanANarrowedViewerReadAScratchPathInTheSameItem). The
+# (internal/onelake, TestANarrowedViewerCannotReadAScratchPathInTheSameItem). The
 # alternative is to send the rows, which is also what Fabric does -- its system
 # context RETURNS filtered rows rather than writing them somewhere.
 #

@@ -24,7 +24,7 @@ and get a container with no agent in it. Notebook jobs then never reach a
 terminal state, which since 0.14.0 surfaces as `NotebookError` on timeout.
 
 Under `python/` the image carries the code by construction, and
-`test_the_spark_agent_is_baked_into_its_image` fails if that stops being true.
+`test_the_spark_agent_ships_inside_its_image` fails if that stops being true.
 
 ## Files
 
