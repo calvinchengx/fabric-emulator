@@ -100,8 +100,9 @@ schedule firing. A commit timestamped from the host clock cannot be moved, so:
 
 - a test could not write v1, advance an hour, write v2 and query the midpoint —
   it would have to *wait* an hour;
-- `-clock-offset` and `POST /_emulator/clock` would silently not apply to the
-  one feature whose entire subject is time;
+- `POST /_emulator/clock` — the one lever that freezes, offsets and advances
+  every other time-derived value in the emulator — would silently not apply to
+  the one feature whose entire subject is time;
 - the emulator would disagree with itself about what time it is, in a file whose
   timestamps are the index for a user-facing query.
 
