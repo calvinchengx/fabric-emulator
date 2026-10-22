@@ -20,7 +20,7 @@ same shape -- a reference that was true when it was typed:
 None of these is a typo. Each is a fact that expired, and the only thing that
 would ever have caught them is somebody happening to click.
 
-WHAT THIS CHECKS. Five classes of doc/code drift across the prose docs:
+WHAT THIS CHECKS. Six classes of doc/code drift across the prose docs:
 
   1. DEAD REPO PATHS   -- a backticked `dir/path` under a tracked top-level
                           directory that no longer exists on disk.
@@ -34,6 +34,23 @@ WHAT THIS CHECKS. Five classes of doc/code drift across the prose docs:
                           directory or top-level symbol no longer exists.
   5. DEAD MD LINKS     -- a Markdown link to a repo file, directory, or simple
                           Markdown heading anchor that no longer exists.
+  6. DEAD TEST NAMES   -- a backticked `TestX`/`test_x` cited as EVIDENCE when
+                          no tracked test of that name is defined. This repo's
+                          prose argues from tests constantly -- "a scratch path
+                          in the same item is 403 -- measured, not assumed
+                          (`TestX`)" -- so a citation resolving to nothing is
+                          a confident sentence with no witness under it. THE
+                          THREE FOUND HERE HAD NEVER BEEN TRUE, which is not
+                          the shape the five classes above were built for.
+                          Asked of git, each was introduced in the SAME COMMIT
+                          as the test it cites: mistyped at birth, not expired
+                          by a later rename. So this catches a citation that
+                          never resolved as well as one that stopped, and the
+                          first kind is the one no reviewer sees, because
+                          checking it means leaving the diff to go and look.
+                          The docs/54 citation inverted its own sentence -- the
+                          prose claimed a 403 and named a test asserting the
+                          read SUCCEEDS -- and still read as support for it.
 
 PRECISION OVER RECALL, deliberately, because a checker that cries wolf gets
 muted and then it is a check that does not run (docs/10 has the full account of
@@ -59,6 +76,15 @@ what that costs). These concessions buy it:
   * RELEASE NOTES ARE OUT OF SCOPE. docs/release-notes/** describes the repo as
     it was at a tag. A v0.16 note naming a since-renamed file is CORRECT, and
     editing it would be falsifying a historical record to please a checker.
+  * A TEST NAME IN A FENCED BLOCK IS OUT OF SCOPE. docs/21 shows
+    `def test_publish_roundtrip(t): ...` inside a ```python block -- a
+    reader-authored illustration of a pytest marker, which is a test that is
+    deliberately NOT supposed to exist in this tree.
+  * A TEST REFERENCE IS A WHOLE SPAN, NOT A NAME FOUND INSIDE ONE. docs/28
+    carries the inline span `with test_main_sql as ( with all_values as (...)
+    ... )`, where `test_main_sql` is dbt-fabric's own wrapper CTE and not a
+    test at all. Extracting names from WITHIN spans returns that and the fenced
+    case above; requiring the span to BE the name returns neither.
 
 The env scan credits CODE UNDER docs/. `docs/demo/flow.py` and
 `docs/demo/flow-override.yml` are real code that happens to live beside prose,
@@ -540,6 +566,88 @@ def dead_go_symbols(doc, text, packages):
             yield lineno, token, candidate
 
 
+# --- class 6: dead test references -------------------------------------------
+
+_GO_TEST_FUNC = re.compile(r"^func ((?:Test|Benchmark|Fuzz)[A-Za-z0-9_]*)\s*\(")
+# `\s*def` and not `^def`, so a test written as a METHOD of a TestCase-style
+# class counts as defined. An indented `def test_x(self)` is a test by every
+# runner that collects it, and reading only column zero would report prose
+# citing one as drift.
+_PY_TEST_FUNC = re.compile(r"^\s*def (test_[A-Za-z0-9_]*)\s*\(")
+
+
+def test_name_index():
+    """Every test name this tree defines, from git-tracked files only.
+
+    Three sources, and the third is a concession with a measurement behind it.
+    Measured on this tree when the class landed: 2299 Go test funcs, 2304
+    Python test funcs and 120 Python test modules -- 4723 names in all. These
+    are DISTINCT names rather than definitions, which is what the lookup
+    answers from: Go declares 2300 test funcs and only 2299 names, because
+    `TestFolderGetUpdateDeleteMove` is declared in two packages.
+
+    A TRACKED `test_*.py` MODULE STEM COUNTS AS DEFINED. docs/10 says a
+    dependency combination "took `test_delta_ops` down a path CI never runs".
+    No FUNCTION of that name exists anywhere; `python/tests/test_delta_ops.py`
+    is a real test module, and prose names a module as readily as it names a
+    function. Without this rule the class ships with a false positive on prose
+    that is entirely correct -- which is the shape that gets a checker muted.
+    """
+    names = set()
+    for rel in tracked_files():
+        if rel.startswith(SKIP_PREFIXES):
+            continue
+        if rel.endswith("_test.go"):
+            pattern = _GO_TEST_FUNC
+        elif rel.endswith(".py"):
+            pattern = _PY_TEST_FUNC
+            base = rel.rsplit("/", 1)[-1]
+            if base.startswith("test_"):
+                names.add(base[:-len(".py")])
+        else:
+            continue
+        try:
+            text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            match = pattern.match(line)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+# A Go test, benchmark or fuzz target, or a pytest function. Capitalised for
+# the Go half and lower-case for the Python half, which is what each language's
+# runner actually collects -- a looser class would read `Testing` or `test_data`
+# out of ordinary prose.
+_TEST_NAME = r"(?:Test|Benchmark|Fuzz)[A-Za-z0-9_]+|test_[a-z0-9_]+"
+# One optional suffix, which names a CASE WITHIN a test rather than a second
+# thing to resolve: `()` as prose punctuation, a pytest parametrized id, or a
+# Go subtest path. The parent is the only name either language defines, so the
+# suffix is stripped and the parent is what gets looked up.
+_TEST_REF = re.compile(rf"^({_TEST_NAME})(?:\(\)|\[[^\]]*\]|/\S+)?$")
+
+
+def test_references(doc, text, defined):
+    """Yield (lineno, shown, key) for a cited test name nothing defines.
+
+    THE SPAN MUST BE THE NAME, not merely contain one. docs/28's
+    `with test_main_sql as ( ... )` is dbt-fabric's wrapper CTE, and reading
+    names out of the middle of spans reports it as a missing test. Fenced
+    blocks are excluded by `inline_spans` already, which is what keeps docs/21's
+    reader-authored `def test_publish_roundtrip(t)` illustration out.
+    """
+    for lineno, token in inline_spans(text):
+        match = _TEST_REF.match(token.strip())
+        if not match:
+            continue
+        name = match.group(1)
+        if name in defined:
+            continue
+        yield lineno, token.strip(), name
+
+
 # --- class 5: dead Markdown links --------------------------------------------
 
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
@@ -670,6 +778,9 @@ CLASSES = (
     ("markdown-link", "links to a Markdown target that does not exist",
      "point it at the live file, directory, or heading, or add an EXEMPT entry "
      "if the reference is deliberately forward-looking"),
+    ("test", "names a test that does not exist",
+     "point it at the live test, or add an EXEMPT entry if the reference is "
+     "deliberately forward-looking"),
 )
 
 
@@ -705,6 +816,7 @@ def findings():
     targets = make_targets()
     env_defined = env_names_in_code()
     go_packages = go_package_index()
+    test_index = test_name_index()
     found = []
     for rel, path in docs():
         text = path.read_text(encoding="utf-8")
@@ -712,7 +824,8 @@ def findings():
                                    ("make", dead_targets, targets),
                                    ("env", unread_env, env_defined),
                                    ("go", dead_go_symbols, go_packages),
-                                   ("markdown-link", dead_markdown_links, index)):
+                                   ("markdown-link", dead_markdown_links, index),
+                                   ("test", test_references, test_index)):
             for lineno, shown, key in produce(rel, text, arg):
                 if (rel, key) in EXEMPT:
                     continue

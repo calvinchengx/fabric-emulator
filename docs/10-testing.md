@@ -317,17 +317,25 @@ SIBLING entra-emulator repo, read here as one of ours.
 None of the three is a typo. Each is a fact that expired, and the only thing
 that would ever have caught them is somebody happening to click.
 
-`scripts/check_doc_drift.py` now asserts five things across the prose, in
+`scripts/check_doc_drift.py` now asserts six things across the prose, in
 `make check` and in the `witnesses` job: a backticked repo path exists, a
 `make <target>` names a target the Makefile defines, a documented
 FABRIC_/ENTRA_-style variable is read by some non-Markdown file, a backticked
-Go package/symbol reference names code that exists, and an ordinary Markdown
-link points at a tracked file, directory or simple heading anchor. The path and
-Markdown-link classes have found live drift; the others land as regression
-guards — and because a check that always passes is indistinguishable from a
-check that is working, every class is tested against synthetic drift rather
-than trusted on the strength of a green tree. That is item Eight's lesson
-applied to the fix for item Twelve.
+Go package/symbol reference names code that exists, an ordinary Markdown
+link points at a tracked file, directory or simple heading anchor, and a
+backticked test name cited as evidence names a test that is actually defined.
+The path, Markdown-link and test classes have found live drift — the last one
+three references, and **not one of the three was a rename**. Asked of git,
+every one was mistyped in the same commit as the test it cites, so each had
+been false from the day it was typed; one also INVERTED the assertion's
+polarity, naming a test that asserts the opposite of the sentence it was
+supporting. That is a second shape, worth separating from the three above,
+which were facts that *expired*: a citation that never resolved at all, and so
+one no reviewer could have caught, because checking it means leaving the diff
+to go and look. The others land as regression guards — and because a check that
+always passes is indistinguishable from a check that is working, every class is
+tested against synthetic drift rather than trusted on the strength of a green
+tree. That is item Eight's lesson applied to the fix for item Twelve.
 
 It is tuned for **precision over recall**, because a checker that cries wolf
 gets muted, and a muted check is item Eight again. `make` is read only from
@@ -341,6 +349,31 @@ slug, so line anchors and generated ids are not treated as promises this checker
 can verify. Release notes are skipped outright: a v0.16 note naming a
 since-renamed file is correct about the tree at that tag, and editing it to
 please a checker would be falsifying a historical record.
+
+The test class cost two concessions, each measured before it was conceded
+rather than after a false positive taught it. **A fenced block is out of
+scope**, because docs/21 illustrates a pytest marker with a reader-authored
+`def test_publish_roundtrip(t): ...` — a test that is deliberately not supposed
+to exist in this tree. **And a reference is the WHOLE code span, not a name
+found inside one**, because docs/28 quotes dbt-fabric's own wrapper CTE, whose
+span opens `with test_main_sql as (` and whose test_main_sql is not a test at
+all. (That name is written without backticks on purpose, the same way the dead
+parity document name is above: quoting it as a bare code span makes this
+paragraph itself a finding, which is how the first draft of it failed the
+check.) A version that read fences and extracted names from within spans was run
+against the tree first: 20 findings, of which 3 were real. The two cases above
+account for 6 of the 17 false ones — docs/21's fenced illustration, and five
+spellings of the docs/28 CTE — and the remaining 11 are a category neither
+case predicts: a test-shaped substring inside a script PATH or an identifier.
+`scripts/check_python_test_flakiness.py` contains test_flakiness,
+`check_script_test_coverage.py` contains test_coverage, and `skipTestConnection`
+contains TestConnection. Requiring the span to BE the name removes all 17, which
+is what makes whole-span matching the rule rather than a tweak. Also deliberate:
+a tracked `test_*.py` MODULE stem counts as defined, because this very document
+says a dependency combination took `test_delta_ops` down a path CI never runs,
+and that is a module and not a function. Prose names a module as readily as it
+names a test, and without that rule the class would have shipped with a false
+positive on a correct sentence.
 
 The prose it reads is every `docs/` page, the root readme, and **every
 per-directory README** — beside an example, a suite, a package. That last group

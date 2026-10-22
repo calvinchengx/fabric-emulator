@@ -137,7 +137,7 @@ and a reader deciding whether to trust the project is asking the second
 question: *would my code notice the difference?*
 
 Nothing below is exercised by any example. Each row names the suite that runs
-it, and `test_every_fidelity_claim_names_a_suite_that_exists` fails when one of
+it, and `TestEveryFidelityClaimNamesASuiteThatExists` fails when one of
 these paths stops being real — so this table cannot rot into a promise nobody
 keeps.
 
