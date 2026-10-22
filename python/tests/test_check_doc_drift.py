@@ -3,7 +3,7 @@ r"""A drift guard that can itself drift silently is worth nothing.
 check_doc_drift exists because prose is the one artifact here with nothing
 underneath it: a renamed directory breaks a Go import and CI goes red, while the
 same rename in a sentence breaks nothing at all. That argument applies with full
-force to the checker. It is ~200 lines of regex against hand-rolled Markdown,
+force to the checker. It is ~900 lines of regex against hand-rolled Markdown,
 and every one of its precision concessions is a place it could quietly stop
 finding anything:
 
@@ -15,6 +15,10 @@ finding anything:
     `internal/tsql.DataFlows` is left alone. Widen that and real files stop
     being checked;
   * `docs/24` is this repo's shorthand for a NUMBERED DOCUMENT, not a path;
+  * a CLI flag is read only with an INTERNAL hyphen, which is what leaves
+    `--strict` and `-race` alone -- and which costs the whole class if the
+    flag INDEX ever empties, since every documented flag would then look dead
+    at once;
   * release notes are historical and skipped, as are EXEMPT forward references.
 
 So the tests that matter most are the ones asserting each class FAILS on a dead
@@ -42,6 +46,23 @@ lint:
 VAR := not-a-target
 """
 
+# Shaped like the real `cmd/fabric-emulator/main.go`, because class 6's index is
+# a regex over source TEXT and the shape is the thing under test: a pointer
+# first argument, then the flag's name as a quoted literal.
+MAIN_GO = """\
+package main
+
+import "flag"
+
+func parse(cfg *Config) {
+\tfs := flag.NewFlagSet("fabric-emulator", flag.ContinueOnError)
+\tfs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address")
+\tfs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "state directory")
+\tfs.Int64Var(&cfg.LRODelaySeconds, "lro-delay", cfg.LRODelaySeconds, "virtual s")
+\tfs.BoolVar(&cfg.TSQLStrict, "tsql-strict", cfg.TSQLStrict, "refuse Class B")
+}
+"""
+
 
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
@@ -51,7 +72,7 @@ def tree(tmp_path, monkeypatch):
     back to a filesystem walk outside a checkout, and pinning the list keeps
     these tests from depending on which fallback fires.
     """
-    def build(docs, files=(), makefile=MAKEFILE, exempt=None):
+    def build(docs, files=(), makefile=MAKEFILE, main_go=MAIN_GO, exempt=None):
         for rel in files:
             path = tmp_path / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,10 +82,16 @@ def tree(tmp_path, monkeypatch):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
         (tmp_path / "Makefile").write_text(makefile)
+        # Written for EVERY tree, like the Makefile: a tree with no flag
+        # registrations is class 6's index failure, which is its own finding,
+        # so leaving it out would make every unrelated test report one.
+        main = tmp_path / c.CLI_SOURCE
+        main.parent.mkdir(parents=True, exist_ok=True)
+        main.write_text(main_go, encoding="utf-8")
         monkeypatch.setattr(c, "ROOT", tmp_path)
         monkeypatch.setattr(c, "MAKEFILE", tmp_path / "Makefile")
         monkeypatch.setattr(c, "EXEMPT", exempt or {})
-        tracked = list(files) + list(docs)
+        tracked = list(files) + list(docs) + [c.CLI_SOURCE]
         monkeypatch.setattr(c, "tracked_files", lambda: tracked)
         return tmp_path
     return build
@@ -524,6 +551,160 @@ def test_a_markdown_link_exempt_entry_is_scoped_to_its_own_document(tree):
     found = c.findings()
     assert kinds(found) == ["markdown-link"]
     assert found[0][1] == "docs/b.md"
+
+
+# --- class 6: dead CLI flags --------------------------------------------------
+
+def test_a_documented_flag_the_emulator_does_not_define_fails(tree):
+    # The shape of the live finding this class landed with: docs/35 named a
+    # -clock-offset flag that has never existed anywhere in the tree.
+    tree({"docs/a.md": "start it with `-clock-offset 3600` to move time\n"},
+         files=["docs/a.md"])
+    found = c.findings()
+    assert kinds(found) == ["cli-flag"]
+    assert found[0][3] == "-clock-offset"
+
+
+def test_a_defined_flag_passes(tree):
+    tree({"docs/a.md": "start it with `-lro-delay 600` and `-tsql-strict`\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_double_dash_flag_is_ignored(tree):
+    # `--strict` and `--no-sync` are this repo's own Python and uv flags, not
+    # the emulator's, and no list of third-party tools is kept current to say
+    # so -- the SINGLE dash is what carries that distinction.
+    tree({"docs/a.md": "run `check_doc_drift.py --strict` under `uv run "
+                       "--frozen --no-sync python`\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_single_word_flag_is_ignored(tree):
+    # The other half of the anchor, and the reason it is an INTERNAL hyphen
+    # rather than merely a hyphen: `go test -race -count 1` and `make -j4` are
+    # written all over this tree, and `-it` belongs to docker.
+    tree({"docs/a.md": "run `go test -race -count 1`, `make -j4`, "
+                       "`docker run -it`\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_flag_written_with_its_value_resolves_to_the_flag_name(tree):
+    # `-lro-delay=5` and `-lro-delay 5` document the same flag. Without the
+    # split, the `=` form resolves to a name no flag set could hold and every
+    # documented default becomes a finding -- so the defined one must pass and
+    # the undefined one must still be reported, carrying the value as WRITTEN
+    # so a reader can find the text on the line.
+    tree({"docs/a.md": "`-lro-delay=5` is fine; `-no-such-flag=5` is not\n"},
+         files=["docs/a.md"])
+    found = c.findings()
+    assert kinds(found) == ["cli-flag"]
+    assert found[0][3] == "-no-such-flag=5"
+    assert found[0][4] == "-no-such-flag"
+
+
+def test_a_fenced_command_line_flag_is_caught(tree):
+    # The quickstart shape, and the reason this class reads fences while the
+    # path and env classes do not: docs/01 writes `-entra-issuer` inside a
+    # fence and nowhere else, so a fence-skipping version checked none of the
+    # invocations a reader would actually copy.
+    tree({"docs/a.md": "```bash\nfabric-emulator -lro-delay 600 "
+                       "-clock-offset 60\n```\n"},
+         files=["docs/a.md"])
+    found = c.findings()
+    # Both directions on one fenced line: the defined flag beside it is not
+    # reported, so this is the fence being READ rather than merely distrusted.
+    assert kinds(found) == ["cli-flag"]
+    assert found[0][3] == "-clock-offset"
+
+
+def test_a_flag_registered_only_in_a_test_file_does_not_credit_a_reference(tree,
+                                                                          tmp_path):
+    # THE SAME WEAKENING `SELF` PREVENTS FOR THE ENV CLASS. A flag registered
+    # only by a test is not a flag the binary has, so crediting one would let
+    # the doc reference survive the deletion of the real registration -- the
+    # quiet direction of wrong, because nothing would go red at the moment the
+    # documentation stopped being true.
+    tree({"docs/a.md": "set `-only-a-test-registers-this`\n"},
+         files=["cmd/fabric-emulator/main_test.go"])
+    (tmp_path / "cmd/fabric-emulator/main_test.go").write_text(
+        'package main\n\nfunc TestX(t *testing.T) {\n'
+        '\tfs.StringVar(&cfg.X, "only-a-test-registers-this", "", "u")\n}\n')
+    assert "only-a-test-registers-this" not in c.cli_flags()
+    found = c.findings()
+    assert kinds(found) == ["cli-flag"]
+    assert found[0][3] == "-only-a-test-registers-this"
+
+
+def test_a_non_test_go_file_anywhere_does_credit_a_flag(tree, tmp_path):
+    # The control for the test above. An exclusion that quietly widened past
+    # `_test.go` would pass that assertion by crediting nothing at all, and
+    # then every documented flag in the repo is a finding. The registration is
+    # deliberately OUTSIDE `cmd/`, because a flag is a flag wherever it is
+    # registered and assuming otherwise reports a LIVE flag as dead.
+    tree({"docs/a.md": "set `-registered-elsewhere`\n"},
+         files=["internal/config/flags.go"])
+    (tmp_path / "internal/config/flags.go").write_text(
+        'package config\n\nfunc Register() {\n'
+        '\tfs.BoolVar(&cfg.X, "registered-elsewhere", false, "u")\n}\n')
+    assert c.findings() == []
+
+
+def test_an_empty_flag_index_reports_the_index_failure_not_every_flag(tree):
+    # THE ONE FAILURE MODE THAT TURNS THIS CLASS INTO A FALSE-POSITIVE STORM.
+    # If the registration form moves -- a different flag package, a helper
+    # wrapping `fs.StringVar` -- the index empties and every documented flag in
+    # the tree looks dead in the same run. Thirty findings at once is how a
+    # check gets muted in a single sitting, so the checker reports THAT
+    # instead: one finding, about the index, and the class does not run.
+    tree({"docs/a.md": "`-lro-delay`, `-tsql-strict` and `-data-dir`\n"},
+         files=["docs/a.md"],
+         main_go="package main\n\nfunc parse() {}\n")
+    assert c.cli_flags() == set()
+    found = c.findings()
+    assert kinds(found) == ["cli-flag-index"]
+    assert found[0][1] == c.CLI_SOURCE
+
+
+def test_the_index_failure_is_reported_by_name_and_is_non_zero_under_strict(
+        tree, capsys, monkeypatch):
+    # A class that has silently stopped checking anything is a build failure,
+    # not a note: it shares the `--strict` exit path for the same reason the
+    # drift classes do. And it must name the INDEX rather than the docs, or the
+    # reader goes looking for drift that is not there.
+    tree({"docs/a.md": "`-lro-delay`\n"}, files=["docs/a.md"],
+         main_go="package main\n")
+    monkeypatch.setattr(sys, "argv", ["check_doc_drift.py", "--strict"])
+    assert c.main() == 1
+    out = capsys.readouterr().out
+    assert "class 6 checked nothing" in out
+    assert c.CLI_SOURCE in out
+    # The file, not a line inside it: `main.go:0` would send a reader to look
+    # at one that has nothing to do with the problem.
+    assert f"{c.CLI_SOURCE}:0" not in out
+    # And emphatically NOT a report that the documented live flag is dead.
+    assert "-lro-delay" not in out
+
+
+def test_a_cli_flag_exempt_entry_is_scoped_to_its_own_document(tree):
+    tree({"docs/a.md": "planned: `-future-flag`\n",
+          "docs/b.md": "stale: `-future-flag`\n"},
+         files=["docs/a.md", "docs/b.md"],
+         exempt={("docs/a.md", "-future-flag"): "planned, not yet built"})
+    found = c.findings()
+    assert kinds(found) == ["cli-flag"]
+    assert found[0][1] == "docs/b.md"
+
+
+def test_the_real_flag_index_reads_the_emulators_own_registrations():
+    # Driven against the real tree, because the empty-index guard only catches
+    # a TOTAL collapse. A partially-broken index -- one form still matching,
+    # another silently not -- reports live flags as dead, and these four are
+    # the long-lived ones the docs reference most.
+    names = c.cli_flags()
+    assert {"addr", "data-dir", "lro-delay", "tsql-strict"} <= names
 
 
 # --- scope, exemptions, reporting ---------------------------------------------
