@@ -130,6 +130,14 @@ This is the emulator **on its own**: it still needs an issuer to trust, which
 is what the `FABRIC_ENTRA_ISSUER` above points at, and it has no Spark engine
 and no warehouse sidecar. The Spark and SQL surfaces answer `501`.
 
+> **On Windows**, a `docker pull` or `docker run` that ends in
+> `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file
+> specified` never reached the registry: the `docker` CLI could not open the
+> pipe its active context points at, which usually means Docker Desktop is
+> installed but not running (its CLI is on PATH well before the engine is).
+> [26-platform-setup.md](26-platform-setup.md#choosing-the-container-runtime)
+> covers that and the two other causes; `make doctor` tells them apart.
+
 ## The binary on its own
 
 For the CLI, or to embed the control plane. Same caveats as the single
