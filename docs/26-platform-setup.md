@@ -134,51 +134,77 @@ winget install Python.Python.3.12
 
 ### Choosing the container runtime
 
-Docker Desktop and Rancher Desktop both work. Whichever you install, one error
-accounts for most Windows first runs, and it is the least informative in this
-document:
+Docker Desktop and Rancher Desktop both work.
+
+### The named-pipe error
+
+This is the least informative error in this document, and the most common first
+one. It arrives from whatever docker command you ran first — `docker pull`,
+`docker info`, `make up`:
 
 ```
-error during connect: Post "http://%2F%2F.%2Fpipe%2FdockerDesktopLinuxEngine/v1.51/images/create?…":
+error during connect: Post "http://%2F%2F.%2Fpipe%2FdockerDesktopLinuxEngine/v1.51/images/create?...":
 open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.
 ```
 
-It names a *pipe*, not a cause, and it is not about this project or the image
-being pulled — a bare `docker version` fails the same way. The pipe is created
-**by the engine, as the engine starts**, so "cannot find the file" means nothing
-is serving on the other end of the one the active `docker context` points at.
-Three causes, in the order they actually occur:
+It names a *pipe*, not a cause, and says nothing about the image or the
+registry — **nothing left your machine.** The `docker` CLI could not reach any
+daemon, so it never got as far as a network request. Four causes, in order of
+how often they are the one:
 
-**1. Docker Desktop is not running.** Installing it does not start it, and it
-does not launch with Windows unless you asked it to — while its `docker.exe` is
-on PATH from the moment of install, so every command until then fails exactly
-like this. Start Docker Desktop and wait for the tray icon to report **Engine
-running**; one that is still booting fails identically for the first few
-seconds.
+1. **Docker Desktop is not running** (or is still starting). That pipe is
+   created by the Linux engine while it runs and removed when it stops, so "the
+   system cannot find the file specified" is the literal truth. Start Docker
+   Desktop and wait for the whale icon to stop animating.
+2. **Docker Desktop is uninstalled, but its context is still selected.** The
+   context list outlives the product. `docker context ls` shows
+   `desktop-linux` still marked active, pointing at a pipe nothing serves.
+3. **Two vendors, one CLI.** Docker Desktop and Rancher Desktop both install a
+   `docker.exe` and both write into the shared context list, so Docker
+   Desktop's CLI can win the PATH race while its `desktop-linux` context points
+   at a daemon that is not running. Rancher Desktop serves `default` instead.
+4. **Docker Desktop is in Windows-container mode.** The Linux engine's pipe
+   exists only while the Linux engine does, so this is also what a perfectly
+   healthy Desktop looks like from a `desktop-linux` context once the engine
+   was switched over — see [Windows containers mode](#windows-containers-mode).
+   Selecting another context is the wrong move for this one: it reaches the
+   Windows daemon, which then rejects every image here.
 
-**2. Docker Desktop is switched to Windows containers.** The Linux engine's pipe
-exists only in Linux-container mode, while the `desktop-linux` context goes on
-pointing at it — so the message is unchanged even though the daemon is up. Fix
-it at the tray icon → **Switch to Linux containers**. Switching *context* is the
-wrong move here: `default` reaches the Windows daemon, which accepts the
-connection and then rejects every image in this stack with `no matching manifest
-for windows/amd64`.
-
-**3. The CLI and the daemon belong to different vendors.** Both products install
-a `docker.exe` and both write into the shared `docker context` list, so if Docker
-Desktop was ever installed its CLI can win the PATH race while its context —
-`desktop-linux` — points at a daemon that is not running. Rancher Desktop serves
-the `default` context instead. Select it once and it persists:
+For 2 and 3, select the context that is actually served — it persists:
 
 ```powershell
 docker context ls          # the one marked * is active; find the reachable one
 docker context use default
 ```
 
-`make doctor` separates the three: it names the active context **with its
-endpoint**, says so plainly when that endpoint is a Docker Desktop that is not
-answering, and probes every other context — so the one it tells you to switch to
-is one that actually serves Linux containers, rather than one that merely exists.
+`make doctor` separates these. It reports the active context **with the endpoint
+it could not reach**, which is the one string you can match against the error
+your own command printed; it names Docker Desktop's pipe specifically when that
+is the endpoint; it says so plainly when that context is the only one configured
+and there is therefore nothing to select; and it **probes** the alternatives
+rather than listing them, so the context it tells you to switch to is one that
+answered and serves Linux containers, not merely one that exists.
+
+### Windows containers mode
+
+Docker Desktop can serve Windows containers instead of Linux ones. A daemon in
+that mode is **reachable and healthy** — `docker info` answers, `docker version`
+answers — and it cannot run one image in this stack, because all of them are
+Linux. The failure arrives later and talks about manifests rather than engines:
+
+```
+no matching manifest for windows/amd64 in the manifest list entries
+```
+
+Switch the engine from the tray icon ("Switch to Linux containers…") or from a
+shell:
+
+```powershell
+& "$Env:ProgramFiles\Docker\Docker\DockerCli.exe" -SwitchLinuxEngine
+```
+
+`make doctor` fails on this rather than reporting the daemon as ready: it reads
+the engine's `OSType`, not the host's.
 
 ### Which shell?
 
@@ -189,10 +215,12 @@ The one thing that does **not** work is running the scripts through cmd or
 PowerShell directly (`.\scripts\status.sh`). Go through `make`, or invoke the
 shell explicitly: `sh scripts/status.sh`.
 
-### Why `make doctor` exists — three Windows traps
+### Why `make doctor` exists — three more Windows traps
 
-Each of these fails somewhere other than where it originates, which is what
-makes them expensive. All three are handled; this records what they were.
+The two docker failures above are each reported by `make doctor` with their
+cause named. These three are the rest, and each fails somewhere other than
+where it originates, which is what makes them expensive. All are handled; this
+records what they were.
 
 **`python3` is a fake.** Windows ships a Microsoft Store *alias stub* named
 `python3`. It sits on PATH, so `command -v python3` succeeds and any "is Python
@@ -273,8 +301,8 @@ To prove Spark really computes rather than merely listens: `make spark`.
 | `make` is not recognized | Windows | PATH not refreshed — open a new terminal |
 | recipes fail with cmd.exe syntax errors | Windows | Git for Windows not installed, so no `sh.exe` |
 | `permission denied … docker daemon socket` | Linux | not in the `docker` group; `newgrp docker` |
-| `open //./pipe/dockerDesktopLinuxEngine` | Windows | nothing is serving that pipe: Docker Desktop not started, switched to Windows containers, or the wrong context — [all three](#choosing-the-container-runtime) |
-| `no matching manifest for windows/amd64` | Windows | the daemon is in Windows-container mode; this stack is Linux images |
+| `open //./pipe/dockerDesktopLinuxEngine` | Windows | nothing is serving that pipe: Docker Desktop not started, switched to Windows containers, or a context nothing serves — [the named-pipe error](#the-named-pipe-error) |
+| `no matching manifest for windows/amd64` | Windows | the engine is in [Windows containers mode](#windows-containers-mode); every image here is Linux |
 | `Python was not found` / counts print `?` | Windows | the Store alias stub; install a real Python |
 | containers OOM or Elasticsearch dies | macOS, Windows | runtime VM under 8 GB |
 | `sqlserver` slow to become healthy | macOS (Apple silicon) | x86 emulation; expected, it does finish |

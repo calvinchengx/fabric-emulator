@@ -126,17 +126,16 @@ Distroless, multi-arch (amd64/arm64), with a built-in `HEALTHCHECK` — the
 binary probes its own `/health`, since there is no shell in the image. State
 lives in `/data`; mount it to persist.
 
+The image is public — pulling it needs no `docker login`. On Windows, a
+`docker pull` that fails with `open //./pipe/dockerDesktopLinuxEngine: The
+system cannot find the file specified` never reached the registry at all: that
+is the local daemon, not the image.
+[26-platform-setup.md](26-platform-setup.md#the-named-pipe-error) has the three
+causes, and `make doctor` names which one it is.
+
 This is the emulator **on its own**: it still needs an issuer to trust, which
 is what the `FABRIC_ENTRA_ISSUER` above points at, and it has no Spark engine
 and no warehouse sidecar. The Spark and SQL surfaces answer `501`.
-
-> **On Windows**, a `docker pull` or `docker run` that ends in
-> `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file
-> specified` never reached the registry: the `docker` CLI could not open the
-> pipe its active context points at, which usually means Docker Desktop is
-> installed but not running (its CLI is on PATH well before the engine is).
-> [26-platform-setup.md](26-platform-setup.md#choosing-the-container-runtime)
-> covers that and the two other causes; `make doctor` tells them apart.
 
 ## The binary on its own
 
