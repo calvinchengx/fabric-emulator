@@ -1254,6 +1254,23 @@ jobs:
       # a `default:` arm or a stray `as any` in Flow.svelte would keep every
       # other check green while quietly restoring the silent-loss bug.
       - run: uv run --frozen --no-sync python scripts/check_kind_exhaustiveness.py
+      # ...and the other direction of the same question. The gate above asks
+      # whether the portal still HANDLES everything Go emits; this asks
+      # whether everything the portal CARRIES is still reached. ui/ is
+      # vendored, so no package manager and no bundler error has an opinion
+      # about a component nobody imports -- it compiles, type-checks, passes
+      # the suite above and ships, because what is missing is an import that
+      # is not there. Measured when this landed: select/ (12 files) reachable
+      # from nothing, and separator/ (2 files) whose ONLY referrer in the
+      # repository was select/select-separator.svelte -- dead code holding
+      # dead code alive, which a mention-anywhere grep reports as healthy
+      # both before and after. Hence reachability from the APPLICATION: a
+      # referrer inside ui/ does not count. In this job because it is a
+      # portal-source contract like its neighbour rather than a bundle check,
+      # and in `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_portal_components.py --strict
 
   fabric-cicd:
     needs: changes

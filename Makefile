@@ -163,6 +163,24 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# the docs job in CI, a full cycle later. Cost is a few hundred ms.
 	@$(PY) scripts/check_docs_links.py --strict
 	@$(PY) scripts/check_govern_types.py
+	@# The portal's ui/ is VENDORED -- shadcn-svelte components copied in
+	@# by a generator, not resolved from a package -- so nothing in the
+	@# dependency graph has an opinion about whether one is still used. An
+	@# unimported component compiles, type-checks, passes vitest and ships
+	@# forever, because the failure is an import that is NOT there and there
+	@# is no diff to notice. Measured when this landed: select/ (12 files)
+	@# was reachable from nothing, and separator/ (2 files) had exactly one
+	@# referrer repo-wide -- select/select-separator.svelte. So separator/
+	@# was held alive by code that was itself dead, which is why the
+	@# assertion is reachability from the APPLICATION rather than
+	@# mention-anywhere: a referrer inside ui/ does not count, and the two
+	@# fall out of one question together. DIRECTORY granularity on purpose,
+	@# since a barrel publishes a component's whole surface and a
+	@# file-level sweep would flag card-action and table-footer, which are
+	@# not defects. Offline and stdlib-only -- it reads portal SOURCES, not
+	@# the built bundle -- so it belongs here rather than in portal-types
+	@# below, which needs Node and an installed portal.
+	@$(PY) scripts/check_portal_components.py --strict
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py
 	@$(PY) scripts/check_conformance.py --strict
