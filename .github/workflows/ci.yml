@@ -1254,6 +1254,71 @@ jobs:
       # a `default:` arm or a stray `as any` in Flow.svelte would keep every
       # other check green while quietly restoring the silent-loss bug.
       - run: uv run --frozen --no-sync python scripts/check_kind_exhaustiveness.py
+      # ...and the other direction of the same question. The gate above asks
+      # whether the portal still HANDLES everything Go emits; this asks
+      # whether everything the portal CARRIES is still reached. ui/ is
+      # vendored, so no package manager and no bundler error has an opinion
+      # about a component nobody imports -- it compiles, type-checks, passes
+      # the suite above and ships, because what is missing is an import that
+      # is not there. Measured when this landed: select/ (12 files) reachable
+      # from nothing, and separator/ (2 files) whose ONLY referrer in the
+      # repository was select/select-separator.svelte -- dead code holding
+      # dead code alive, which a mention-anywhere grep reports as healthy
+      # both before and after. Hence reachability from the APPLICATION: a
+      # referrer inside ui/ does not count. In this job because it is a
+      # portal-source contract like its neighbour rather than a bundle check,
+      # and in `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_portal_components.py --strict
+      # ...AND THE SAME QUESTION ONE LANGUAGE OVER, where nothing was asking
+      # it at all. The gate above holds the portal's vendored components and
+      # `unused` in .golangci.yml holds the Go tree -- a scan of every exported
+      # Go identifier found zero orphans, because that linter has been holding
+      # the line the whole time. Python module scope had nobody: ruff runs over
+      # every line of it and its `F` family is narrower than people assume --
+      # F401 is an unused IMPORT, F841 an unused LOCAL, F811 fires only on a
+      # REDEFINITION, and the vulture-style rule that would cover a top-level
+      # def or constant nobody reads is not a ruff rule and is absent from
+      # pyproject.toml's `select`. So such a symbol keeps importing, keeps
+      # type-checking under `ty`, keeps passing pytest and keeps shipping.
+      #
+      # Measured when this landed: 1538 module-level symbols across 107
+      # in-scope files, THREE reached by nothing. usercontext._KEEP is the one
+      # worth reading -- a tuple of environment names under a comment
+      # describing an ALLOW list, in a module whose child_env pops
+      # CREDENTIAL_ENV from a copy, which is a DENY list its own docstring
+      # spends a paragraph arguing for. The comment documented behaviour the
+      # code never had, and that outlived the dead tuple it sat on. The others
+      # were check_security_footguns._SSL_OFF_ATTRS, superseded by
+      # _py_ssl_skips, and contoso-fixtures ORDER_FIELDS -- a second, silently
+      # drifting statement of the bronze_orders schema the generator writes as
+      # a dict literal 150 lines further down.
+      #
+      # THE SCOPE STOPS AT scripts/ AND python/, and e2e/ is why. e2e/xmla's
+      # _shapes_screen5/6/7 are referenced by nothing and each says "Kept for
+      # the record" in its own docstring: an archived probe of a client's
+      # capacityUri handling, retained deliberately as the written record of
+      # what was measured. Deleting them would destroy evidence and recording
+      # three exemptions would be a ledger apologising for a directory this
+      # check should not read. Harness and example code is written to be kept;
+      # scripts/ and python/ are written to be CALLED.
+      #
+      # AND IT SHIPPED THE DEFECT IT EXISTS TO CATCH, which is the honest part
+      # of this gate rather than a footnote. The house style requires a checker
+      # to record its measured baseline, so its docstring names all three
+      # symbols -- and under a mention-anywhere reading that paragraph is a
+      # second occurrence of each. Its FIRST RUN over the unrepaired tree
+      # reported 0 orphans and exit 0: a guard that exempts whatever it reports,
+      # in perpetuity, for every future finding too. Repaired by counting that
+      # one file from its NAME tokens alone, so its prose does not vouch and
+      # its code still does -- the repair's own first version skipped the file
+      # outright and then reported nine of its internal helpers as orphans.
+      # Both directions are held by
+      # python/tests/test_check_dead_python_symbols.py. In `make check` too,
+      # which python/tests/test_make_check_runs_in_ci.py requires of anything
+      # in that target.
+      - run: uv run --frozen --no-sync python scripts/check_dead_python_symbols.py --strict
 
   fabric-cicd:
     needs: changes

@@ -902,13 +902,6 @@ def _py_builds_string(node):
 
 
 # --- R1's `ssl` dialect ----------------------------------------------------
-# requests' `verify=False` is one spelling of "do not authenticate the peer";
-# the stdlib's is another, and it is the one this repository actually reaches
-# for in its own Python. Decided on the AST rather than by regex for the same
-# reason every rule below is: `ctx.verify_mode = ssl.CERT_NONE` is an
-# assignment whose TARGET and VALUE both matter, and a line-oriented scan
-# cannot tell it from a line that merely mentions CERT_NONE in a comment.
-_SSL_OFF_ATTRS = ("verify_mode", "check_hostname")
 
 
 def _py_ssl_skips(tree):
