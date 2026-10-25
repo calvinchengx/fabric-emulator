@@ -154,6 +154,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - name: Warm the images this job builds and pulls
+        if: runner.os == 'Linux'
+        run: python3 scripts/warm_base_images.py --suite agent-contract
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
