@@ -40,6 +40,28 @@ so every job builds on that driver. A `docker-container` builder would NOT see
 the daemon's images, and this would silently stop helping; the test module
 pins the absence of `setup-buildx` for that reason.
 
+SERVICE IMAGES TOO. Two of the same morning's failures were not builds at
+all: compose PULLING a service image (SeaweedFS for e2e/s3, ttyd for
+e2e/portal-terminal) died on `unknown blob`, the same mirror failing the same
+way through a different client. Compose's default `pull_policy` is `missing`
+and nothing here overrides it, so an image already in the store is not pulled
+again -- checked the same way, with a service image named on a registry that
+does not resolve: compose created the container without contacting it. So the
+same pre-pull covers both, and these are warmed alongside the bases:
+
+  * every `image:` of a service in the suite's OWN compose files, and
+  * an `image:` from the ROOT docker-compose.yml only when the suite's Python
+    names that service as a string literal -- which is how every harness here
+    starts root services (`compose("up", ..., "entra-emulator", "ttyd")`).
+    The root file carries OpenMetadata, OpenSearch, Kafka and more behind
+    profiles; warming all of it for every suite would pull gigabytes nobody
+    runs, so it is the name, not the file, that selects.
+
+Never warmed: a service the suite's compose files give a `build:` (that is how
+`fabric-emulator` is built from source rather than pulled from GHCR, and pulling
+the published image would be wasted work), and a `${VAR}` reference with no
+default, whose value only the harness knows.
+
 WHAT IT WARMS. `--suite NAME` reads e2e/NAME's compose files, takes every
 `build:` stanza (`context`, `dockerfile`, defaulting to `Dockerfile`), adds any
 Dockerfile physically inside the suite, and collects the literal `FROM`
@@ -58,6 +80,8 @@ could supply. Stdlib only, like every guard in scripts/.
 from __future__ import annotations
 
 import argparse
+import ast
+import itertools
 import pathlib
 import re
 import shutil
@@ -183,15 +207,174 @@ def compose_dockerfiles(compose: pathlib.Path) -> list[pathlib.Path]:
     return out
 
 
+def related_suites(suite: str, _seen=None) -> list[str]:
+    """The suite plus every sibling suite whose stack it runs, transitively.
+
+    Three of the medallion harnesses hold no stack of their own: each does
+    `sys.path.insert(0, os.path.join(REPO, "e2e", "medallion"))` and runs
+    e2e/medallion's. e2e/two-context runs e2e/livy's with
+    `os.path.join(HERE, "..", "livy")`. Read from the AST, not by regex over the
+    source, because both suites also NAME their siblings in prose, and a
+    docstring mentioning a suite is not a stack this one starts. What counts is
+    a path join whose string arguments put a suite name straight after `"e2e"`
+    or `".."`.
+    """
+    seen = _seen if _seen is not None else []
+    if suite in seen:
+        return seen
+    seen.append(suite)
+    names = {p.name for p in E2E.iterdir() if p.is_dir()}
+    for py in sorted((E2E / suite).glob("*.py")):
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "join"):
+                continue
+            lits = [a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None
+                    for a in node.args]
+            for prev, name in itertools.pairwise(lits):
+                if prev in ("e2e", "..") and name in names and name != suite:
+                    related_suites(name, seen)
+    return seen
+
+
+SERVICE = re.compile(r"^  (?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*):\s*(?:#.*)?$")
+IMAGE = re.compile(r"^    image:\s*['\"]?(?P<ref>[^'\"\s#]+)")
+BUILD = re.compile(r"^    build:")
+VAR = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::?-(?P<default>[^}]*))?\}")
+
+
+def _expand(ref: str) -> str | None:
+    """`${VAR:-default}` -> default. A variable with no default is unknowable
+    here -- only the harness that sets it knows -- so the reference is None."""
+    out = ref
+    for m in VAR.finditer(ref):
+        if m["default"] is None:
+            return None
+        out = out.replace(m.group(0), m["default"])
+    return out
+
+
+def compose_services(compose: pathlib.Path) -> dict[str, dict]:
+    """{service: {"image": ref or None, "build": bool}} for one compose file.
+
+    Reads the two-space service / four-space key layout every compose file in
+    this tree uses. The test module asserts the real files parse to services
+    with images, so a file that drifts from that layout goes red there rather
+    than quietly warming nothing.
+    """
+    out, svc, in_services = {}, None, False
+    for line in compose.read_text(encoding="utf-8").splitlines():
+        if re.match(r"^services:\s*$", line):
+            in_services, svc = True, None
+            continue
+        if re.match(r"^\S", line):
+            in_services, svc = False, None
+            continue
+        if not in_services:
+            continue
+        if m := SERVICE.match(line):
+            svc = m["name"]
+            out.setdefault(svc, {"image": None, "build": False})
+        elif svc and (m := IMAGE.match(line)):
+            out[svc]["image"] = m["ref"]
+        elif svc and BUILD.match(line):
+            out[svc]["build"] = True
+    return out
+
+
+# A whole string literal that IS a pullable image: a registry host, a path, and
+# a tag or digest. The tag/digest is what separates `mcr.microsoft.com/dotnet/
+# sdk:8.0` from the Go module paths (`github.com/calvinchengx/...`) and untagged
+# repository names (fab-driven builds tags onto `ghcr.io/calvinchengx/...`)
+# that also live in these files.
+PY_IMAGE = re.compile(
+    r"(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?/[a-z0-9._/-]+"
+    r"(?::[A-Za-z0-9._-]+(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})")
+
+
+def python_images(py: pathlib.Path) -> list[str]:
+    """Images a harness runs itself, outside compose: `docker run <IMAGE>`.
+
+    xmla runs `mcr.microsoft.com/dotnet/sdk:8.0` and mcp-eventhouse runs
+    kustainer by digest, both from module constants, and neither reaches a
+    compose file. Read from the AST so adjacent literals are joined (the
+    kustainer reference is a tag and a digest written on two lines) and so a
+    reference quoted inside prose is not one -- only a literal that is
+    entirely an image counts.
+
+    Not covered: an implicit Docker Hub reference with no host (`alpine/socat`,
+    the 443 forwarder in xmla and sempy) is indistinguishable from any other
+    `a/b` string, and is not mirror-sourced, so the most warming could give it
+    is a retry.
+    """
+    try:
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and PY_IMAGE.fullmatch(node.value) and node.value not in out):
+            out.append(node.value)
+    return out
+
+
+def suite_images(suite: str) -> list[str]:
+    """The service images a suite will pull, per the rules in the docstring."""
+    if not (E2E / suite).is_dir():
+        raise SystemExit(f"warm_base_images: no such suite: e2e/{suite}")
+    dirs = [E2E / name for name in related_suites(suite)]
+    local: dict[str, dict] = {}
+    for compose in sorted(c for d in dirs for c in [*d.glob("*.yml"), *d.glob("*.yaml")]):
+        for name, svc in compose_services(compose).items():
+            merged = local.setdefault(name, {"image": None, "build": False})
+            merged["image"] = svc["image"] or merged["image"]
+            merged["build"] = merged["build"] or svc["build"]
+
+    refs = []
+    for svc in local.values():
+        if svc["image"] and not svc["build"]:
+            refs.append(svc["image"])
+    for py_file in (p for d in dirs for p in sorted(d.glob("*.py"))):
+        refs.extend(python_images(py_file))
+
+    py = [p for d in dirs for p in sorted(d.glob("*.py"))]
+    source = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in py)
+    # The ROOT file counts only for a suite that layers it: delta-rs names
+    # "fabric-emulator" in log lines while running it as a host binary, and must
+    # not be handed the published image for it. Every suite that does layer the
+    # root file joins it to the repo root: os.path.join(REPO, "docker-compose.yml").
+    layers_root = re.search(r"""\b(?:REPO|ROOT|REPO_ROOT)\b\s*[,/]\s*["']docker-compose\.yml["']""", source)
+    root = ROOT / "docker-compose.yml"
+    for name, svc in (compose_services(root).items() if root.is_file() else ()):
+        named = re.search(rf"""["']{re.escape(name)}["']""", source)
+        overridden = name in local and (local[name]["build"] or local[name]["image"])
+        if layers_root and named and svc["image"] and not svc["build"] and not overridden:
+            refs.append(svc["image"])
+
+    out = []
+    for ref in refs:
+        ref = _expand(ref)
+        if ref and ref not in out:
+            out.append(ref)
+    return out
+
+
 def suite_dockerfiles(suite: str) -> list[pathlib.Path]:
     """The Dockerfiles a suite builds: through its compose files, or in it."""
-    d = E2E / suite
-    if not d.is_dir():
+    if not (E2E / suite).is_dir():
         raise SystemExit(f"warm_base_images: no such suite: e2e/{suite}")
     found = []
-    for compose in sorted([*d.glob("*.yml"), *d.glob("*.yaml")]):
-        found.extend(compose_dockerfiles(compose))
-    found.extend(sorted(d.glob("Dockerfile*")))
+    for d in (E2E / name for name in related_suites(suite)):
+        for compose in sorted([*d.glob("*.yml"), *d.glob("*.yaml")]):
+            found.extend(compose_dockerfiles(compose))
+        # Recursive: e2e/sempy builds e2e/sempy/image/Dockerfile with a plain
+        # `docker build <dir>`, and a top-level glob never saw it.
+        found.extend(sorted(p for p in d.rglob("Dockerfile*") if "__pycache__" not in p.parts))
     seen, out = set(), []
     for p in found:
         if p.resolve() not in seen:
@@ -265,8 +448,13 @@ def main(argv=None, sleep=time.sleep) -> int:
             if ref not in refs:
                 refs.append(ref)
 
+    for suite in args.suite:
+        for ref in suite_images(suite):
+            if ref not in refs:
+                refs.append(ref)
+
     if not refs:
-        log("nothing to warm — this suite builds no images")
+        log("nothing to warm — this suite builds and pulls no images")
         return 0
     # Not this script's failure to report. Warming is resilience for a build
     # that is about to happen; where no linux daemon is serving, the build is
@@ -285,7 +473,7 @@ def main(argv=None, sleep=time.sleep) -> int:
             f"here is linux, so there is nothing it could use")
         return 0
 
-    log(f"{len(refs)} base image(s): {', '.join(refs)}")
+    log(f"{len(refs)} image(s): {', '.join(refs)}")
     problems = [p for p in (warm(ref, sleep) for ref in refs) if p]
     if problems:
         print("warm_base_images: FAIL — neither source could supply:\n  "

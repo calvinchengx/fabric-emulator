@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "Cron/dispatch-only workflows that have never run and CANNOT be run yet.",
+    "`workflow_dispatch` resolves the workflow file on the DEFAULT branch, so a",
+    "workflow being added answers 404 to `gh workflow run --ref <branch>` until",
+    "it merges. check_cron_workflow_freshness.py would otherwise be",
+    "unsatisfiable before the merge and red on main straight after it.",
+    "",
+    "An entry is a dispatch OWED, not an exemption. The checker reads this file",
+    "both ways: a workflow with no history and no entry still fails, and an",
+    "entry whose workflow has since acquired run history fails too, naming the",
+    "entry to delete. Record `exit_when` as the command that retires it."
+  ],
+  "bootstrap": []
+}
