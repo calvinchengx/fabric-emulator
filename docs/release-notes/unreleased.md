@@ -278,3 +278,23 @@ files, so the 17 suites that build nothing pay a parse and no pull, and a test
 asserts every harness job has it, Linux-guarded, directly after checkout. The
 root `Dockerfile`'s `go mod download` is retried four times and still ends the
 build when every attempt fails.
+
+## The CI warm-up covers pulled service images, and the jobs it missed
+
+#666 pre-pulled the base images each harness BUILDS. Two of the same morning's
+failures were compose PULLING a service image — SeaweedFS for e2e/s3, ttyd for
+e2e/portal-terminal — and died on `unknown blob`, the same mirror failing
+through a different client. `scripts/warm_base_images.py` now warms those too:
+every `image:` in a suite's own compose files, and an `image:` from the root
+`docker-compose.yml` only when the suite layers that file and names the service
+it starts. That keeps OpenMetadata, OpenSearch and Kafka out of suites that
+never run them, and keeps e2e/delta-rs — which names `fabric-emulator` while
+running it as a host binary — from being handed the published image. Compose's
+default `pull_policy: missing` then finds each one local and does not pull.
+
+Two jobs had no warm step at all, because #666 recognised only literal harness
+paths: the medallion matrix (`e2e/${{ matrix.harness }}/run.py`), one of the four
+jobs that change was written for, and the coverage job's shell loop. Both are
+wired now, and the test asserting every harness job warms first reads all three
+forms. Three medallion harnesses hold no stack of their own and run
+e2e/medallion's; they are now followed to it, as e2e/two-context is to e2e/livy.
