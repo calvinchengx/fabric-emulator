@@ -224,3 +224,17 @@ context is offered only when it answered and serves linux containers — one tha
 is as stopped as the first, or that answers while serving windows containers,
 is labelled rather than recommended.
 [docs/26](../26-platform-setup.md#the-named-pipe-error)
+
+## The python base image is held at 3.14 until zstandard ships a cp315 wheel
+
+`python:3.15-slim` cannot build this repository's lockfile. pyspark-client
+4.2.0 requires zstandard, and zstandard 0.25.0 — the newest release — ships
+wheels up to cp314 only, so on 3.15 `uv sync` falls back to the sdist and the C
+extension build fails inside the image. The bump
+([#656](https://github.com/calvinchengx/fabric-emulator/pull/656)) took 28
+containerized jobs down with it, and `docker/sail` and `docker/spark-agent` are
+images this repository PUBLISHES, so every platform in the family would have
+inherited one that cannot be built. Minor bumps of `library/python` are now
+held with a `LIFT THIS` naming the upstream change that retires the hold —
+minors rather than 3.15 alone, because 3.16 fails the same way until the wheel
+exists, while 3.14 patch updates still arrive inside the tag.

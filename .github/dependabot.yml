@@ -234,6 +234,25 @@ updates:
       # hold to say either how it ends or that it does not.
       - dependency-name: apache/spark
 
+      # python:3.15-slim cannot build this repository's lockfile. pyspark-client
+      # 4.2.0 requires zstandard, and zstandard 0.25.0 -- the newest release --
+      # ships wheels up to cp314 only. On 3.15 uv therefore falls back to the
+      # sdist and the C extension build fails inside the image:
+      #
+      #   × Failed to build `zstandard==0.25.0`
+      #   ╰─▶ Call to `setuptools.build_meta.build_wheel` failed (exit status: 1)
+      #
+      # It took down 28 containerized jobs on #656 and is not ours to fix:
+      # docker/sail and docker/spark-agent are the PUBLISHED images, so the
+      # whole family would inherit an image that cannot be built. Minor bumps
+      # are held rather than 3.15 alone, because 3.16 will fail identically
+      # until the wheel exists; 3.14 patch updates still arrive inside the tag.
+      #
+      # LIFT THIS when zstandard publishes a cp315 wheel (or pyspark-client
+      # stops requiring it) -- then take the bump and delete this hold.
+      - dependency-name: library/python
+        update-types: ['version-update:semver-minor']
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
