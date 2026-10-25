@@ -11,12 +11,5 @@
     "entry whose workflow has since acquired run history fails too, naming the",
     "entry to delete. Record `exit_when` as the command that retires it."
   ],
-  "bootstrap": [
-    {
-      "workflow": "dependabot-rebase",
-      "added": "2026-10-25",
-      "why": "Added by this change. Nothing has executed it, and nothing can: dispatch resolves the file on main, where it does not exist until this merges.",
-      "exit_when": "gh workflow run dependabot-rebase.yml  (once it is on main), then delete this entry"
-    }
-  ]
+  "bootstrap": []
 }
