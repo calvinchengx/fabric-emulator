@@ -21,7 +21,7 @@ vendored `ui/` directories and `pnpm --filter fabric-emulator-portal check`
 holds the rest; a sweep of every export under portal/src and website/src came
 back empty too. Python module scope was the one surface with nobody asking.
 
-WHAT WAS MEASURED. Today 109 in-scope files carrying 1598 module-level symbols,
+WHAT WAS MEASURED. Today 109 in-scope files carrying 1601 module-level symbols,
 none of them reached by nothing. At the commit that added this it was 107 files
 and 1538 symbols, of which exactly THREE were reached by nothing:
 
