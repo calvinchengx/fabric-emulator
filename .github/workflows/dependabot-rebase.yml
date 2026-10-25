@@ -28,6 +28,11 @@ jobs:
       - name: Ask Dependabot to rebase the branches that fell behind
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, and `gh pr list` infers its repository from
+          # the local git remote -- so the first run died on `fatal: not a git
+          # repository` before asking anything. GH_REPO is read instead of the
+          # remote, and is cheaper than cloning the repository to learn its name.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh pr list --author "app/dependabot" --state open --limit 100 \
