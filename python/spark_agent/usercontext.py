@@ -86,11 +86,6 @@ CREDENTIAL_ENV = (
     "FABRIC_TOKEN",
 )
 
-# Names that say WHERE to get a token rather than being one. A child stripped of
-# these cannot mint, but it also cannot report a useful error, so they stay: the
-# child holds the caller's token and nothing that widens it.
-_KEEP = ("ENTRA_TOKEN_URL",)
-
 
 def child_env(env=None):
     """The environment the child gets: the parent's, minus every credential.

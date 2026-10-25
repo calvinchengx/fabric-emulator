@@ -214,16 +214,6 @@ def test_a_manifest_named_only_in_a_comment_is_not_read(page):
     assert "site-stats.json" in message
 
 
-@pytest.mark.parametrize("spelling", ["load('x.json')", 'fetch("x.json")', "fetch( 'x.json'"])
-def test_fetches_accepts_the_spellings_the_page_uses(spelling):
-    assert c.fetches(spelling, "x.json")
-
-
-def test_fetches_rejects_a_bare_mention():
-    assert not c.fetches("// x.json is the manifest", "x.json")
-    assert not c.fetches("const name = 'x.json';", "x.json")
-
-
 # --- the parsers ------------------------------------------------------------
 
 

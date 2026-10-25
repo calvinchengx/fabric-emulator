@@ -163,6 +163,74 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# the docs job in CI, a full cycle later. Cost is a few hundred ms.
 	@$(PY) scripts/check_docs_links.py --strict
 	@$(PY) scripts/check_govern_types.py
+	@# The portal's ui/ is VENDORED -- shadcn-svelte components copied in
+	@# by a generator, not resolved from a package -- so nothing in the
+	@# dependency graph has an opinion about whether one is still used. An
+	@# unimported component compiles, type-checks, passes vitest and ships
+	@# forever, because the failure is an import that is NOT there and there
+	@# is no diff to notice. Measured when this landed: select/ (12 files)
+	@# was reachable from nothing, and separator/ (2 files) had exactly one
+	@# referrer repo-wide -- select/select-separator.svelte. So separator/
+	@# was held alive by code that was itself dead, which is why the
+	@# assertion is reachability from the APPLICATION rather than
+	@# mention-anywhere: a referrer inside ui/ does not count, and the two
+	@# fall out of one question together. DIRECTORY granularity on purpose,
+	@# since a barrel publishes a component's whole surface and a
+	@# file-level sweep would flag card-action and table-footer, which are
+	@# not defects. Offline and stdlib-only -- it reads portal SOURCES, not
+	@# the built bundle -- so it belongs here rather than in portal-types
+	@# below, which needs Node and an installed portal.
+	@$(PY) scripts/check_portal_components.py --strict
+	@# ...and the same question one language over, where nothing was asking
+	@# it at all. ruff runs over every line of Python here and its `F` family
+	@# is narrower than people assume: F401 is an unused IMPORT, F841 an
+	@# unused LOCAL. Neither has an opinion about a module-level def, class
+	@# or constant that nothing reads, and the vulture-style rule that would
+	@# is not a ruff rule and is not in pyproject.toml's `select`. Go was
+	@# already covered -- .golangci.yml enables `unused`, and a scan of every
+	@# exported Go identifier found zero orphans because that linter has held
+	@# the line the whole time -- and the portal is covered by the gate above
+	@# plus svelte-check. Python module scope was the one surface with nobody
+	@# asking.
+	@#
+	@# Measured when this landed: 1538 module-level symbols across 107
+	@# in-scope files, of which THREE were reached by nothing.
+	@# usercontext._KEEP is the one worth reading: a tuple of environment
+	@# names under a comment describing an ALLOW list, in a module whose
+	@# child_env pops CREDENTIAL_ENV from a copy -- a DENY list, which its own
+	@# docstring spends a paragraph arguing for. So the comment documented
+	@# behaviour the code never had, which outlives the dead tuple it sat on.
+	@# The other two were check_security_footguns._SSL_OFF_ATTRS, superseded
+	@# by _py_ssl_skips, and contoso-fixtures ORDER_FIELDS, a second and
+	@# silently drifting statement of the bronze_orders schema the generator
+	@# writes as a dict literal 150 lines below it.
+	@#
+	@# MENTION-ANYWHERE, generously and on purpose: a Makefile recipe, a CI
+	@# job, a docstring or a doc all count as a reference, so a name this
+	@# reports is spelled NOWHERE else in the tree and the finding is never
+	@# arguable. It is the weaker reading and it is the right one -- a guard
+	@# whose output gets argued with instead of fixed stops being run, which
+	@# is what check_perf_regressions.py's `defer-in-loop` records.
+	@#
+	@# The exemptions carry their own measured cost. test_*/conftest.py is
+	@# the load-bearing one at 2190 would-be findings, because pytest
+	@# discovers and injects BY NAME; __init__ barrels, decorated defs,
+	@# dunders, `main` and `__all__` names are at zero today and are stated
+	@# as such rather than implied to be doing work. `build/` is the one that
+	@# would have silently disabled the check over a whole package:
+	@# python/fabric-target/build/lib/ is a TRACKED copy of the source, so
+	@# every symbol in it appeared twice and none could ever be reported.
+	@#
+	@# AND IT SHIPPED THE DEFECT IT EXISTS TO CATCH, which is why the guard's
+	@# own prose is excluded from the counting pass. The house style requires
+	@# a checker to name its measured baseline, so this one's docstring spells
+	@# all three symbols -- and under mention-anywhere that paragraph IS a
+	@# second occurrence of each. Its first run over the unrepaired tree
+	@# reported 0 orphans and exit 0, having laundered exactly what it was
+	@# written to find. The file's CODE still counts (the repair's own first
+	@# version skipped it outright and then reported nine of its internal
+	@# helpers as orphans), so it is counted from its NAME tokens alone.
+	@$(PY) scripts/check_dead_python_symbols.py --strict
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py
 	@$(PY) scripts/check_conformance.py --strict
@@ -275,10 +343,42 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# negative; rewritten onto src/testing.ts staysAbsent rather than
 	@# recorded, so the ledger it checks against ships empty.
 	@$(PY) scripts/check_vitest_test_flakiness.py --strict
-	@# ...and one level in from all three of them: every script in THIS
+	@# A FOURTH CHECKER RATHER THAN A WIDENED ONE, and on a different AXIS
+	@# from the three above rather than a fourth language. All three ask
+	@# whether a WAIT is bounded; docs/60-test-flakiness.md's own §6 named
+	@# what that leaves out -- "flakiness with no timing tell ... nothing
+	@# here covers within-test nondeterminism that the race detector cannot
+	@# see." This flags one sharply-defined member of that class: a
+	@# wall-clock read truncated to a DAY in test or e2e-harness code.
+	@#
+	@# Measured when this landed: 3 Go sites and 8 Python ones, of which 4
+	@# were LOAD-BEARING and 2 of those were separate defects. A test
+	@# performed operations whose audit events were stamped from the store's
+	@# clock, THEN read the wall clock a second time to compute "today", then
+	@# asserted those events appear in that day's window -- so a run crossing
+	@# UTC midnight between the two reads queries a day the events are not in
+	@# and fails on a missing CreateWorkspace. e2e/az-rest/driver.py had the
+	@# identical shape one surface over. No sleep to flag, no shared memory
+	@# for -race, no cross-test ordering for -shuffle=on: the whole failure is
+	@# two readings of one clock either side of a boundary, once a day, in a
+	@# sub-second window. Two more were found during the repair -- labels_test
+	@# and the pagination test reach the same window through a helper, so the
+	@# grep that measured the sweep could not see them.
+	@#
+	@# The repair is NOT a widened window: the API refuses bounds spanning two
+	@# days, and TestActivityEventsRequestValidation's `spans two days` case
+	@# pins that 400. So the day is captured ONCE before the mutations and the
+	@# straddle is DETECTED and unioned with the following day's single-day
+	@# query (internal/testsupport.UTCDaysSince, and activity_days in the
+	@# driver, which cannot import it -- it runs inside the azure-cli image).
+	@# What the checker can see is that a day was read; whether the straddle
+	@# is handled is held by internal/testsupport/clock_test.go instead, and
+	@# that split is written down rather than left implied.
+	@$(PY) scripts/check_clock_test_flakiness.py --strict
+	@# ...and one level in from all four of them: every script in THIS
 	@# directory has a dedicated python/tests/test_<stem>.py, or is
 	@# recorded with the reason it does not. These scripts ARE the
-	@# invariant enforcement -- the thirty-two lines above -- and a
+	@# invariant enforcement -- the thirty-eight lines above -- and a
 	@# guard whose own behaviour nothing asserts can stop guarding and
 	@# go on reporting green. That is the failure
 	@# python/tests/test_make_check_runs_in_ci.py was written about one

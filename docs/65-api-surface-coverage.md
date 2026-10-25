@@ -438,3 +438,7 @@ complete:
   recorded response, not on every status or parameter combination.
 - **There is no ratchet on the denominators themselves.** Vendoring a new
   swagger tree changes 1002, and nothing fails to point that out.
+
+The eighth document on this architecture is
+[66-gate-inventory.md](66-gate-inventory.md), which does for the enforcing
+scripts under `scripts/` what this one did for the ledgers under `docs/`.
