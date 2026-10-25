@@ -266,6 +266,52 @@ def test_the_stackless_medallion_harnesses_warm_the_medallion_stack():
         assert bases <= {r for p in w.suite_dockerfiles(s) if p.is_file() for r in w.from_refs(p)}, s
 
 
+def test_python_image_literals_are_images_and_nothing_else(tmp_path):
+    """Only a literal that is ENTIRELY a tagged or digested image with a
+    registry host. Adjacent literals fold (kustainer's tag and digest are
+    written on two lines); prose, Go module paths, untagged repository names
+    and URLs do not count."""
+    py = tmp_path / "run.py"
+    py.write_text(
+        'SDK = "mcr.microsoft.com/dotnet/sdk:8.0"\n'
+        'KUSTO = ("mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest"\n'
+        '         "@sha256:' + "a" * 64 + '")\n'
+        'MOD = "github.com/calvinchengx/entra-emulator"\n'
+        'REPO_NAME = "ghcr.io/calvinchengx/fabric-emulator"\n'
+        'URL = "https://ghcr.io/v2/x/y:1"\n'
+        'log("pulling mcr.microsoft.com/dotnet/sdk:9.0 now")\n'
+        'IMPLICIT = "alpine/socat"\n', encoding="utf-8")
+    assert w.python_images(py) == [
+        "mcr.microsoft.com/dotnet/sdk:8.0",
+        "mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest@sha256:" + "a" * 64,
+    ]
+
+
+def test_a_dockerfile_in_a_subdirectory_of_the_suite_is_read(tmp_path, monkeypatch):
+    """e2e/sempy builds e2e/sempy/image/Dockerfile with `docker build <dir>`;
+    a top-level glob missed it, so sempy warmed nothing."""
+    monkeypatch.setattr(w, "ROOT", tmp_path)
+    monkeypatch.setattr(w, "E2E", tmp_path / "e2e")
+    d = tmp_path / "e2e" / "suite" / "image"
+    d.mkdir(parents=True)
+    (d / "Dockerfile").write_text("FROM mcr.microsoft.com/dotnet/sdk:8.0\n", encoding="utf-8")
+    cache = tmp_path / "e2e" / "suite" / "__pycache__"
+    cache.mkdir()
+    (cache / "Dockerfile.stale").write_text("FROM x/never:1\n", encoding="utf-8")
+    got = [p.relative_to(tmp_path).as_posix() for p in w.suite_dockerfiles("suite")]
+    assert got == ["e2e/suite/image/Dockerfile"]
+
+
+def test_the_cron_suites_that_run_docker_directly_now_warm_their_images():
+    """Against the real tree: before these two readers existed, xmla and sempy
+    -- both of which run containers -- resolved to nothing at all."""
+    assert w.suite_images("xmla") == ["mcr.microsoft.com/dotnet/sdk:8.0"]
+    sempy_bases = [r for p in w.suite_dockerfiles("sempy") if p.is_file() for r in w.from_refs(p)]
+    assert sempy_bases == ["mcr.microsoft.com/dotnet/sdk:8.0"]
+    [kusto] = w.suite_images("mcp-eventhouse")
+    assert kusto.startswith("mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest@sha256:")
+
+
 # --- pulling --------------------------------------------------------------------
 
 
@@ -415,6 +461,32 @@ def test_no_linux_daemon_is_left_to_the_build(docker, monkeypatch, capsys, which
 # --- the wiring -----------------------------------------------------------------
 
 
+WORKFLOWS = REPO / ".github" / "workflows"
+
+# Harness jobs that deliberately carry no warm step, WITH A REASON -- the
+# EXEMPT idiom check_cron_workflow_freshness.py uses, so an exemption is a
+# decision someone wrote down rather than an omission nobody saw. Each entry
+# must still name a job that runs a harness; a stale one fails below.
+EXEMPT_JOBS = {
+    ("real-fabric.yml", "conformance"):
+        "every step runs with FABRIC_TARGET=real against real Fabric and starts "
+        "no local stack, so warming its suites would pull engine-matrix's and "
+        "notebook-run's images for a job that never runs them",
+    ("pbix-desktop.yml", "desktop"):
+        "runs-on windows-latest; the warm step is Linux-guarded and would never "
+        "execute, and Power BI Desktop's probe pulls no linux image",
+}
+
+
+def _all_jobs():
+    """(workflow file, job id, job) for every job in every workflow. The cron
+    and release workflows run harnesses too; reading ci.yml alone is how they
+    were left unwarmed."""
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        for jid, job in (yaml.safe_load(wf.read_text(encoding="utf-8")).get("jobs") or {}).items():
+            yield wf.name, jid, job
+
+
 def _jobs():
     return yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
 
@@ -453,10 +525,11 @@ def test_every_job_that_runs_a_harness_warms_first_and_names_exactly_its_suites(
     after checkout, so it precedes every build in the job, including the ones
     some jobs run before their harness."""
     problems = []
-    for jid, job in _jobs().items():
+    for wf, jid, job in _all_jobs():
         suites = _job_suites(job)
-        if not suites:
+        if not suites or (wf, jid) in EXEMPT_JOBS:
             continue
+        jid = f"{wf}:{jid}"
         steps = job["steps"]
         warm = [i for i, s in enumerate(steps) if s.get("name") == STEP]
         if warm != [1] or "actions/checkout" not in steps[0].get("uses", ""):
@@ -471,13 +544,23 @@ def test_every_job_that_runs_a_harness_warms_first_and_names_exactly_its_suites(
     assert problems == []
 
 
+def test_every_exemption_names_a_harness_job_that_still_exists_and_carries_a_reason():
+    """Both directions, like every ledger here: a job that stopped running a
+    harness, or was renamed, would otherwise leave an exemption excusing
+    nothing while looking like it does."""
+    harness_jobs = {(wf, jid) for wf, jid, job in _all_jobs() if _job_suites(job)}
+    for key, why in EXEMPT_JOBS.items():
+        assert why.strip(), f"{key}: exempt with no reason"
+        assert key in harness_jobs, f"{key}: exempt, but no such harness job exists"
+
+
 def test_the_harness_forms_the_wiring_reads_are_all_present():
     """Non-vacuity for the three forms: if ci.yml stopped using one, the
     recogniser for it would be untested dead weight; if the recogniser broke,
     the job it covers would silently drop out of the invariant above -- which
     is how the medallion matrix went unwarmed."""
     forms = {"literal": 0, "matrix": 0, "loop": 0}
-    for job in _jobs().values():
+    for _wf, _jid, job in _all_jobs():
         runs = "\n".join(s.get("run", "") for s in job.get("steps", []))
         forms["literal"] += bool(HARNESS.search(runs))
         forms["matrix"] += bool(MATRIX_HARNESS.search(runs))
@@ -489,7 +572,7 @@ def test_every_matrix_templated_harness_resolves_to_real_suites():
     """`--suite ${{ matrix.harness }}` is checked by the runner, not here, so
     the matrix values themselves must be suites that exist -- a typo would
     otherwise surface as `no such suite` on one leg only."""
-    for jid, job in _jobs().items():
+    for _wf, jid, job in _all_jobs():
         runs = "\n".join(s.get("run", "") for s in job.get("steps", []))
         for key in re.findall(r"e2e/\$\{\{\s*matrix\.(\w+)\s*\}\}/", runs):
             matrix = job["strategy"]["matrix"]
@@ -507,6 +590,22 @@ def test_ci_builds_on_the_docker_driver():
     text = CI.read_text(encoding="utf-8")
     assert "setup-buildx-action" not in text
     assert "buildx create" not in text
+
+
+def test_no_job_that_warms_also_switches_to_a_buildx_builder():
+    """The same property, per job, in every workflow. release.yml DOES set up
+    buildx -- in its `image` and `compute-images` jobs, which publish multi-arch
+    images and are therefore not warmed, because warming could not reach them.
+    Its `agent-contract` job builds on the docker driver and is warmed. If a
+    warmed job ever gains setup-buildx, its warm step silently stops working."""
+    for wf, jid, job in _all_jobs():
+        steps = job.get("steps", [])
+        if not any(s.get("name") == STEP for s in steps):
+            continue
+        uses = " ".join(s.get("uses", "") for s in steps)
+        runs = " ".join(s.get("run", "") or "" for s in steps)
+        assert "setup-buildx-action" not in uses, f"{wf}:{jid} warms but builds under buildx"
+        assert "buildx create" not in runs, f"{wf}:{jid} warms but creates a buildx builder"
 
 
 def test_the_go_module_download_is_retried_and_still_fails_closed():

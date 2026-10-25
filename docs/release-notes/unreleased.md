@@ -298,3 +298,22 @@ jobs that change was written for, and the coverage job's shell loop. Both are
 wired now, and the test asserting every harness job warms first reads all three
 forms. Three medallion harnesses hold no stack of their own and run
 e2e/medallion's; they are now followed to it, as e2e/two-context is to e2e/livy.
+
+## The warm-up reaches the cron and release workflows, and images a harness runs itself
+
+`spark-jvm`, `xmla` and `sempy` — cron/dispatch-only workflows — and
+`release.yml`'s `agent-contract` job run e2e harnesses and had no warm step: the
+invariant asserting every harness job warms first read ci.yml alone. It now
+reads every workflow, with two exemptions recorded with their reasons:
+`real-fabric`'s conformance job targets real Fabric and starts no local stack,
+and `pbix-desktop` runs on Windows. A job that warms may not also switch to a
+buildx builder, since that keeps its own image store and the warm-up could not
+reach it — which is why `release.yml`'s multi-arch `image` jobs are left alone.
+
+Two harnesses run containers outside compose, and warmed nothing until now:
+xmla `docker run`s the .NET 8 SDK from a module constant, and sempy builds
+`e2e/sempy/image/Dockerfile`, below the suite's top level. Whole-literal image
+references (with a registry host and a tag or digest) and nested Dockerfiles
+are now read, which also brings kustainer into mcp-eventhouse's warm set. An
+implicit Docker Hub reference with no host — the `alpine/socat` forwarder — is
+not, being indistinguishable from any other `a/b` string.
