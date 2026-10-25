@@ -1547,13 +1547,13 @@ test = [
 [package.metadata.requires-dev]
 adls-sdk = [
     { name = "azure-storage-blob", specifier = ">=12.24,<13" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
 ]
 data-science-loop = [
     { name = "dbt-duckdb", specifier = ">=1.9,<2" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "mlflow", specifier = ">=3.15,<4" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyspark-client", specifier = "==4.2.0" },
 ]
 databricks-sdk = [
@@ -1563,23 +1563,23 @@ databricks-sdk = [
 dbt-duckdb = [
     { name = "dbt-duckdb", specifier = ">=1.9,<2" },
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
 ]
 dbt-fabric = [{ name = "dbt-fabric", specifier = ">=1.11" }]
 dbt-fabricspark = [{ name = "dbt-fabricspark", specifier = ">=1.13" }]
 delta-rs = [
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
 ]
 demo = [
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 duckdb = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "duckdb", specifier = ">=1.1,<3" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
 ]
 fabric-cicd = [{ name = "fabric-cicd", specifier = ">=1.3" }]
 fabric-target = [
@@ -1589,7 +1589,7 @@ fabric-target = [
 ]
 governance = [
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
@@ -1600,7 +1600,7 @@ great-expectations = [
 jupyter = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "jupyterlab", specifier = ">=4.2,<5" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
@@ -1630,7 +1630,7 @@ sail-delta = [
     { name = "gssapi", specifier = ">=1.8,<2" },
     { name = "kafka-python", specifier = ">=2.0.2,<4" },
     { name = "pandas", specifier = ">=2,<3" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyjks", specifier = ">=20,<22" },
     { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
@@ -1642,7 +1642,7 @@ spark-agent-dbt = [
     { name = "gssapi", specifier = ">=1.8,<2" },
     { name = "kafka-python", specifier = ">=2.0.2,<4" },
     { name = "pandas", specifier = ">=2,<3" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyjks", specifier = ">=20,<22" },
     { name = "pysail", specifier = "==0.7.2" },
     { name = "pyspark-client", specifier = "==4.2.0" },
@@ -1664,7 +1664,7 @@ test = [
     { name = "fabric-target", editable = "python/fabric-target" },
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "pandas", specifier = ">=2,<3" },
-    { name = "pyarrow", specifier = ">=23.0.1,<27" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyjks", specifier = ">=20,<22" },
     { name = "pytest", specifier = ">=8.3,<10" },
     { name = "pytest-cov", specifier = ">=5,<8" },

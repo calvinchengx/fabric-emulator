@@ -30,7 +30,7 @@ dependencies = [
     # pre-buffering, vulnerable >=15.0.0,<23.0.1), the advisory the root was
     # floored to 23.0.1 for. An example is the last place to leave that open,
     # because examples are what people copy.
-    "pyarrow>=23.0.1,<27",  # the ERP feed is Parquet, as a columnar source would be
+    "pyarrow>=23.0.1,<26",  # the ERP feed is Parquet, as a columnar source would be
 ]
 
 # Flat modules for the same reason as contoso-fixtures: `import web_store as web`
