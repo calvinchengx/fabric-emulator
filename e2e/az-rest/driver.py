@@ -250,6 +250,37 @@ def v1(path: str) -> str:
     return f"{FABRIC}/v1/{path.lstrip('/')}"
 
 
+def utc_day() -> str:
+    """Today's UTC calendar day, as the activity-log API spells its bounds.
+
+    The one clock read in this driver, and it is a helper rather than inline
+    because both of its callers must agree on the spelling. This file cannot
+    import a sibling of e2e/waiting.py for it: the driver is COPIED INTO the
+    azure-cli image and run as `python3 /driver.py`, so e2e/ is not on its
+    path -- which is why the Go half of this repair lives in
+    internal/testsupport and this half cannot.
+    """
+    return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+def activity_days(captured: str) -> list[str]:
+    """`captured`, plus the current UTC day when the day has advanced since.
+
+    The same repair as internal/testsupport.UTCDaysSince, for the same measured
+    reason: the day used to be read AFTER the creates whose events the window
+    had to contain, so a run crossing UTC midnight between the creates and the
+    query asked for a day the events were not in and failed on a missing
+    CreateWorkspace. A sub-second window once per day, invisible to `-race`,
+    to `-shuffle=on` and to all three flakiness checkers that predate this one.
+
+    The window is NOT simply widened to two days: the API refuses that outright
+    -- internal/server/activityevents_test.go's `spans two days` case pins the
+    400 -- so a straddle has to be two single-day queries.
+    """
+    now = utc_day()
+    return [captured] if now == captured else [captured, now]
+
+
 def login() -> None:
     global _ARM_STUB
     print("-- 0. wait for TLS, trust the emulator leaves, register the cloud")
@@ -312,6 +343,12 @@ def poll_item(list_url: str, name: str, field: str = "displayName",
 
 def driver() -> None:
     login()
+
+    # Captured BEFORE the first create below, not beside the activityevents
+    # query in step 9 where it used to live. See activity_days: reading it
+    # there made the window a second, independent clock read on the far side of
+    # every operation it had to contain.
+    day = utc_day()
 
     print("-- 2. capacities: list, unassign, assign")
     cap = find_named(az_rest("get", v1("capacities")).get("value") or [],
@@ -498,22 +535,24 @@ def driver() -> None:
     print("   admin envelopes, override, domain, labels")
 
     print("-- 9. activityevents (Power BI admin path)")
-    day = datetime.now(UTC).strftime("%Y-%m-%d")
-    q = urllib.parse.urlencode({
-        "startDateTime": f"'{day}T00:00:00Z'",
-        "endDateTime": f"'{day}T23:59:59Z'",
-    }, safe="':")
-    events_url = f"{FABRIC}/v1.0/myorg/admin/activityevents?{q}"
-    # Prefer the Power BI audience this path documents; fall back to Fabric
-    # if this entra pin will not mint it — the Go tests accept either.
-    events = az_rest("get", events_url, resource=PBI_AUD, allow_error=True)
-    if "activityEventEntities" not in events:
-        events = az_rest("get", events_url)
-    ops = {e.get("Operation") for e in (events.get("activityEventEntities") or [])}
+    entities: list[dict] = []
+    for d in activity_days(day):
+        q = urllib.parse.urlencode({
+            "startDateTime": f"'{d}T00:00:00Z'",
+            "endDateTime": f"'{d}T23:59:59Z'",
+        }, safe="':")
+        events_url = f"{FABRIC}/v1.0/myorg/admin/activityevents?{q}"
+        # Prefer the Power BI audience this path documents; fall back to Fabric
+        # if this entra pin will not mint it — the Go tests accept either.
+        events = az_rest("get", events_url, resource=PBI_AUD, allow_error=True)
+        if "activityEventEntities" not in events:
+            events = az_rest("get", events_url)
+        entities.extend(events.get("activityEventEntities") or [])
+    ops = {e.get("Operation") for e in entities}
     for need in ("CreateWorkspace", "CreateArtifact"):
         if need not in ops:
             fail(f"no {need} in activityevents; saw {sorted(ops)}")
-    print(f"   {len(events.get('activityEventEntities') or [])} events, including CreateWorkspace")
+    print(f"   {len(entities)} events, including CreateWorkspace")
 
     print("-- 10. workspace-identity handshake (entra is the sibling)")
     ident_ws = az_rest("post", v1("workspaces"), {"displayName": "identity-ws"})

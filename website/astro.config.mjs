@@ -97,6 +97,7 @@ export default defineConfig({
             { slug: '63-security-footguns' },
             { slug: '64-logging-quality' },
             { slug: '65-api-surface-coverage' },
+            { slug: '66-gate-inventory' },
           ],
         },
         {
