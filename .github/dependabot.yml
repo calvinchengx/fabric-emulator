@@ -184,6 +184,34 @@ updates:
       - dependency-name: great-expectations
         update-types: ['version-update:semver-major']
 
+      # pyarrow 26 needs NumPy 2 and DOES NOT SAY SO: 25.0.1 and 26.0.0 both
+      # ship an empty numpy requirement (checked against PyPI), yet 26 refuses
+      # to import against NumPy < 2 -- `ImportError: pyarrow requires NumPy 2.0
+      # or newer, found 1.26.4`, which PySpark then reports as "PyArrow >= 18.0.0
+      # must be installed" for a pyarrow that IS installed. #664 took it; uv kept
+      # each lock's numpy, as nothing told it otherwise, and three medallion
+      # examples broke at import while their locks resolved cleanly.
+      #
+      # Stating `numpy>=2` ourselves does not fix it, because the GX hold just
+      # above is the thing in the way. medallion-advanced-pyspark and
+      # medallion-advanced-dbt-fabricspark pin great-expectations 0.18, and GX
+      # added `numpy<2.0.0` in 0.18.13 (2024-04, when NumPy 2 broke it); every
+      # later 0.18 keeps it. Under a `numpy>=2` constraint uv "solved" that by
+      # DOWNGRADING GX 0.18.22 -> 0.18.8, the last release before the cap --
+      # compatible only by omission, the same undeclared-requirement trap in
+      # reverse. Measured, not assumed: that downgrade is what the re-lock did.
+      #
+      # Held for every directory rather than split per-directory: one uv entry
+      # covers /examples/*, and a second entry for two directories would carry
+      # a copy of every hold here, the copy that misses the next fix.
+      #
+      # LIFT THIS with the GX 1.x port above (contract_gate.py on
+      # `data_sources`/`ValidationDefinition`). GX 1.x accepts NumPy 2, so that
+      # change can take pyarrow 26 together with `numpy>=2` in
+      # [tool.uv] constraint-dependencies, which is what pyarrow should declare.
+      - dependency-name: pyarrow
+        update-types: ['version-update:semver-major']
+
   # The published imageS' base layers, plural. `directory: /` watched exactly
   # one file, ./Dockerfile, and this repository has twelve. The two that matter
   # most were among the eleven unwatched: docker/sail and docker/spark-agent are
