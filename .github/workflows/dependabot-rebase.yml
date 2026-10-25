@@ -21,6 +21,9 @@ permissions:
 jobs:
   rebase:
     runs-on: ubuntu-latest
+    # One API list plus a comment per stale branch. A wedged run inheriting
+    # GitHub's 6-hour default would read as "still pending" all day.
+    timeout-minutes: 10
     steps:
       - name: Ask Dependabot to rebase the branches that fell behind
         env:
