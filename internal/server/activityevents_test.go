@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
 type activityPage struct {
@@ -15,9 +17,16 @@ type activityPage struct {
 	LastResultSet         bool             `json:"lastResultSet"`
 }
 
-// today's window, single-quoted the way the API documents.
-func activityWindow() string {
-	day := time.Now().UTC().Format("2006-01-02")
+// One day's window, single-quoted the way the API documents.
+//
+// The day is a PARAMETER rather than a second reading of the wall clock, and
+// that is the whole repair: every caller below captures it once with
+// testsupport.UTCDay BEFORE the operations whose events the window must
+// contain, then widens with testsupport.UTCDaysSince at the moment it queries.
+// Deriving it here instead meant two independent clock reads straddling the
+// operations, so a run crossing UTC midnight between them asked for a day the
+// events were not in and failed on a missing CreateWorkspace.
+func activityWindow(day string) string {
 	return fmt.Sprintf("startDateTime='%sT00:00:00Z'&endDateTime='%sT23:59:59Z'", day, day)
 }
 
@@ -29,10 +38,27 @@ func (f *fixture) activity(t *testing.T, query string) activityPage {
 	return page
 }
 
+// activitySince is every event in the single-day window of `captured`, unioned
+// with the current day's when the UTC day has advanced since `captured` was
+// read. The API refuses a two-day window (400 -- the `spans two days` case
+// below pins it), so a straddle has to be two queries rather than one wider
+// one.
+func (f *fixture) activitySince(t *testing.T, captured string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, day := range testsupport.UTCDaysSince(captured) {
+		out = append(out, f.activity(t, activityWindow(day)).ActivityEventEntities...)
+	}
+	return out
+}
+
 // The audit log is real: operations performed through the API show up in it,
 // with the documented operation names.
 func TestActivityEventsRecordsRealOperations(t *testing.T) {
 	f := newFixture(t)
+	// Captured BEFORE the operations below, so the window is derived from an
+	// instant that precedes every event it has to contain.
+	day := testsupport.UTCDay()
 
 	var ws struct{ ID string }
 	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "audited"}, &ws)
@@ -43,9 +69,8 @@ func TestActivityEventsRecordsRealOperations(t *testing.T) {
 		map[string]any{"displayName": "nb-renamed"}, nil)
 	f.call("DELETE", "/v1/workspaces/"+ws.ID+"/items/"+item.ID, f.token, nil, nil)
 
-	page := f.activity(t, activityWindow())
 	seen := map[string]map[string]any{}
-	for _, e := range page.ActivityEventEntities {
+	for _, e := range f.activitySince(t, day) {
 		op, _ := e["Operation"].(string)
 		seen[op] = e
 	}
@@ -78,6 +103,9 @@ func TestActivityEventsRecordsRealOperations(t *testing.T) {
 // schema documents — not the generic CRUD vocabulary.
 func TestActivityEventsUsesDocumentedDomainVocabulary(t *testing.T) {
 	f := newFixture(t)
+	// Captured before the domain operations, for the reason given on
+	// activityWindow.
+	day := testsupport.UTCDay()
 
 	var parent, child domainResp
 	f.call("POST", "/v1/admin/domains", f.token, map[string]any{"displayName": "Audit-Parent"}, &parent)
@@ -94,7 +122,7 @@ func TestActivityEventsUsesDocumentedDomainVocabulary(t *testing.T) {
 	f.call("DELETE", "/v1/admin/domains/"+parent.ID, f.token, nil, nil)
 
 	byOp := map[string]map[string]any{}
-	for _, e := range f.activity(t, activityWindow()).ActivityEventEntities {
+	for _, e := range f.activitySince(t, day) {
 		if op, _ := e["Operation"].(string); op != "" {
 			byOp[op] = e
 		}
@@ -166,6 +194,12 @@ func TestActivityEventsRequestValidation(t *testing.T) {
 // documented client loop does, and confirm no event is dropped or repeated.
 func TestActivityEventsPagination(t *testing.T) {
 	f := newFixture(t)
+	// Captured before the 210 creates, for the reason given on activityWindow.
+	// This test is the one a straddle hurts most: the events would be SPLIT
+	// across the two days rather than merely absent from one, so a single-day
+	// window would come back short rather than empty and the failure would read
+	// as a paging bug.
+	day := testsupport.UTCDay()
 
 	// 210 workspaces > the 200-entry page size, so at least two pages.
 	const want = 210
@@ -176,40 +210,42 @@ func TestActivityEventsPagination(t *testing.T) {
 
 	ids := map[string]bool{}
 	pages := 0
-	page := f.activity(t, activityWindow())
-	for {
-		pages++
-		for _, e := range page.ActivityEventEntities {
-			id, _ := e["Id"].(string)
-			if id == "" {
-				t.Fatal("event without an Id")
+	for _, d := range testsupport.UTCDaysSince(day) {
+		page := f.activity(t, activityWindow(d))
+		for {
+			pages++
+			for _, e := range page.ActivityEventEntities {
+				id, _ := e["Id"].(string)
+				if id == "" {
+					t.Fatal("event without an Id")
+				}
+				if ids[id] {
+					t.Fatalf("event %s repeated across pages", id)
+				}
+				ids[id] = true
 			}
-			if ids[id] {
-				t.Fatalf("event %s repeated across pages", id)
+			if page.ContinuationToken == nil {
+				if page.ContinuationURI != nil {
+					t.Fatalf("final page has no token but a continuationUri: %+v", page.ContinuationURI)
+				}
+				break
 			}
-			ids[id] = true
-		}
-		if page.ContinuationToken == nil {
-			if page.ContinuationURI != nil {
-				t.Fatalf("final page has no token but a continuationUri: %+v", page.ContinuationURI)
+			// The continuationUri is a usable URL carrying that same token.
+			if page.ContinuationURI == nil {
+				t.Fatal("page has a token but no continuationUri")
 			}
-			break
+			u, err := url.Parse(*page.ContinuationURI)
+			if err != nil {
+				t.Fatalf("continuationUri is not a URL: %v", err)
+			}
+			if got := u.Query().Get("continuationToken"); got != "'"+*page.ContinuationToken+"'" {
+				t.Fatalf("continuationUri token = %q, want the page token", got)
+			}
+			if pages > 10 {
+				t.Fatal("continuation loop did not terminate")
+			}
+			page = f.activity(t, "continuationToken='"+*page.ContinuationToken+"'")
 		}
-		// The continuationUri is a usable URL carrying that same token.
-		if page.ContinuationURI == nil {
-			t.Fatal("page has a token but no continuationUri")
-		}
-		u, err := url.Parse(*page.ContinuationURI)
-		if err != nil {
-			t.Fatalf("continuationUri is not a URL: %v", err)
-		}
-		if got := u.Query().Get("continuationToken"); got != "'"+*page.ContinuationToken+"'" {
-			t.Fatalf("continuationUri token = %q, want the page token", got)
-		}
-		if pages > 10 {
-			t.Fatal("continuation loop did not terminate")
-		}
-		page = f.activity(t, "continuationToken='"+*page.ContinuationToken+"'")
 	}
 	if pages < 2 {
 		t.Fatalf("expected multiple pages, got %d", pages)

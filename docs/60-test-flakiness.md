@@ -242,6 +242,44 @@ the suite.
   a port being free, or on the network would not be found by either the sweep or
   the checker. `-shuffle=on` covers cross-test order dependence; nothing here
   covers within-test nondeterminism that the race detector cannot see.
+
+  **Partly closed — see §9.** That sentence was true and unaddressed for three
+  releases, and the class turned out not to be empty: a measured sweep of it
+  found a **wall-clock day boundary** in two surfaces, four load-bearing sites
+  between them. §9 records the sweep, the repairs and the fourth checker. What
+  it closes is one sharply-defined member — a day-granular clock read whose
+  verdict depends on whether the run crossed UTC midnight.
+
+  What **remains**, measured rather than restated, because two of the three
+  named here turned out to have different answers from each other:
+
+  - **Port availability — clean, and clean by construction.** Every one of the
+    41 `net.Listen` calls in the Go test suite is `net.Listen("tcp",
+    "127.0.0.1:0")`; there is not one fixed port among them, so the kernel
+    chooses and two concurrent runs cannot collide. The 165 `httptest`
+    servers do the same thing by definition.
+    `scripts/check_port_guard.py` holds the harness side. Nothing to fix and
+    nothing to guard that is not already guarded.
+  - **The external network — present, and NOT closed by this work.** The
+    honest answer, and the first draft of this bullet got it wrong by claiming
+    otherwise: `e2e/azcopy/run.py` downloads Microsoft's `azcopy` from an
+    `aka.ms` redirect, `scripts/fetch_spark_jars.sh` reaches Maven Central,
+    and the medallion legs install the ODBC driver from
+    `packages.microsoft.com`. All three are real third-party availability
+    coupled into a verdict, and all three have already bitten this repository
+    — a sustained Maven Central 429 and a 25-minute `packages.microsoft.com`
+    stall, both recorded in `ci.yml` beside the caches, retries and bounded
+    timeouts added for them. That is a dependency this suite accepts
+    deliberately (an unmodified vendor binary is the point of those suites),
+    mitigated in CI rather than removed, and it is out of a static source
+    checker's reach by construction.
+  - **Map iteration order — unchecked.** No site in this tree asserts on one,
+    which is a weaker statement than it sounds: it was established by reading,
+    not by a checker, so it is a measurement with a date on it rather than an
+    invariant.
+
+  So what is left of this bullet is map iteration order, the network
+  dependence named above, and whatever has no name yet.
 - **The windows and macOS legs under `-race`.** One ubuntu leg, by the reasoning
   in §5.
 - **Rare races.** A clean `-race` run is evidence, not proof: the detector only
@@ -573,3 +611,225 @@ The real tree is read from disk in a closing pair of tests — zero unrecorded
 findings under `--strict`, and `findings_for` on the actual `Flow.test.ts`
 returns nothing — so a passing synthetic suite cannot drift away from the file
 it claims to describe.
+
+## 9. The clock surface: flakiness with no timing tell
+
+§6's first bullet named this axis and left it open: "flakiness with no timing
+tell ... nothing here covers within-test nondeterminism that the race detector
+cannot see." The three checkers before this one are three languages asking **one
+question** — is this *wait* bounded? This section is the first one asking a
+different question, and it is the first sweep in this document to find a defect
+that **no flag in §1 could have found**: not a race, not an order dependence,
+not a sleep. Two readings of one clock, landing either side of a boundary.
+
+### 9.1 What was measured
+
+The surface is every day-granular wall-clock read in test and e2e-harness code:
+
+| Quantity | Measured |
+| --- | --- |
+| Go `time.Now()[.UTC()].Format(...)` sites in `*_test.go` | **3** |
+| Python `datetime.now(...)` / `datetime.utcnow()` / `date.today()` sites | **8** |
+| …load-bearing (a now-derived value feeds an assertion about data stamped at a *different* instant) | **2** |
+| …further load-bearing sites found by the repair, not the sweep | **2** |
+| …inert (the verdict cannot turn on which day it names) | **5** |
+| Inspected by anything, before this | **0** |
+| Go test listeners on a fixed port (the other §6 candidate) | **0** of 41 — all `127.0.0.1:0` |
+
+The last-but-one row is the finding, in the same words §1 used about the race
+detector and §7.1 used about the Python sleeps. Eleven day-granular clock reads
+is not a large number; the point is that nothing could have told us which of
+them mattered.
+
+**Two of the four were not in the measured 11.** The grep that measured the
+surface anchors on the clock call, and `labels_test.go` and
+`TestActivityEventsPagination` reach the same window through `activityWindow()`
+— a *helper*, so they carry no clock call of their own. They were found by
+changing that helper's signature and letting the compiler name its callers.
+That is worth recording rather than smoothing over: **the sweep under-counted
+its own subject by half**, and the thing that closed the gap was a type error,
+not a better regex.
+
+### 9.2 The defect, and why every existing guard is blind to it
+
+`internal/server/activityevents_test.go` performed four operations through the
+API, whose audit events `store.RecordActivity` stamps with `s.Now()`, and *then*
+read the wall clock a second time to compute "today":
+
+```go
+page := f.activity(t, activityWindow())   // ← time.Now() read HERE
+```
+
+The store query filters `created_at >= ? AND created_at <= ?`
+(`internal/store/activity.go`), so the two independent reads straddle the
+operations. A run that crosses UTC midnight between them asks for a day the
+events are not in and fails on a missing `CreateWorkspace`.
+`e2e/az-rest/driver.py` had the identical shape one surface over, asserting
+`CreateWorkspace`/`CreateArtifact` in a `day`-scoped window computed *after* the
+creates.
+
+Why nothing in §1 or §5 could see it:
+
+- **no sleep**, so all three static checkers have nothing to match;
+- **no shared memory**, so `-race` instruments nothing — the two reads are in
+  the same goroutine;
+- **no cross-test ordering**, so `-shuffle=on` perturbs nothing;
+- **and the window is sub-second, once per day**, so neither `-count=2` nor a
+  CI run has any meaningful chance of hitting it.
+
+It is the exact "locally true, globally meaningless" failure the three existing
+checkers were built for, on the one axis they do not look at. A green suite was
+evidence of nothing here, in the §1 sense: the question had never been asked.
+
+### 9.3 Why the repair cannot be a wider window
+
+The obvious fix — ask for a two-day window and stop worrying — is **refused by
+the API**, and the refusal is pinned four lines from the defect.
+`TestActivityEventsRequestValidation`'s `spans two days` case asserts **400**
+for bounds on two different days. So the repair has to be a single-day window
+*plus* straddle handling:
+
+- the day is captured **once, before** the mutations, so the window is derived
+  from an instant that precedes every event it must contain;
+- at query time `testsupport.UTCDaysSince` compares the captured day against
+  the current one and returns **both** when they differ, and the caller unions
+  two single-day queries.
+
+Both orderings are covered, which is the half worth stating: events stamped
+just before midnight with the query just after are found in the captured day;
+events stamped just after with the capture just before are found in the current
+one. `UTCDaysSince` compares for **inequality, not ordering**, so a host clock
+that has gone *backwards* widens too rather than silently narrowing.
+
+The nondeterminism is not engineered away — a run really can cross midnight.
+It is made **visible and bounded**: the straddle is detected and handled at the
+call site instead of being hoped against.
+
+### 9.4 What the rewrites added
+
+`internal/testsupport/clock.go` — beside `wait.go`, and out of the Go checker's
+scope for the same structural reason (it is not a `_test.go` file, so a helper
+that reads the clock once on every caller's behalf is not a test that reads it
+twice):
+
+- `UTCDay()` — the current UTC day, in the API's spelling.
+- `UTCDaysSince(captured)` — `captured`, plus today when the day has advanced.
+
+Four Go sites moved onto the pair (`TestActivityEventsRecordsRealOperations`,
+`TestActivityEventsUsesDocumentedDomainVocabulary`,
+`TestActivityEventsPagination`, and `TestLabelChangesAuditWithDocumentedSchema`
+one file over), via a new `fixture.activitySince`. The assertions are
+**unchanged in meaning** — each still claims the same events are present, and
+the label test still reads its four events *in order*, which the union
+preserves because it is oldest-day-first. Only the window's derivation became
+deterministic.
+
+`e2e/az-rest/driver.py` got the same repair in its own file rather than through
+an import, and the reason is a real constraint rather than a preference: the
+driver is **copied into the azure-cli image** and run as `python3 /driver.py`,
+so `e2e/` is not on its path and it cannot reach a sibling of `e2e/waiting.py`.
+`utc_day()` and `activity_days()` live in the driver, `day` is captured
+immediately after `login()` and before the first create, and step 9 unions the
+days.
+
+**The guard for the repair is a unit test, not the checker**, and that split is
+deliberate. `internal/testsupport/clock_test.go` drives `UTCDaysSince` through
+same-day, day-advanced and day-went-*back*, because a static scan can see that
+a day was read and cannot see whether the straddle was handled. Its own oracle
+is **bracketed** — the call is surrounded by two clock reads and *either* of
+their days is accepted — since comparing against one later read is the very
+defect being removed, and an oracle flaky in exactly the way its subject was
+would be worse than none.
+
+### 9.5 The guard
+
+`scripts/check_clock_test_flakiness.py --strict`, in `make check` and in the
+`witnesses` CI job — the pairing `python/tests/test_make_check_runs_in_ci.py`
+enforces. One kind, `day-granular-now`: a wall-clock read truncated to day
+granularity in a test file or an e2e harness. Go is a regex scan with a
+hand-walked comment strip; Python is `ast`, for the reason both sibling
+docstrings give. The ledger is `docs/clock-test-flakiness.json`, keyed
+`file:symbol:kind` by one `ledger_key` read by findings and entries alike, and
+checked in **both** directions.
+
+**The discrimination that makes it usable is date-without-a-time.** A layout
+carrying a time component (`"2006-01-02T15:04:05Z"`, `"%Y-%m-%dT%H:%M:%SZ"`) is
+not *truncated*, so it has no midnight boundary to straddle — which is exactly
+what keeps `e2e/az-rest/driver.py`'s own schedule bounds, three lines from a
+real finding, from being swept in. A layout with no date at all (`"15:04:05"`)
+is not a day read either. Both halves are required.
+
+**This ledger diverges from its three siblings, and the divergence is the
+interesting part.** There, a repaired site *stops matching*: a bare sleep
+becomes a bounded poll and the pattern no longer fires, which is why
+`docs/vitest-test-flakiness.json` ships empty. Here a repaired read is **still a
+read** — the repair is downstream of the value, where no scan of this kind can
+follow. The two repaired sites are nonetheless absent from the ledger, for a
+*different* reason: they no longer read the clock themselves at all, both now
+calling a named straddle-aware helper. What the ledger holds is five reads whose
+verdict genuinely cannot turn on which day they name, each carrying a `bucket`
+saying which kind of safe it is — `verdict-day-independent` (the day feeds a
+request whose assertion is a status code), `asserts-about-today` (the claim
+really is about the current day, and tolerates the flip), and
+`straddle-primitive` (the one read behind a straddle-aware helper, in the file
+that cannot import one).
+
+Two entries sit **four lines apart in the same file**, one accepted and one
+repaired, which is the clearest statement of what the ledger is for: the same
+expression, load-bearing in `TestActivityEventsRecordsRealOperations` and inert
+in `TestActivityEventsRequestValidation`, where every assertion is a status
+code and the one data assertion uses fixed 2001 bounds.
+
+### 9.6 On this checker also guarding a line already held
+
+Same awkwardness as §5, §7.6 and §8.4, same answer — and this time **driving it
+found two defects rather than confirming none**, both in the first version of
+the change that added it:
+
+- **The two-statement spelling was invisible.** The rule anchored on one
+  expression, so `now := time.Now().UTC()` followed by `now.Format("2006-01-02")`
+  — the identical defect across two lines — reported **green**. Found by writing
+  the oracle for `UTCDay`, which needs exactly that shape. This is R8's measured
+  lesson in `check_security_footguns.py`, one checker over: a rule anchored on
+  one call shape walks past the assignment that spells it in two. Both halves
+  now resolve names **per file**, so a `now` bound to a *fake* clock
+  (`st.Clock.Now()`, which is most of this tree) is still correct and still
+  unflagged.
+- **An offset day read was invisible.** `(datetime.now(UTC) - timedelta(days=1))
+  .strftime("%Y-%m-%d")` is "yesterday": the same boundary, one operator away.
+  The receiver check required a direct call, so it passed. Found by *mutation*
+  rather than by a test — the near-miss asserting that a full timestamp layout
+  is not flagged had been written with an offset receiver, so it was passing for
+  the wrong reason and left the timestamp discrimination itself unasserted.
+  Disabling that discrimination now reds the suite; before, it did not.
+
+`python/tests/test_check_clock_test_flakiness.py` drives the checker against
+violations it must catch (both languages, both spellings, `date.today()`,
+`utcnow`, a `<module>`-level e2e read, a nested read named by its outermost
+test) and correct-looking near-misses it must not (a full-timestamp layout, a
+time-only layout, a `timedelta` SAS expiry, a day read in **production** code, a
+read inside a Go comment, a `//` inside a Go string, a fake-clock read, a
+non-clock value formatted to a day, a bare `now()`). `pathlib.PureWindowsPath`
+is driven explicitly, because the Go sibling's one escaped defect was exactly
+there — a ledger key built with `str()` instead of `as_posix()` made **both**
+directions of the both-directions check fire at once on Windows alone — and it
+is asserted both in `relkey` *and* in `findings_for`, since a correct helper is
+what that defect already survived.
+
+**Mutation-tested thirteen ways**, each of which reds the suite: the Go and
+Python day-granular discriminations, the Go and Python alias clauses, the
+arithmetic look-through, the stale-ledger direction, the path normalisation, the
+kind in the ledger key, the Go comment strip, the fake-clock narrowing, the
+`date.today()` shape, the unparseable-file report, the per-root guard, and the
+test-file scope.
+
+One of those thirteen is worth its own paragraph. **Dropping the kind from the
+ledger key left the suite green**, because this checker defines exactly one kind
+today, so `file:symbol` and `file:symbol:kind` partition today's findings
+identically. That is precisely the position `check_python_test_flakiness.py` was
+in when it shipped its kind-blind key — harmless on the day, and by the time the
+ledger held two kinds, 42 of 44 recorded symbols were exempt from the bans it
+existed to enforce. No behavioural test can see that before a second kind
+exists, so the contract is asserted on the **shape of the key** instead. A
+mutation that leaves the suite green means the corresponding test is not testing
+anything, and that one did.
