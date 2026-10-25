@@ -317,17 +317,18 @@ SIBLING entra-emulator repo, read here as one of ours.
 None of the three is a typo. Each is a fact that expired, and the only thing
 that would ever have caught them is somebody happening to click.
 
-`scripts/check_doc_drift.py` now asserts five things across the prose, in
+`scripts/check_doc_drift.py` now asserts six things across the prose, in
 `make check` and in the `witnesses` job: a backticked repo path exists, a
 `make <target>` names a target the Makefile defines, a documented
 FABRIC_/ENTRA_-style variable is read by some non-Markdown file, a backticked
-Go package/symbol reference names code that exists, and an ordinary Markdown
-link points at a tracked file, directory or simple heading anchor. The path and
-Markdown-link classes have found live drift; the others land as regression
-guards — and because a check that always passes is indistinguishable from a
-check that is working, every class is tested against synthetic drift rather
-than trusted on the strength of a green tree. That is item Eight's lesson
-applied to the fix for item Twelve.
+Go package/symbol reference names code that exists, an ordinary Markdown link
+points at a tracked file, directory or simple heading anchor, and a single-dash
+CLI flag with an internal hyphen is one the emulator's flag set registers. The
+path, Markdown-link and CLI-flag classes have found live drift; the others land
+as regression guards — and because a check that always passes is
+indistinguishable from a check that is working, every class is tested against
+synthetic drift rather than trusted on the strength of a green tree. That is
+item Eight's lesson applied to the fix for item Twelve.
 
 It is tuned for **precision over recall**, because a checker that cries wolf
 gets muted, and a muted check is item Eight again. `make` is read only from
@@ -338,9 +339,18 @@ that is not a known file extension means "not a path", so the Go symbol
 a NUMBERED DOCUMENT and never a path. Markdown heading anchors are checked only
 when the target file exists and the fragment is a simple GitHub-style heading
 slug, so line anchors and generated ids are not treated as promises this checker
-can verify. Release notes are skipped outright: a v0.16 note naming a
-since-renamed file is correct about the tree at that tag, and editing it to
-please a checker would be falsifying a historical record.
+can verify. A CLI flag is read only when it carries an **internal** hyphen —
+`-lro-delay` is this emulator's shape, while `-race`, `-j4`, `--strict` and
+`--no-sync` belong to other people's tools and to this repo's own Python
+invocations — and that anchor was measured before it was chosen rather than
+defended afterwards: 30 distinct single-dash tokens across the prose's inline
+spans, 29 of them live emulator flags and the thirtieth the live finding below,
+plus three more inside fenced command lines, all live. No third-party noise at
+all, because every third-party flag this tree writes is double-dash or a single
+word. The recall that buys is a single-word flag like `-addr` going unchecked,
+which is the trade this paragraph is about. Release notes are skipped outright:
+a v0.16 note naming a since-renamed file is correct about the tree at that tag,
+and editing it to please a checker would be falsifying a historical record.
 
 The prose it reads is every `docs/` page, the root readme, and **every
 per-directory README** — beside an example, a suite, a package. That last group
@@ -356,6 +366,19 @@ this repo's prose — a `.venv/` under an example, `node_modules/`, a worktree
 copy of everything — and drift reported inside a vendored README is somebody
 else's documentation, which is the fastest possible way to teach a reader to
 skim past this check.
+
+The flag class found its drift immediately: docs/35 told a reader that a
+-clock-offset flag would not apply to Delta commit timestamps, and no such flag
+has ever existed — the emulator's clock is controllable only through
+`POST /_emulator/clock`, so the sentence was arguing from a lever the binary
+would have rejected. (The dead flag is written without backticks here for the
+same reason the dead parity name above is: quoting it as a code span would make
+this paragraph itself a finding.) Its empty-index case is handled rather than
+assumed, because this is the one class whose index can collapse: if the
+registration form moves, every documented flag in the tree looks dead at once,
+so the checker reports *that* — under its own heading, still non-zero under
+`--strict` — instead of thirty false positives, which is how a check gets muted
+in a single sitting.
 
 Existence is asked of **git**, never of the filesystem. `Path.exists()` answers
 case-INSENSITIVELY on a default macOS volume and case-sensitively on the Linux
@@ -426,16 +449,19 @@ recorded once so the tree cannot drift back to it.
 Everything above is a checker reading the tree. Nothing read the checkers.
 
 `scripts/` is where this repository keeps its enforcement: `make check` runs
-thirty-one of these scripts and the `witnesses` job runs thirty. Between them
+thirty-eight of these scripts and the `witnesses` job runs thirty-eight. Between them
 they assert that every supported parity claim names a witness, that no route the
 emulator serves is undocumented, that the sidebar is complete, that no Go comment
-teaches a retired justification, and that no test sleeps without a bound. A guard
+teaches a retired justification, that no test sleeps without a bound, and that
+no test's verdict turns on whether the run crossed UTC midnight. A guard
 script whose own behaviour nothing asserts has the property this whole document is
 about, one level in: its detection can stop matching — a renamed directory, a
 tightened regex, a refactor that drops a branch — and it will go on printing its
 success line and exiting 0 forever. **A check that passes is indistinguishable
 from a check that is running**, and that sentence is as true of the checker as of
-the thing it checks.
+the thing it checks. Which gates these are, what each one reads and asserts,
+and where each runs is [66-gate-inventory.md](66-gate-inventory.md) — written
+because eighteen of them were named by no prose page at all.
 
 The measured gap when this landed: **11 of 51 scripts had no dedicated test
 module**, the largest `scripts/govern_ingest.py` at 717 lines, then
@@ -468,8 +494,13 @@ with no test and nothing says so. Two finding kinds:
   ledger would absorb a real regression without a word.
 
 Both directions, like `docs/test-flakiness.json`,
-`docs/python-test-flakiness.json` and `docs/vitest-test-flakiness.json` before
-it. A one-directional ledger only ever grows. Of the two kinds, STALE is the one that needs a checker: an unrecorded
+`docs/python-test-flakiness.json`, `docs/vitest-test-flakiness.json` and
+`docs/clock-test-flakiness.json` before it. A one-directional ledger only ever
+grows. The fourth of those is the odd one out and says so in its own header: the
+first three hold sites where the question is whether a *wait* is bounded, and it
+holds day-granular clock reads — an axis with no timing tell, where a repaired
+site goes on matching the pattern because the repair is downstream of the value.
+See [60-test-flakiness.md](60-test-flakiness.md) §9. Of the two kinds, STALE is the one that needs a checker: an unrecorded
 script is loud by construction — somebody adds a file and the build goes red the
 same day — while a stale entry is green, silent, and re-arms itself.
 

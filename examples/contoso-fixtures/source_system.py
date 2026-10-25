@@ -133,13 +133,6 @@ def _customer_columns():
 
 CUSTOMER_COLUMNS = _customer_columns()
 
-# Order events are narrower than customers, as a fact feed is: the width lives
-# on the dimension. These are the columns bronze_orders carries.
-ORDER_FIELDS = ["order_id", "customer_id", "product_id", "order_date", "channel",
-                "store_id", "currency", "discount_pct", "tax_rate", "shipping_fee",
-                "payment_method", "is_gift", "promo_code", "quantity", "unit_price",
-                "status", "event_seq"]
-
 
 def _value(kind, rnd, i):
     """One synthetic cell. Everything here is CSV-safe: no commas, no quotes."""

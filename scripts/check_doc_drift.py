@@ -20,7 +20,7 @@ same shape -- a reference that was true when it was typed:
 None of these is a typo. Each is a fact that expired, and the only thing that
 would ever have caught them is somebody happening to click.
 
-WHAT THIS CHECKS. Five classes of doc/code drift across the prose docs:
+WHAT THIS CHECKS. Six classes of doc/code drift across the prose docs:
 
   1. DEAD REPO PATHS   -- a backticked `dir/path` under a tracked top-level
                           directory that no longer exists on disk.
@@ -34,6 +34,13 @@ WHAT THIS CHECKS. Five classes of doc/code drift across the prose docs:
                           directory or top-level symbol no longer exists.
   5. DEAD MD LINKS     -- a Markdown link to a repo file, directory, or simple
                           Markdown heading anchor that no longer exists.
+  6. DEAD CLI FLAGS    -- a single-dash flag with an internal hyphen, such as
+                          `-lro-delay`, that the emulator's flag set does not
+                          register. It found one the day it landed: docs/35
+                          named a -clock-offset flag that exists nowhere in
+                          this tree, so a reader was told to reach for a lever
+                          the binary would reject. The clock is controllable
+                          only through `POST /_emulator/clock`.
 
 PRECISION OVER RECALL, deliberately, because a checker that cries wolf gets
 muted and then it is a check that does not run (docs/10 has the full account of
@@ -56,6 +63,29 @@ what that costs). These concessions buy it:
     directories are checked against git's tracked paths; anchors are checked
     only for Markdown targets that exist, and only when the fragment looks like
     a GitHub-style heading slug rather than a line anchor or generated id.
+  * A CLI FLAG MUST CARRY AN INTERNAL HYPHEN. `-lro-delay` is this emulator's
+    shape. `-race`, `-count`, `-it` and `-j4` belong to other people's tools,
+    and `--strict`/`--no-sync` are this repo's own Python and uv invocations;
+    the internal-hyphen rule is what leaves all of them alone without a list
+    of third-party flags to keep current. Measured before it was chosen, not
+    after: 30 distinct single-dash tokens in inline spans across the prose, 29
+    of them live emulator flags and the thirtieth the dead -clock-offset this
+    class was written to find, plus 3 more in fenced command lines, all live.
+    No third-party noise at all, because every third-party flag this tree's
+    prose and transcripts write is double-dash or a single word. THE RECALL
+    COST, STATED: a single-word flag such as `-addr` is not checked, and the
+    direction is one-way -- documented-but-unregistered is this class, while
+    registered-but-undocumented is a coverage question, not a drift one.
+  * A TEST FILE DOES NOT REGISTER A FLAG. `_test.go` sources are skipped when
+    indexing, for the same reason `SELF` exists for the env class: a flag only
+    a test registers is not a flag the emulator has, so crediting one would
+    leave a doc reference passing after the real registration was deleted.
+  * AN EMPTY FLAG INDEX IS AN INDEX FAILURE, NOT THIRTY FINDINGS. If the
+    registration form moves -- a different flag package, a helper wrapping
+    `fs.StringVar` -- the index empties and every documented flag in the tree
+    looks dead at once. The checker reports THAT instead, under its own
+    heading and still non-zero under `--strict`, because thirty false
+    positives in one run is how a check gets muted in a single sitting.
   * RELEASE NOTES ARE OUT OF SCOPE. docs/release-notes/** describes the repo as
     it was at a tag. A v0.16 note naming a since-renamed file is CORRECT, and
     editing it would be falsifying a historical record to please a checker.
@@ -654,6 +684,107 @@ def dead_markdown_links(doc, text, index):
             yield lineno, target, key
 
 
+# --- class 6: dead CLI flags --------------------------------------------------
+
+# Where the emulator registers its flags today. Named only so the index-failure
+# message can point somewhere useful; the scan itself reads every tracked
+# non-test Go file, because a flag registered outside `cmd/` would still be a
+# flag the emulator has -- and a registration this index misses reports a LIVE
+# flag as dead, which is the loud direction of wrong.
+CLI_SOURCE = "cmd/fabric-emulator/main.go"
+
+_FLAG_KINDS = "Bool|Duration|Float64|Int|Int64|String|Uint|Uint64"
+
+# `fs.StringVar(&cfg.Addr, "addr", ...)`, `flag.BoolVar(&x, "name", ...)`. THE
+# `&` IS THE DISCRIMINATOR: a method taking a pointer and then a quoted
+# lowercase name is a flag registration by convention, which is what lets this
+# index the registrations without knowing the name of the variable holding the
+# flag set. `[^,\n]+` rather than `[^,]+` because `[^,]` matches a newline, and
+# a cross-line match would pair one call's pointer with the next call's name.
+_FLAG_VAR = re.compile(
+    rf'\b[A-Za-z_]\w*\.(?:{_FLAG_KINDS}|Text)?Var\(\s*&[^,\n]+,\s*"([a-z0-9][\w.-]*)"'
+)
+# The non-Var forms -- `fs.String("name", default, usage)` -- which return a
+# pointer instead of filling one. This tree writes none of them today; indexing
+# them anyway means switching to one does not read as thirty flags dying.
+_FLAG_FUNC = re.compile(
+    rf'\b[A-Za-z_]\w*\.(?:{_FLAG_KINDS})\(\s*"([a-z0-9][\w.-]*)"\s*,'
+)
+
+
+def cli_flags():
+    """Flag names the emulator registers, from tracked non-test Go sources.
+
+    A `_test.go` FILE DOES NOT COUNT, which is the same weakening `SELF`
+    prevents for the env class: a flag registered only by a test is not a flag
+    the binary has, so crediting one would leave a doc reference passing after
+    the real registration had been deleted.
+
+    An empty answer does not mean the emulator has no flags. It means the
+    registration form is no longer the one these patterns know, and `findings`
+    reports THAT rather than reporting every documented flag at once.
+    """
+    names = set()
+    for rel in tracked_files():
+        if not rel.endswith(".go") or rel.endswith("_test.go"):
+            continue
+        if rel.startswith(SKIP_PREFIXES):
+            continue
+        try:
+            text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for pattern in (_FLAG_VAR, _FLAG_FUNC):
+            names.update(pattern.findall(text))
+    return names
+
+
+# A flag this project could own: one dash, lowercase, and at least one INTERNAL
+# hyphen. See the docstring -- the internal hyphen is this class's whole
+# precision budget, and it is what leaves `--strict`, `--no-sync`, `-race` and
+# `-j4` alone without a list of other people's tools to keep current.
+_CLI_FLAG = re.compile(r"^-([a-z][a-z0-9]*(?:-[a-z0-9]+)+)$")
+
+# Punctuation a flag can be wrapped in, in a sentence or a shell transcript.
+# `-` IS DELIBERATELY ABSENT: stripping it would turn `--strict` into
+# `-strict`, inventing a finding out of a flag that was never this emulator's.
+_FLAG_TRIM = "`'\"(),;:.[]{}<>\\|"
+
+
+def flag_tokens(text):
+    """Yield (lineno, token) for every dash-led word in a span or a command.
+
+    BOTH halves are read, unlike the path and env classes, which skip fences
+    because a transcript may describe another machine's filesystem. A fenced
+    line is where a quickstart actually SHOWS the invocation -- docs/01 starts
+    the emulator with `-entra-issuer` inside a fence and nowhere else -- so
+    skipping fences would have cost three of the thirty-three references
+    measured. The risk fences carry for the other classes does not transfer:
+    a flag has to be single-dash AND internally hyphenated to be read at all,
+    and nothing in this tree's transcripts but this emulator writes that shape.
+    """
+    for lineno, line, in_fence in scan_lines(text):
+        sources = [line] if in_fence else [m.group(1) for m in _INLINE.finditer(line)]
+        for source in sources:
+            for word in source.split():
+                token = word.strip(_FLAG_TRIM)
+                if token.startswith("-"):
+                    yield lineno, token
+
+
+def dead_flags(doc, text, defined):
+    for lineno, token in flag_tokens(text):
+        # `-lro-delay=5` and `-lro-delay 5` document the same flag, so the
+        # value is cut before the lookup. Without this, the `=` form resolves
+        # to a name no flag set could ever hold and every documented default
+        # becomes a finding.
+        name = token.split("=", 1)[0]
+        match = _CLI_FLAG.match(name)
+        if not match or match.group(1) in defined:
+            continue
+        yield lineno, token, name
+
+
 # --- reporting ----------------------------------------------------------------
 
 CLASSES = (
@@ -670,6 +801,23 @@ CLASSES = (
     ("markdown-link", "links to a Markdown target that does not exist",
      "point it at the live file, directory, or heading, or add an EXEMPT entry "
      "if the reference is deliberately forward-looking"),
+    ("cli-flag", "documents a flag the emulator does not define",
+     "name the flag the binary registers, or the control surface that actually "
+     "exists, or add an EXEMPT entry if the reference is deliberately "
+     "forward-looking"),
+)
+
+# NOT DRIFT: the checker failing to see the code it checks against. Reported in
+# its own right because an empty flag index makes every documented flag in the
+# tree look dead at once, and thirty false positives in one run is how a check
+# gets muted in a single sitting. It shares the `--strict` exit path, because a
+# class that has quietly stopped checking anything is a build failure too --
+# `make check` going green on a class that matched nothing is item Eight of
+# docs/10 one level in.
+INDEX_FAILURE = (
+    "cli-flag-index", "found no flag registrations, so class 6 checked nothing",
+    "teach cli_flags() the registration form the code now uses, rather than "
+    "leaving the class to pass by seeing nothing",
 )
 
 
@@ -705,14 +853,23 @@ def findings():
     targets = make_targets()
     env_defined = env_names_in_code()
     go_packages = go_package_index()
+    flags_defined = cli_flags()
+    classes = [("path", dead_paths, index),
+               ("make", dead_targets, targets),
+               ("env", unread_env, env_defined),
+               ("go", dead_go_symbols, go_packages),
+               ("markdown-link", dead_markdown_links, index)]
     found = []
+    if flags_defined:
+        classes.append(("cli-flag", dead_flags, flags_defined))
+    else:
+        # The class is SKIPPED, not run against an empty index, so the report
+        # is one index failure rather than every flag the docs name.
+        found.append((INDEX_FAILURE[0], CLI_SOURCE, 0,
+                      "no flag registration matched", INDEX_FAILURE[0]))
     for rel, path in docs():
         text = path.read_text(encoding="utf-8")
-        for kind, produce, arg in (("path", dead_paths, index),
-                                   ("make", dead_targets, targets),
-                                   ("env", unread_env, env_defined),
-                                   ("go", dead_go_symbols, go_packages),
-                                   ("markdown-link", dead_markdown_links, index)):
+        for kind, produce, arg in classes:
             for lineno, shown, key in produce(rel, text, arg):
                 if (rel, key) in EXEMPT:
                     continue
@@ -728,18 +885,23 @@ def main() -> int:
 
     found = findings()
     if not found:
-        print(f"check_doc_drift: {len(docs())} docs, "
+        # The class count is DERIVED, so this line cannot drift from the
+        # thing it describes the way the prose about this checker can.
+        print(f"check_doc_drift: {len(docs())} docs, {len(CLASSES)} classes, "
               f"{len(EXEMPT)} recorded forward references, no drift")
         return 0
 
     print("check_doc_drift: documentation names code that is not there.\n")
-    for kind, label, fix in CLASSES:
+    for kind, label, fix in (*CLASSES, INDEX_FAILURE):
         hits = [f for f in found if f[0] == kind]
         if not hits:
             continue
         print(f"  {label}:")
         for _, rel, lineno, shown, _key in hits:
-            print(f"    {rel}:{lineno}  {shown}")
+            # A lineno of 0 is the index failure, which is about a FILE rather
+            # than a line, and `main.go:0` would send a reader to look at one.
+            where = f"{rel}:{lineno}" if lineno else rel
+            print(f"    {where}  {shown}")
         print(f"    -> {fix}\n")
     return 1 if arguments.strict else 0
 

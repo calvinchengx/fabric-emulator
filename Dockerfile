@@ -26,7 +26,19 @@ ARG TARGETOS TARGETARCH
 ARG COVER=
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# Retried, bounded, because proxy.golang.org drops HTTP/2 streams mid-transfer
+# often enough to matter: 2026-10-25 lost a CI job to four modules failing at
+# once with `stream error: stream ID 1; INTERNAL_ERROR; received from peer`,
+# nothing to do with this repository. A real failure (a bad go.sum, a module
+# that is gone) fails all four attempts and the build still stops here, with
+# go's own message as the last thing printed.
+RUN for attempt in 1 2 3 4; do \
+      go mod download && exit 0; \
+      [ "$attempt" = 4 ] && break; \
+      echo "go mod download failed (attempt $attempt/4); retrying in $((attempt * 15))s" >&2; \
+      sleep $((attempt * 15)); \
+    done; \
+    echo "go mod download failed 4 times — giving up" >&2; exit 1
 COPY . .
 # -coverpkg=./... is what makes this measure the SERVER rather than only the
 # main package: without it an instrumented binary reports coverage for
