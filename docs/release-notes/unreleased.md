@@ -279,6 +279,45 @@ asserts every harness job has it, Linux-guarded, directly after checkout. The
 root `Dockerfile`'s `go mod download` is retried four times and still ends the
 build when every attempt fails.
 
+## The CI warm-up covers pulled service images, and the jobs it missed
+
+#666 pre-pulled the base images each harness BUILDS. Two of the same morning's
+failures were compose PULLING a service image — SeaweedFS for e2e/s3, ttyd for
+e2e/portal-terminal — and died on `unknown blob`, the same mirror failing
+through a different client. `scripts/warm_base_images.py` now warms those too:
+every `image:` in a suite's own compose files, and an `image:` from the root
+`docker-compose.yml` only when the suite layers that file and names the service
+it starts. That keeps OpenMetadata, OpenSearch and Kafka out of suites that
+never run them, and keeps e2e/delta-rs — which names `fabric-emulator` while
+running it as a host binary — from being handed the published image. Compose's
+default `pull_policy: missing` then finds each one local and does not pull.
+
+Two jobs had no warm step at all, because #666 recognised only literal harness
+paths: the medallion matrix (`e2e/${{ matrix.harness }}/run.py`), one of the four
+jobs that change was written for, and the coverage job's shell loop. Both are
+wired now, and the test asserting every harness job warms first reads all three
+forms. Three medallion harnesses hold no stack of their own and run
+e2e/medallion's; they are now followed to it, as e2e/two-context is to e2e/livy.
+
+## The warm-up reaches the cron and release workflows, and images a harness runs itself
+
+`spark-jvm`, `xmla` and `sempy` — cron/dispatch-only workflows — and
+`release.yml`'s `agent-contract` job run e2e harnesses and had no warm step: the
+invariant asserting every harness job warms first read ci.yml alone. It now
+reads every workflow, with two exemptions recorded with their reasons:
+`real-fabric`'s conformance job targets real Fabric and starts no local stack,
+and `pbix-desktop` runs on Windows. A job that warms may not also switch to a
+buildx builder, since that keeps its own image store and the warm-up could not
+reach it — which is why `release.yml`'s multi-arch `image` jobs are left alone.
+
+Two harnesses run containers outside compose, and warmed nothing until now:
+xmla `docker run`s the .NET 8 SDK from a module constant, and sempy builds
+`e2e/sempy/image/Dockerfile`, below the suite's top level. Whole-literal image
+references (with a registry host and a tag or digest) and nested Dockerfiles
+are now read, which also brings kustainer into mcp-eventhouse's warm set. An
+implicit Docker Hub reference with no host — the `alpine/socat` forwarder — is
+not, being indistinguishable from any other `a/b` string.
+
 ## The python base image is held at 3.14 until zstandard ships a cp315 wheel
 
 `python:3.15-slim` cannot build this repository's lockfile. pyspark-client
