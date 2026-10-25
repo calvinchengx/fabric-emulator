@@ -286,6 +286,43 @@ def compose_services(compose: pathlib.Path) -> dict[str, dict]:
     return out
 
 
+# A whole string literal that IS a pullable image: a registry host, a path, and
+# a tag or digest. The tag/digest is what separates `mcr.microsoft.com/dotnet/
+# sdk:8.0` from the Go module paths (`github.com/calvinchengx/...`) and untagged
+# repository names (fab-driven builds tags onto `ghcr.io/calvinchengx/...`)
+# that also live in these files.
+PY_IMAGE = re.compile(
+    r"(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?/[a-z0-9._/-]+"
+    r"(?::[A-Za-z0-9._-]+(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})")
+
+
+def python_images(py: pathlib.Path) -> list[str]:
+    """Images a harness runs itself, outside compose: `docker run <IMAGE>`.
+
+    xmla runs `mcr.microsoft.com/dotnet/sdk:8.0` and mcp-eventhouse runs
+    kustainer by digest, both from module constants, and neither reaches a
+    compose file. Read from the AST so adjacent literals are joined (the
+    kustainer reference is a tag and a digest written on two lines) and so a
+    reference quoted inside prose is not one -- only a literal that is
+    entirely an image counts.
+
+    Not covered: an implicit Docker Hub reference with no host (`alpine/socat`,
+    the 443 forwarder in xmla and sempy) is indistinguishable from any other
+    `a/b` string, and is not mirror-sourced, so the most warming could give it
+    is a retry.
+    """
+    try:
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and PY_IMAGE.fullmatch(node.value) and node.value not in out):
+            out.append(node.value)
+    return out
+
+
 def suite_images(suite: str) -> list[str]:
     """The service images a suite will pull, per the rules in the docstring."""
     if not (E2E / suite).is_dir():
@@ -302,6 +339,8 @@ def suite_images(suite: str) -> list[str]:
     for svc in local.values():
         if svc["image"] and not svc["build"]:
             refs.append(svc["image"])
+    for py_file in (p for d in dirs for p in sorted(d.glob("*.py"))):
+        refs.extend(python_images(py_file))
 
     py = [p for d in dirs for p in sorted(d.glob("*.py"))]
     source = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in py)
@@ -333,7 +372,9 @@ def suite_dockerfiles(suite: str) -> list[pathlib.Path]:
     for d in (E2E / name for name in related_suites(suite)):
         for compose in sorted([*d.glob("*.yml"), *d.glob("*.yaml")]):
             found.extend(compose_dockerfiles(compose))
-        found.extend(sorted(d.glob("Dockerfile*")))
+        # Recursive: e2e/sempy builds e2e/sempy/image/Dockerfile with a plain
+        # `docker build <dir>`, and a top-level glob never saw it.
+        found.extend(sorted(p for p in d.rglob("Dockerfile*") if "__pycache__" not in p.parts))
     seen, out = set(), []
     for p in found:
         if p.resolve() not in seen:
