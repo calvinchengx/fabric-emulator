@@ -210,7 +210,12 @@ def test_a_non_mirror_reference_has_no_second_source(docker):
     docker.fail[ref] = len(w.BACKOFF)
     err = w.warm(ref, sleep=lambda _s: None)
     assert err and err.startswith(ref)
-    assert not any("docker.io" in " ".join(c) for c in docker.calls)
+    # EXACTLY the primary attempts and nothing after them -- no second source,
+    # no tag. Stronger than asserting "docker.io" appears in no call, and not
+    # that shape: CodeQL reads a bare host in a substring test as URL
+    # sanitisation (py/incomplete-url-substring-sanitization), the finding
+    # #611 retired from check_entra_install.py the same way.
+    assert docker.calls == [["pull", "--quiet", ref]] * len(w.BACKOFF)
 
 
 def test_both_sources_failing_names_both(docker):
@@ -244,7 +249,14 @@ def test_a_suite_that_builds_nothing_touches_no_docker(docker, capsys):
 def test_main_warms_and_succeeds(docker, capsys):
     assert w.main(["--suite", "vscode-extension"], sleep=lambda _s: None) == 0
     pulled = [c[-1] for c in docker.calls if c[0] == "pull"]
-    assert MIRRORED in pulled and "gcr.io/distroless/static-debian12:nonroot" in pulled
+    # The exact set the suite's three Dockerfiles build on, rather than two
+    # memberships: stronger, and no host string in an `in` test for CodeQL to
+    # read as URL sanitisation.
+    assert set(pulled) == {
+        MIRRORED,
+        "gcr.io/distroless/static-debian12:nonroot",
+        "mirror.gcr.io/library/python:3.14-slim",
+    }
 
 
 def test_main_fails_naming_what_neither_source_could_supply(docker, capsys):
