@@ -10,13 +10,27 @@
 #     every `command -v python3` check passes, and it exits 49 when run.
 #   * GNU Make falls back to cmd.exe when sh.exe is not on PATH, and every
 #     recipe here is POSIX shell.
-#   * The `docker` CLI is on PATH long before anything is serving on the other
-#     end of it: Docker Desktop installed but not started, Docker Desktop in
-#     Windows-container mode, or one vendor's CLI with another vendor's daemon
-#     actually serving. All three surface as the SAME raw named-pipe failure,
-#     which names the pipe and none of the causes — so this check names the
-#     endpoint, states the likely cause, and probes the alternatives rather
-#     than listing them.
+#   * The `docker` CLI can be one vendor's while the ACTIVE CONTEXT points at
+#     another vendor's daemon that is not running (Docker Desktop's CLI first
+#     on PATH, Rancher Desktop actually serving). The error is a raw named-pipe
+#     failure that names neither -- so an unreachable context reports the
+#     ENDPOINT it could not reach, which is the one string the user can match
+#     against the error they saw, and the alternatives are PROBED rather than
+#     listed: a context that is reachable but serving windows containers is no
+#     answer either.
+#   * The same named-pipe failure is what Docker Desktop simply NOT RUNNING
+#     looks like, because the pipe exists only while it runs. Issue #650 is
+#     that one, reported as a `docker pull` fault: "open
+#     //./pipe/dockerDesktopLinuxEngine: The system cannot find the file
+#     specified". So the advice for an unreachable context cannot be only
+#     "select another one" -- with one context installed there is none to
+#     select, and the answer is to start the runtime.
+#   * Docker Desktop in WINDOWS CONTAINERS mode answers `docker info` happily,
+#     so every check here passed and the report said "ready". Every image in
+#     this stack is linux, so the failure landed two commands later as "no
+#     matching manifest for windows/amd64 in the manifest list entries" -- a
+#     message about manifests, from a daemon that is working exactly as
+#     configured. OSType is therefore a blocker, not a detail.
 #
 # Exit 0 = ready, 1 = at least one blocker.
 set -eu
@@ -66,14 +80,14 @@ else
   if docker info >/dev/null 2>&1; then
     ok "context" "$ctx"
     ok "daemon" "$(docker info --format '{{.ServerVersion}} ({{.OSType}}/{{.Architecture}}), {{.NCPU}} cpu, {{.MemTotal}} bytes' 2>/dev/null)"
-    # Every image this stack runs is a Linux image. A Docker Desktop switched to
-    # Windows containers answers `docker info` perfectly well and then fails
-    # every pull with "no matching manifest for windows/amd64" — an error that
-    # names the image rather than the mode the daemon is in.
+    # Every image this stack pulls is linux. A windows-containers daemon is
+    # reachable, versioned and healthy -- it just cannot run any of them.
     ostype=$(docker info --format '{{.OSType}}' 2>/dev/null | tr -d '\r')
     if [ -n "$ostype" ] && [ "$ostype" != "linux" ]; then
-      bad "containers" "daemon serves $ostype containers; this stack is Linux images"
-      printf '        Docker Desktop tray icon > Switch to Linux containers\n'
+      bad "engine" "serving $ostype containers; every image here is linux"
+      printf '        switch the engine over -- Docker Desktop tray icon ->\n'
+      printf '        "Switch to Linux containers...", or from a shell:\n'
+      printf '          & "$Env:ProgramFiles\\Docker\\Docker\\DockerCli.exe" -SwitchLinuxEngine\n'
     fi
     # The governance profile alone wants ~4 GB (Elasticsearch takes a 1 GB heap);
     # with the default override adding SQL Server and Sail, 8 GB is the floor.
@@ -82,53 +96,75 @@ else
       warn "memory" "$mem bytes; the governance profile + sidecars want ~8 GB"
     fi
   else
-    # Name the ENDPOINT, not just the context. The CLI's own error names the
-    # pipe or the socket and nothing else, and the endpoint is the one line that
-    # ties that string back to a product. Dropped unless it is a single
-    # printable token — same reason the context name is sanitised above.
-    endpoint=$(docker context inspect "$ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null | head -n 1 | tr -d '\r')
-    case "$endpoint" in
-      ''|*[!!-~]*) endpoint='' ;;
-    esac
+    # One `context ls` answers both questions below: which endpoint the active
+    # context could not reach, and what else is installed. Rows are filtered to
+    # a bare name and a scheme-bearing endpoint for the reason the context name
+    # is sanitised above -- a `docker` that cannot work prints prose here, and
+    # prose must not be mistaken for a context to probe.
+    rows=$(docker context ls --format '{{.Name}} {{.DockerEndpoint}}' 2>/dev/null | tr -d '\r' \
+      | awk '$1 ~ /^[A-Za-z0-9_.-]+$/ && $2 ~ /:\/\// { print $1, $2 }')
+    endpoint=$(printf '%s\n' "$rows" | awk -v c="$ctx" '$1 == c { print $2; exit }')
+    # The endpoint belongs in the verdict line, not only in the advice: it is
+    # the one string the reader can match against the error their own `docker`
+    # command printed, which names the pipe and nothing else.
     if [ -n "$endpoint" ]; then
       bad "daemon" "context '$ctx' ($endpoint) is not reachable"
     else
       bad "daemon" "context '$ctx' is not reachable"
     fi
-    # A pipe or socket is created BY the engine as it starts, so "cannot find
-    # the file" means nothing is serving on the other end — which on Windows is
-    # overwhelmingly a Docker Desktop that was installed and never started, not
-    # the two-vendor context mix-up this check used to assume. The cause printed
-    # first is the one that gets tried, so it had better be the likely one.
+    # Which of the two causes this is depends on the endpoint. Docker Desktop's
+    # Linux-engine pipe does not exist while Docker Desktop is stopped, so the
+    # same text that means "wrong vendor selected" also means "not started" --
+    # and the latter is the common one. Name it first.
     case "$endpoint" in
-      *dockerDesktop*|*desktop-linux*)
-        printf '        that endpoint is Docker Desktop, and most likely it is not running:\n'
-        printf '        installing it does not start it, and it does not start with Windows\n'
-        printf '        unless asked. Start Docker Desktop and wait for the tray icon to\n'
-        printf '        report "Engine running" — one still booting fails identically.\n'
-        printf '        If it IS running, it is switched to Windows containers: the Linux\n'
-        printf '        engine pipe exists only in Linux-container mode.\n'
+      *dockerDesktopLinuxEngine*)
+        printf '        %s is Docker Desktop'"'"'s Linux engine, and that pipe\n' "$endpoint"
+        printf '        exists only while Docker Desktop is RUNNING. Start it and wait for the\n'
+        printf '        whale icon to stop animating; "The system cannot find the file\n'
+        printf '        specified" on this pipe is a stopped engine, not a broken install.\n'
+        ;;
+      *)
+        printf '        start the runtime that serves it, or if it is gone, select one below.\n'
         ;;
     esac
-    # Then the alternatives — probed, not merely listed. Names and endpoints
-    # still leave you guessing which product is serving, and a context that
-    # reaches a Windows-containers daemon is the wrong answer here however
-    # reachable it is.
-    others=$(docker context ls --format '{{.Name}}' 2>/dev/null | tr -d '\r' \
-      | grep -xE '[A-Za-z0-9_.-]+' | grep -vxF "$ctx" || true)
-    if [ -n "$others" ]; then
-      printf '        other contexts on this machine:\n'
-      for c in $others; do
+    # The alternatives, each PROBED rather than merely named. "Another context
+    # exists" is not advice: it may be as stopped as this one, and one that
+    # answers while serving windows containers cannot run these images either.
+    # The verdict rides on the row, so the list still reads as a list.
+    peers=$(printf '%s\n' "$rows" | awk -v c="$ctx" '$1 != c { print $1 }')
+    if [ -z "$rows" ]; then
+      printf '        contexts available:\n'
+      printf '          (none — the docker CLI itself is not working)\n'
+    elif [ -z "$peers" ]; then
+      # Issue #650's machine. "Select another context" was the advice here, and
+      # there is no other context: the runtime is what has to start.
+      printf '        it is also the only context configured, so there is nothing else to\n'
+      printf '        select -- the runtime itself has to be started (or installed).\n'
+    else
+      printf '        contexts available:\n'
+      serves=''
+      for c in $peers; do
+        ep=$(printf '%s\n' "$rows" | awk -v c="$c" '$1 == c { print $2; exit }')
         cos=$(docker --context "$c" info --format '{{.OSType}}' 2>/dev/null | tr -d '\r')
         case "$cos" in
-          linux) printf '          %-16s reachable — select it: docker context use %s\n' "$c" "$c" ;;
-          '')    printf '          %-16s also unreachable\n' "$c" ;;
-          *)     printf '          %-16s reachable, but serves %s containers — not usable here\n' "$c" "$cos" ;;
+          linux)
+            printf '          %s  %s  (answers, linux)\n' "$c" "$ep"
+            [ -n "$serves" ] || serves=$c
+            ;;
+          '') printf '          %s  %s  (also unreachable)\n' "$c" "$ep" ;;
+          *)  printf '          %s  %s  (answers, but serves %s containers)\n' "$c" "$ep" "$cos" ;;
         esac
       done
-    else
-      printf '        no other context to switch to — this is the only one configured, so\n'
-      printf '        a container runtime has to be started (or installed) first.\n'
+      if [ -n "$serves" ]; then
+        printf '        %s answers and serves linux containers; select it:\n' "$serves"
+        printf '          docker context use %s\n' "$serves"
+      else
+        # Nothing probed clean. The vendor-clash advice still stands as a hint,
+        # because a context can need env the probe did not supply -- but it is
+        # phrased as the guess it now is, rather than as the fix.
+        printf '        if another runtime (Rancher Desktop, Colima, podman) is serving, select it:\n'
+        printf '          docker context use <name>\n'
+      fi
     fi
   fi
   if docker compose version >/dev/null 2>&1; then

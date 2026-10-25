@@ -200,3 +200,27 @@ nothing.
 ## A OneLake security role naming a missing column fails the sync loudly
 
 A row filter or column allow-list that no longer matches its table's schema used to silently narrow that role's grant to nothing — a Viewer in the role simply read less than intended. Fabric documents a louder reaction: "Row-level security policy references a column that no longer exists. Database enters error state until policy is fixed." (the same sentence for column-level security). The sync now fails with that message when this happens, for a role's own constraint and for a OneLake shortcut source's role alike, so every read through the endpoint fails until the role is fixed at its source — not only the affected role's. An RLS filter that is merely invalid syntax (Fabric's separate, documented "no rows being shown" case) still narrows to nothing rather than failing the sync; the two are now kept distinct. [docs/60](../60-sql-endpoint-access-modes.md)
+
+## `make doctor` names the two Windows docker failures
+
+The named-pipe error — `open //./pipe/dockerDesktopLinuxEngine: The system
+cannot find the file specified` — is what the docker CLI prints when it reached
+no daemon at all, so it arrives from whichever command ran first and mentions
+neither the image nor the cause ([#650](https://github.com/calvinchengx/fabric-emulator/issues/650),
+reported against `docker pull`). `make doctor` already failed on an unreachable
+context, but its advice was `docker context use <name>`, which is the fix for a
+vendor clash and no help on a machine whose one context is Docker Desktop's: it
+now recognises that endpoint and says the engine is stopped. The second failure
+had no detection at all — Docker Desktop in **Windows containers** mode is
+reachable and healthy, so the report read `ready — run: make up`, and the stack
+failed two commands later with `no matching manifest for windows/amd64`. The
+engine's `OSType` is now a blocker, with the switch to run.
+
+The unreachable report also stopped guessing. It prints the **endpoint** it
+could not reach, which is the one string that matches the error the user saw;
+it says there is nothing to select when the failing context is the only one
+configured; and it **probes** each alternative instead of listing names, so a
+context is offered only when it answered and serves linux containers — one that
+is as stopped as the first, or that answers while serving windows containers,
+is labelled rather than recommended.
+[docs/26](../26-platform-setup.md#the-named-pipe-error)
