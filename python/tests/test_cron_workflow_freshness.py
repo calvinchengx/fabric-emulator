@@ -112,8 +112,14 @@ def _completed(stdout="", returncode=0, stderr=""):
 
 
 @pytest.fixture
-def run(monkeypatch):
-    """Script every subprocess call by the command's shape."""
+def run(monkeypatch, tmp_path):
+    """Script every subprocess call by the command's shape.
+
+    The bootstrap ledger is pointed at a path that does not exist, so these
+    cases see an empty one and the checked-in file cannot change what they
+    assert. The ledger's own behaviour is driven by the `ledger` fixture.
+    """
+    monkeypatch.setattr(cwf, "BOOTSTRAP", tmp_path / "no-ledger.json")
     calls = []
 
     def fake(args, **kw):
@@ -140,10 +146,24 @@ def run(monkeypatch):
         if args[:2] == ["gh", "api"]:
             return _completed(fake.api, fake.api_rc, fake.api_err)
         if args[:3] == ["gh", "run", "list"]:
+            # Per-workflow, because the interesting cases are MIXED: one
+            # workflow with no history among five with it is exactly the shape
+            # of adding a cron workflow, and a global answer cannot say it.
+            stem = args[4][:-4] if len(args) > 4 and args[4].endswith(".yml") else ""
+            if stem in fake.never:
+                return _completed("", 1, (
+                    f"HTTP 404: workflow {stem}.yml not found on the default "
+                    f"branch (https://api.github.com/repos/x/y/actions/"
+                    f"workflows/{stem}.yml)"))
+            if stem in fake.no_runs_yet:
+                return _completed("[]", 0, "")
             return _completed(fake.runs, fake.runs_rc, fake.runs_err)
         return _completed()
 
     fake.shallow, fake.changed = "false", "1000"
+    # Workflows the API has no history for: not on the default branch at all
+    # (`never`), or there with an empty run list (`no_runs_yet`).
+    fake.never, fake.no_runs_yet = set(), set()
     fake.api, fake.api_rc, fake.api_err = "", 0, ""
     # A run of the CURRENT bytes: `fresh` is the digest the checker will want,
     # and the fake resolves that sha to whatever the workflow says right now.
@@ -234,3 +254,160 @@ def test_the_date_based_lookups_are_gone():
     assert not hasattr(cwf, "_last_changed_git")
     assert not hasattr(cwf, "_last_changed_api")
     assert not hasattr(cwf, "_head_sha")
+
+
+# --- the bootstrap ledger -----------------------------------------------------
+#
+# A workflow being ADDED has no run history and cannot get one: dispatch
+# resolves the file on the default branch, so `gh workflow run x.yml --ref
+# my-branch` answers 404 until the merge. Demanded unconditionally the check is
+# unsatisfiable before the merge and red on main right after it, so
+# .github/cron-bootstrap.json records the dispatch owed. These drive both
+# directions of that ledger, because an allowance nobody revisits excuses
+# everything forever.
+
+import json  # noqa: E402
+
+
+def _a_cron_stem():
+    """A real cron-only workflow's stem, whichever one sorts first.
+
+    Named dynamically rather than hard-coded: the ledger's current entry is
+    deleted the moment its workflow is dispatched, and a test naming it would
+    then be testing nothing while still passing.
+    """
+    for path in sorted((REPO / ".github" / "workflows").glob("*.yml")):
+        if path.name in cwf.EXEMPT:
+            continue
+        if not (cwf._triggers(path.read_text(encoding="utf-8")) & cwf.PUSH_TRIGGERS):
+            return path.stem
+    raise AssertionError("no cron-only workflow to test with")
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    """Write a bootstrap ledger the checker will read instead of the real one."""
+    def write(entries):
+        p = tmp_path / "cron-bootstrap.json"
+        p.write_text(json.dumps({"bootstrap": entries}), encoding="utf-8")
+        monkeypatch.setattr(cwf, "BOOTSTRAP", p)
+        return p
+    monkeypatch.setattr(cwf, "BOOTSTRAP", tmp_path / "absent.json")
+    return write
+
+
+def _entry(stem, **over):
+    e = {"workflow": stem, "added": "2026-10-25", "why": "added by this change",
+         "exit_when": f"gh workflow run {stem}.yml, then delete this entry"}
+    e.update(over)
+    return e
+
+
+def _never_run(run, stem):
+    """What the API says about a workflow that is not on the default branch."""
+    run.never.add(stem)
+
+
+def test_an_unrecorded_workflow_with_no_history_fails_under_strict(run, ledger, monkeypatch, capsys):
+    """The gate itself. Without this, adding a cron workflow nobody ever runs
+    is invisible — which is the whole failure this checker exists for."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    ledger([])
+    _never_run(run, stem)
+    assert cwf.main() == 1
+    out = capsys.readouterr().out
+    assert "no run history at all" in out
+    # The remediation names both halves: record it, or dispatch it if it has
+    # already landed. A failure that says only "unreadable" sent the last
+    # reader looking at permissions.
+    assert "cron-bootstrap.json" in out and f"gh workflow run {stem}.yml" in out
+
+
+def test_a_recorded_workflow_with_no_history_passes_and_prints_what_it_owes(run, ledger, monkeypatch, capsys):
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    ledger([_entry(stem)])
+    _never_run(run, stem)
+    assert cwf.main() == 0
+    out = capsys.readouterr().out
+    assert "never run — recorded" in out
+    assert f"gh workflow run {stem}.yml" in out, "the dispatch owed was not named"
+
+
+def test_an_empty_run_list_is_never_run_not_unreadable(run, ledger, monkeypatch, capsys):
+    """The case that bites AFTER the merge: the workflow is on the default
+    branch, so the API answers — with no runs. Read as unreadable history that
+    would fail main for a permissions problem it does not have."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    ledger([_entry(stem)])
+    run.no_runs_yet.add(stem)
+    assert cwf.main() == 0
+    assert "never run — recorded" in capsys.readouterr().out
+
+
+def test_an_entry_whose_workflow_has_run_since_fails(run, ledger, monkeypatch, capsys):
+    """The other direction. The default fixture is a run of the committed
+    bytes, so every workflow is fresh — and the entry's premise ('cannot be
+    dispatched') is now false."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    ledger([_entry(stem)])
+    assert cwf.main() == 1
+    out = capsys.readouterr().out
+    assert "expired" in out
+    assert f"{stem}: has run history now" in out and "delete its entry" in out
+
+
+def test_an_entry_for_a_workflow_that_is_not_cron_only_here_fails(run, ledger, monkeypatch, capsys):
+    """A stale name excuses nothing while looking like it does — the same
+    finding kind as a stale EXEMPT entry one test above."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    ledger([_entry("a-workflow-that-does-not-exist")])
+    assert cwf.main() == 1
+    out = capsys.readouterr().out
+    assert "a-workflow-that-does-not-exist" in out and "delete the entry" in out
+
+
+def test_an_entry_missing_its_reason_fails_by_naming_the_fields(run, ledger, monkeypatch, capsys):
+    """The ledger's value is the prose. An entry carrying only a name is the
+    tick without the reason."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    p = ledger([{"workflow": stem, "added": "2026-10-25"}])
+    assert p.exists()
+    assert cwf.main() == 1
+    out = capsys.readouterr().out
+    assert "missing why, exit_when" in out
+
+
+def test_a_missing_ledger_relaxes_nothing(run, ledger, monkeypatch, capsys):
+    """The file exists to WEAKEN a failure, so its absence must not weaken
+    one — a loader returning {} on a read error would excuse everything the
+    moment the path moved."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    stem = _a_cron_stem()
+    _never_run(run, stem)          # no ledger written by the fixture at all
+    assert not cwf.BOOTSTRAP.exists()
+    assert cwf.main() == 1
+    assert "no run history at all" in capsys.readouterr().out
+
+
+def test_a_404_naming_another_workflow_is_still_unreadable(run, ledger, monkeypatch, capsys):
+    """NEVER_RUN is claimed from a 404 that names THIS workflow. A 404 from
+    some other call is an unexplained API failure, and treating it as 'new'
+    would let a real unreadable history pass as a bootstrap."""
+    monkeypatch.setenv("FRESHNESS_STRICT", "1")
+    ledger([])
+    run.runs, run.runs_rc = "", 1
+    run.runs_err = "HTTP 404: Not Found (https://api.github.com/repos/x/y/actions/runs)"
+    assert cwf.main() == 1
+    assert "could not be read" in capsys.readouterr().out
+
+
+def test_the_real_ledger_parses_and_every_entry_is_complete():
+    """The checked-in file, read by the loader it is read by in CI."""
+    recorded = cwf._bootstrap()
+    for stem, entry in recorded.items():
+        assert entry["why"].strip() and entry["exit_when"].strip(), stem
