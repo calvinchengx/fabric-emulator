@@ -224,3 +224,26 @@ context is offered only when it answered and serves linux containers — one tha
 is as stopped as the first, or that answers while serving windows containers,
 is labelled rather than recommended.
 [docs/26](../26-platform-setup.md#the-named-pipe-error)
+
+## CI image builds survive a registry outage instead of failing on it
+
+On 2026-10-25 four e2e jobs failed inside `docker build` for reasons outside
+this repository. `mirror.gcr.io` — the Docker Hub cache every Dockerfile here
+pulls through since #556 — served `golang:1.27`'s manifest while answering
+`not found` for one of its layers for about two hours, and `proxy.golang.org`
+reset the HTTP/2 streams of four modules mid-`go mod download`. The mirror
+reports a failed refill as a 404, which BuildKit treats as final, so nothing
+inside the build ever retried; and the governance harness's existing
+three-attempt `compose up` retry failed all three times, because 15s and 30s
+of backoff cannot outlast a two-hour window.
+
+Every job that runs an e2e harness now warms the base images that harness will
+build before it builds them, via `scripts/warm_base_images.py --suite <name>`:
+a bounded retry for a short failure, then a **second source** for a long one —
+the same reference from Docker Hub, tagged under the mirror's name, which is
+the same content-addressed image. With it in the local store BuildKit builds
+without contacting the registry at all. The step reads each suite's own compose
+files, so the 17 suites that build nothing pay a parse and no pull, and a test
+asserts every harness job has it, Linux-guarded, directly after checkout. The
+root `Dockerfile`'s `go mod download` is retried four times and still ends the
+build when every attempt fails.
