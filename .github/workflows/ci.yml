@@ -384,6 +384,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - name: Warm the images this job builds and pulls
+        if: runner.os == 'Linux'
+        run: python3 scripts/warm_base_images.py --suite notebook-run --suite sail --suite livy
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -439,7 +442,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-matrix
       # Regenerates the matrix from both engines and fails if the committed
@@ -469,7 +472,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -489,7 +492,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -521,7 +524,7 @@ jobs:
           - 1433:1433
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
       - uses: actions/setup-go@v7
@@ -1407,7 +1410,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cicd
       - uses: actions/setup-go@v7
@@ -1432,7 +1435,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cicd
       - uses: actions/setup-go@v7
@@ -1464,7 +1467,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite arm-capacities
       - uses: actions/setup-go@v7
@@ -1493,7 +1496,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-target
       - uses: actions/setup-go@v7
@@ -1520,7 +1523,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rti
       # The optional `rti` profile, witnessed: Microsoft's own KQL engine
@@ -1546,7 +1549,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-eventhouse
       - uses: actions/setup-go@v7
@@ -1571,7 +1574,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite s3
       # External-store shortcuts, witnessed against a real S3 server rather
@@ -1595,7 +1598,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite azurite-shortcut
       # The ADLS Gen2 shortcut *read path*, witnessed against Microsoft's own
@@ -1619,7 +1622,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite salesforce
       # A ROUND TRIP, not a one-way read: reading alone can pass while the rows
@@ -1645,7 +1648,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite environment
       # The witness docs/37 §1 demands, and the reason that row's grade sat at
@@ -1670,7 +1673,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite environment-notebook
       # THE OTHER BINDING PATH, and the one most Fabric data engineering uses: a
@@ -1701,7 +1704,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rest-helix
       # The end-to-end claim the REST connector exists for, against the case that
@@ -1731,7 +1734,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rest-servicenow
       # The complement to rest-helix. Helix proves the connector against a vendor
@@ -1761,7 +1764,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite external-shortcuts
       # Breadth, where external-s3 and azurite-shortcut give depth: those two
@@ -1785,7 +1788,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite governance
       - uses: actions/setup-python@v7
@@ -1808,7 +1811,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite portal-terminal
       - uses: actions/setup-python@v7
@@ -1846,7 +1849,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite governance
       - uses: actions/setup-python@v7
@@ -1872,7 +1875,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite delta-rs
       - uses: actions/setup-go@v7
@@ -1902,7 +1905,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite adls-sdk
       - uses: actions/setup-go@v7
@@ -1931,7 +1934,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite purview-datamap
       - uses: actions/setup-go@v7
@@ -1961,7 +1964,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-core
       - uses: actions/setup-go@v7
@@ -1989,7 +1992,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-fabriciq
       - uses: actions/setup-go@v7
@@ -2025,7 +2028,7 @@ jobs:
           - 1433:1433
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-datawarehouse
       - uses: actions/setup-go@v7
@@ -2054,7 +2057,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite azcopy
       - uses: actions/setup-go@v7
@@ -2094,7 +2097,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite vscode-extension
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -2112,7 +2115,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite airflow
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -2130,7 +2133,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite spark
       # Builds fabric-emulator from source + the Sail image, then a real
@@ -2149,7 +2152,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite eventstream
       # Default engine: consume Kafka through the emulator, materialise the
@@ -2179,7 +2182,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite agent-contract
       # The shared agent's consumers do not all send the same SQL, and this repo
@@ -2202,7 +2205,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite livy
       # The emulator terminates the Livy REST protocol itself and drives a Spark
@@ -2235,7 +2238,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-display
       # Every other notebook suite reads stdout, so none of them can tell a
@@ -2256,7 +2259,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-matrix
       # The EMULATOR leg of e2e/engine-matrix/tenant.py. Its real leg runs the
@@ -2277,7 +2280,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite two-context
       # The same Livy stack as `livy-native`, with FABRIC_TWO_CONTEXT=1. It
@@ -2299,7 +2302,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite jupyter
       # `make up-jupyter` ships a real JupyterLab (docs/44) and nothing in CI
@@ -2322,7 +2325,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-driven
       # The consumer's case, and the one no other suite covers. `notebook-run`
@@ -2343,7 +2346,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite sail
       # S0 of the JVM-replacement track (docs/20-lakesail-engine.md): a real
@@ -2375,7 +2378,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite data-science-loop
       # One physical OneLake Delta table crosses four real engines/clients:
@@ -2407,7 +2410,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cli
       # Microsoft's own `fab` CLI authenticates (service principal via entra-
@@ -2446,7 +2449,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite az-rest
       # Microsoft's own `az` CLI — the same packaged client entra already
@@ -2476,7 +2479,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite pipeline-activities
       # The same `az` CLI as the job above, deliberately in its OWN job. It
@@ -2510,7 +2513,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-activities
       # The three activities that EXECUTE code. Their Go tests drive a FAKE
@@ -2534,7 +2537,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite databricks-chain
       # THE FAMILY CHAIN, and the reason it is worth a job of its own:
@@ -2562,7 +2565,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite terraform-fabric
       # Microsoft's own terraform-provider-fabric — unmodified, pulled from
@@ -2592,7 +2595,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fab-driven
       # e2e/fabric-cli drives `fab` over EMPTY items and can execute nothing.
@@ -2615,7 +2618,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite deployment-pipelines
       # A SECOND, independent client family for the deployment-pipeline
@@ -2637,7 +2640,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite powerbi-ps
       # A TYPED client where there was only a transport. Six admin and tenant
@@ -2674,7 +2677,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite dbt-fabricspark
       # Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
@@ -2695,7 +2698,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite dbt-fabric
       # Microsoft's real dbt-fabric adapter (1.11+) runs a dbt project (debug ->
@@ -2763,6 +2766,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - name: Warm the images this job builds and pulls
+        if: runner.os == 'Linux'
+        run: python3 scripts/warm_base_images.py --suite ${{ matrix.harness }}
       # The .debs, so a stalled mirror is a cache hit rather than a lost job.
       # An OPTIMISATION, not a dependency — exactly like the spark-jars cache
       # above: a cold or unusable cache falls through to the network path below,
@@ -3010,7 +3016,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite duckdb
       - uses: actions/setup-go@v7
@@ -3038,7 +3044,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebookutils
       - uses: actions/setup-go@v7
@@ -3079,7 +3085,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-run
       # The emulator parses a real Fabric notebook into cells, Sail executes
@@ -3143,7 +3149,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite semantic-model
       - uses: actions/setup-go@v7
@@ -3192,7 +3198,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Warm the base images this job builds
+      - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite great-expectations
       - uses: actions/setup-go@v7
