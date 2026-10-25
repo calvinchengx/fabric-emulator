@@ -37,6 +37,17 @@ hashes the workflow as it stands and asks whether any recent run executed the
 same bytes. A merge that moves a file without changing it now counts, because
 what ran and what is committed are the same workflow.
 
+THE ONE CASE IT CANNOT ASK OF A BRANCH. A workflow being ADDED has never run,
+and cannot: `workflow_dispatch` resolves the file on the DEFAULT branch, so
+`gh workflow run x.yml --ref my-branch` is a 404 until the merge. Demanded
+unconditionally, this check is unsatisfiable before the merge and red on main
+immediately after it — the same trap the date-based version set, from the other
+end. So a new cron workflow is recorded in `.github/cron-bootstrap.json` with
+the dispatch it owes, and the ledger is read BOTH WAYS: an unrecorded workflow
+with no history still fails, and a recorded one that HAS since run its
+committed bytes fails too, naming the entry to delete. An allowance nobody
+revisits is how a ledger stops describing the tree and starts excusing it.
+
 WHAT IT DELIBERATELY DOES NOT DO. It does not fail on a workflow that has never
 run at all when the repository has no runs to read (a fresh clone, a fork), and
 it does not police whether the run PASSED — a red cron run is a normal finding
@@ -60,8 +71,13 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UNREADABLE = object()
+# A workflow with no run history AT ALL, which is a different fact from one
+# whose history could not be read: nothing has executed it, and nothing can
+# until it reaches the default branch. See `_bootstrap`.
+NEVER_RUN = object()
 
 WORKFLOWS = ROOT / ".github" / "workflows"
+BOOTSTRAP = ROOT / ".github" / "cron-bootstrap.json"
 
 # Workflows exempt from freshness, WITH A REASON so an exemption is a decision
 # someone wrote down rather than an omission nobody saw.
@@ -70,6 +86,28 @@ EXEMPT = {
 }
 
 PUSH_TRIGGERS = {"push", "pull_request", "pull_request_target", "merge_group"}
+
+
+def _bootstrap() -> dict:
+    """Workflows recorded as not yet dispatchable, by stem.
+
+    Missing file means an empty ledger: the ledger exists to RELAX a failure,
+    so its absence must not relax anything. A malformed one raises instead,
+    because a ledger that silently reads as empty would start failing every
+    entry it was meant to cover.
+    """
+    if not BOOTSTRAP.exists():
+        return {}
+    entries = json.loads(BOOTSTRAP.read_text(encoding="utf-8"))["bootstrap"]
+    out = {}
+    for e in entries:
+        missing = [k for k in ("workflow", "added", "why", "exit_when") if not e.get(k)]
+        if missing:
+            raise ValueError(
+                f"{BOOTSTRAP.name}: entry {e.get('workflow', '?')} is missing "
+                f"{', '.join(missing)}")
+        out[e["workflow"]] = e
+    return out
 
 
 def _utc(ts: int) -> str:
@@ -167,6 +205,13 @@ def _run_of_this_version(stem: str, rel: str, want: str, slug: str):
     Returns the sentinel `UNREADABLE` when runs exist but none of their
     versions could be resolved — that is not evidence of staleness, and
     reporting it as such would fail a job that merely lost `contents: read`.
+
+    Returns `NEVER_RUN` when there is no history to read: the workflow is not
+    on the default branch yet (a 404 naming it, which is what a workflow being
+    ADDED looks like), or it is there with an empty run list. Distinguished
+    from UNREADABLE because the remediation differs — one needs a dispatch, the
+    other needs permissions — and a 404 cannot be a permissions regression:
+    losing `actions: read` answers 403.
     """
     r = subprocess.run(
         ["gh", "run", "list", "--workflow", f"{stem}.yml", "--limit", "20",
@@ -181,10 +226,12 @@ def _run_of_this_version(stem: str, rel: str, want: str, slug: str):
             print(f"    {stem}: gh run list failed — {why}")
         elif not r.stdout.strip():
             print(f"    {stem}: gh run list returned nothing (no runs?)")
+        if "HTTP 404" in why and f"{stem}.yml" in why:
+            return NEVER_RUN
         return None
     runs = json.loads(r.stdout)
     if not runs:
-        return None
+        return NEVER_RUN
     resolved = 0
     for run in runs:
         got = _digest_at(run.get("headSha", ""), rel, slug)
@@ -233,7 +280,13 @@ def main() -> int:
     if shallow:
         print(f"shallow clone — workflow versions resolved from {slug} via the API")
 
-    cron_only, stale, unknown = [], [], []
+    try:
+        recorded = _bootstrap()
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"FAIL: {exc}")
+        return 1
+
+    cron_only, stale, unknown, never, ran_since = [], [], [], [], []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         if path.name in EXEMPT:
             continue
@@ -246,9 +299,18 @@ def main() -> int:
         # fallback needs it whenever a run's commit is not in the local object
         # store — which is the ordinary case for a deleted branch.
         run = _run_of_this_version(path.stem, rel, want, slug or _repo_slug())
+        if run is NEVER_RUN:
+            never.append(path.stem)
+            continue
         if run is None or run is UNREADABLE:
             unknown.append(path.stem)
             continue
+        if path.stem in recorded:
+            # History exists, so the workflow is on the default branch and CAN
+            # be dispatched: the entry's whole premise is gone, whether or not
+            # the run was of these bytes.
+            ran_since.append((path.stem, "these bytes" if len(run) == 2
+                              else "an earlier version"))
         if len(run) == 3:
             ran, conclusion, _ = run
             stale.append((path.stem, ran, conclusion))
@@ -259,6 +321,38 @@ def main() -> int:
         return 1
 
     print(f"cron/dispatch-only workflows: {len(cron_only)} — {', '.join(cron_only)}")
+
+    # A ledger entry for a workflow that is not here, or that is not cron-only
+    # any more, excuses nothing and hides that it is doing nothing.
+    orphans = sorted(set(recorded) - set(cron_only))
+    if never:
+        new_ones = [stem for stem in never if stem in recorded]
+        unrecorded = [stem for stem in never if stem not in recorded]
+        for stem in new_ones:
+            print(f"  {stem}: never run — recorded in {BOOTSTRAP.name}, "
+                  f"owes: {recorded[stem]['exit_when']}")
+        if unrecorded:
+            print("\nFAIL: these have no run history at all, and nothing records why.")
+            print("A workflow being ADDED cannot be dispatched before it is on the")
+            print("default branch, so record it and delete the entry once it has run:\n")
+            for stem in unrecorded:
+                print(f"  {stem}")
+                print(f"      add it to {BOOTSTRAP.name} with why and exit_when, or")
+                print(f"      gh workflow run {stem}.yml  (if it is already on main)")
+            return 1
+
+    if ran_since or orphans:
+        print("\nFAIL: a bootstrap allowance that has expired still excuses a "
+              "workflow.")
+        for stem, what in ran_since:
+            print(f"  {stem}: has run history now ({what}), so it is on the "
+                  f"default branch and dispatchable — delete its entry from "
+                  f"{BOOTSTRAP.name}")
+        for stem in orphans:
+            print(f"  {stem}: recorded in {BOOTSTRAP.name} but is not a "
+                  f"cron-only workflow here — delete the entry")
+        return 1
+
     if unknown:
         print(f"  no run history readable: {', '.join(unknown)}")
         if strict:
