@@ -224,8 +224,8 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -309,11 +309,13 @@ jobs:
         if: inputs.capture_item_type != ''
         env:
           FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          INPUTS_CAPTURE_ITEM_NAME: ${{ inputs.capture_item_name }}
+          INPUTS_CAPTURE_ITEM_TYPE: ${{ inputs.capture_item_type }}
         run: |
-          if [ -z "${{ inputs.capture_item_name }}" ]; then
+          if [ -z "${INPUTS_CAPTURE_ITEM_NAME}" ]; then
             echo "::error::capture_item_name is required when capture_item_type is set"
             exit 1
           fi
           uv run --no-project python scripts/capture_definition_shape.py \
-            --type "${{ inputs.capture_item_type }}" \
-            --name "${{ inputs.capture_item_name }}"
+            --type "${INPUTS_CAPTURE_ITEM_TYPE}" \
+            --name "${INPUTS_CAPTURE_ITEM_NAME}"
