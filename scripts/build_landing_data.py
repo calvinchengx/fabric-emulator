@@ -42,19 +42,6 @@ ENGINE_MATRIX = ROOT / "docs" / "engine-matrix.md"
 CONFORMANCE = ROOT / "docs" / "conformance-matrix.md"
 SITE_STATS = ROOT / "website" / "src" / "data" / "site-stats.json"
 
-# Each is (an id the page fills, the file it reads to fill it). Several ids may
-# share a file. A page that stops reading one of these shows a dash forever,
-# which is worse than a wrong number because nothing looks broken.
-BINDINGS = {
-    "witness-count": "site-stats.json",
-    "claims-count": "site-stats.json",
-    "parity-real": "site-stats.json",
-    "e2e-suites": "site-stats.json",
-    "engine-pass": "evidence-summary.json",
-    "conformance-proven": "evidence-summary.json",
-    "verified-count": "evidence-summary.json",
-}
-
 # The stat row is delimited in the page by these comments, so this script reads
 # exactly the region where a total is stated as a headline rather than guessing
 # at the shape of the markup around it.
@@ -69,16 +56,6 @@ EXPRESSION = re.compile(r"\{[^{}]*\}")
 # same reason: a manifest named in a comment is not a manifest being read, and
 # the failure it guards against looks identical either way.
 IMPORTS_STATS = re.compile(r"import\s+\w+\s+from\s+['\"][^'\"]*site-stats\.json['\"]")
-
-
-# A manifest is "read" only when the page FETCHES it. Matching the bare
-# filename anywhere in the source is not enough: the first version of this
-# check passed a mutation that renamed the fetch, because the old name was
-# still sitting in the comment above it explaining what the fetch was for.
-def fetches(text: str, name: str) -> bool:
-    return re.search(
-        r"(?:load|fetch)\(\s*['\"]" + re.escape(name) + r"['\"]", text
-    ) is not None
 
 
 # Keys site-stats.json must carry for the page to fill. Listed so that a

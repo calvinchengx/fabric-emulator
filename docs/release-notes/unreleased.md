@@ -201,6 +201,37 @@ nothing.
 
 A row filter or column allow-list that no longer matches its table's schema used to silently narrow that role's grant to nothing — a Viewer in the role simply read less than intended. Fabric documents a louder reaction: "Row-level security policy references a column that no longer exists. Database enters error state until policy is fixed." (the same sentence for column-level security). The sync now fails with that message when this happens, for a role's own constraint and for a OneLake shortcut source's role alike, so every read through the endpoint fails until the role is fixed at its source — not only the affected role's. An RLS filter that is merely invalid syntax (Fabric's separate, documented "no rows being shown" case) still narrows to nothing rather than failing the sync; the two are now kept distinct. [docs/60](../60-sql-endpoint-access-modes.md)
 
+## The enforcing scripts are inventoried
+
+Of the 68 scripts under `scripts/`, 30 were named by no prose page outside the
+historical release notes, and 18 of those are wired, enforcing gates — 14 run
+from `make check`, one from `make portal-types`, one from `make sbom`, the
+advisory scan from `security.yml`, and the container smoke test from its own
+`ci.yml` job. Unlike the REST ledgers docs/65 explained, sixteen of the
+eighteen write no artifact at all, and fourteen of those keep their baseline in
+their own source as a `WAIVED` dict, an `UNDOCUMENTED` set, a `SINGLE_SOURCED`
+map, a freshness constant. There was no file to open, so each gate's
+denominator, what it asserts and how a new case is accepted were reviewable
+only by reading the checker.
+
+A new chapter states those four facts for each of the eighteen, groups them by
+what they guard — offline source, a vendored oracle, documentation and workflow
+config, reachability, dependencies, the container — and names the 12 build and
+vendor scripts it leaves out rather than dropping them silently. What makes a
+script a gate here is that something fails when it fails, not which file
+invokes it: that is why the advisory scan and the container smoke test are in
+even though no `make` target reaches either. It lands no new checker and
+changes no gate; the inventory's own completeness is gated by nothing, so the
+one-line command that re-derives it is printed in the page.
+
+Writing it found two stale counts in docs/10. It says `make check` runs
+thirty-one of these scripts and the `witnesses` job thirty; each now runs 37,
+and the two sets differ by two scripts in each direction, which nothing
+records. It also describes `make-targets.yml` as having three jobs where it
+declares two. Both are documented with each source named rather than edited, on
+the precedent docs/65 set with `docs/route-coverage.json`.
+[docs/66](../66-gate-inventory.md)
+
 ## `make doctor` names the two Windows docker failures
 
 The named-pipe error — `open //./pipe/dockerDesktopLinuxEngine: The system
@@ -224,6 +255,29 @@ context is offered only when it answered and serves linux containers — one tha
 is as stopped as the first, or that answers while serving windows containers,
 is labelled rather than recommended.
 [docs/26](../26-platform-setup.md#the-named-pipe-error)
+
+## CI image builds survive a registry outage instead of failing on it
+
+On 2026-10-25 four e2e jobs failed inside `docker build` for reasons outside
+this repository. `mirror.gcr.io` — the Docker Hub cache every Dockerfile here
+pulls through since #556 — served `golang:1.27`'s manifest while answering
+`not found` for one of its layers for about two hours, and `proxy.golang.org`
+reset the HTTP/2 streams of four modules mid-`go mod download`. The mirror
+reports a failed refill as a 404, which BuildKit treats as final, so nothing
+inside the build ever retried; and the governance harness's existing
+three-attempt `compose up` retry failed all three times, because 15s and 30s
+of backoff cannot outlast a two-hour window.
+
+Every job that runs an e2e harness now warms the base images that harness will
+build before it builds them, via `scripts/warm_base_images.py --suite <name>`:
+a bounded retry for a short failure, then a **second source** for a long one —
+the same reference from Docker Hub, tagged under the mirror's name, which is
+the same content-addressed image. With it in the local store BuildKit builds
+without contacting the registry at all. The step reads each suite's own compose
+files, so the 17 suites that build nothing pay a parse and no pull, and a test
+asserts every harness job has it, Linux-guarded, directly after checkout. The
+root `Dockerfile`'s `go mod download` is retried four times and still ends the
+build when every attempt fails.
 
 ## The python base image is held at 3.14 until zstandard ships a cp315 wheel
 

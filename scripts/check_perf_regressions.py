@@ -389,12 +389,6 @@ def _func_span(clean_lines, name):
     return None
 
 
-def _func_body(clean_lines, name):
-    """The lines of `func <name>(...)`, header included, or None if it is gone."""
-    span = _func_span(clean_lines, name)
-    return None if span is None else clean_lines[span[0]:span[1] + 1]
-
-
 def _bound_params(body_text):
     """The integer-parameter names of a Go func -- the bounds it was HANDED.
 

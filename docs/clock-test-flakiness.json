@@ -1,0 +1,88 @@
+{
+  "_comment": [
+    "Day-granular wall-clock reads in the test and e2e-harness surface that",
+    "scripts/check_clock_test_flakiness.py has seen and that are ACCEPTED. The checker",
+    "fails on any read not listed here, and equally on any entry here that no longer",
+    "matches a read -- a stale allowance is how a ban quietly stops applying.",
+    "",
+    "THE FOURTH FLAKINESS LEDGER, and the first on an axis with no timing tell. Its",
+    "three siblings -- docs/test-flakiness.json (Go), docs/python-test-flakiness.json",
+    "and docs/vitest-test-flakiness.json -- all hold sites where the question is",
+    "whether a WAIT is bounded. docs/60-test-flakiness.md §6's first bullet named what",
+    "that leaves out in its own words: 'flakiness with no timing tell ... nothing here",
+    "covers within-test nondeterminism that the race detector cannot see.' This is one",
+    "sharply-defined member of that class. See docs/60-test-flakiness.md §9 for the",
+    "measured sweep behind it.",
+    "",
+    "THE DEFECT IT WAS WRITTEN FOR. A test performed operations whose audit events",
+    "were stamped from the store's clock, THEN read the wall clock a second time to",
+    "compute 'today', then asserted those events appear in that day's window. The two",
+    "reads are independent, so a run crossing UTC midnight between them queries a day",
+    "the events are not in. No sleep to flag, no shared memory for -race, no",
+    "cross-test ordering for -shuffle=on: the whole failure is two readings of one",
+    "clock landing either side of a boundary, once a day, in a sub-second window.",
+    "",
+    "Keyed on file + enclosing symbol + KIND rather than line number, like all three",
+    "siblings: a line number goes stale on any edit above it, and a ledger that must",
+    "be renumbered to stay valid is a ledger people delete entries from. One entry",
+    "covers every read of its kind in that symbol, which is why the clock oracle below",
+    "is one entry for three reads.",
+    "",
+    "HOW THIS LEDGER DIFFERS FROM ITS SIBLINGS, stated because it is a real divergence",
+    "and not an oversight. There a repaired site STOPS MATCHING -- a bare sleep",
+    "becomes a bounded poll and the pattern no longer fires. Here a repaired read is",
+    "still a read: the repair is in what happens to the value downstream, which no",
+    "static scan of this kind can see. The two sites the sweep repaired",
+    "(internal/server/activityevents_test.go and e2e/az-rest/driver.py) are therefore",
+    "absent for a DIFFERENT reason -- they no longer read the clock themselves, both",
+    "now calling a named straddle-aware helper -- and the repair is held by",
+    "internal/testsupport/clock_test.go rather than by this file. What remains below",
+    "is reads whose verdict cannot turn on which day they name, and the `bucket` on",
+    "each says which kind of safe that is:",
+    "",
+    "  verdict-day-independent  the day feeds a request whose assertion is a STATUS",
+    "                           CODE, so no data has to fall inside the window",
+    "  asserts-about-today      the claim genuinely is about the current day, so a",
+    "                           day flip changes the question rather than corrupting",
+    "                           the answer -- and the assertion tolerates it",
+    "  straddle-primitive       the one clock read behind a straddle-aware helper, in",
+    "                           a file that cannot import one"
+  ],
+  "accepted": [
+    {
+      "file": "internal/server/activityevents_test.go",
+      "symbol": "TestActivityEventsRequestValidation",
+      "kind": "day-granular-now",
+      "bucket": "verdict-day-independent",
+      "why": "Every assertion in this test is a STATUS CODE: five 400s for malformed or two-day windows, and one 200 for the unquoted spelling. None of them requires an event to fall inside the window, so a day flip between this read and the requests changes which day is refused and not whether it is refused. The one data assertion in the test uses fixed 2001-01-01 bounds and never touches this value. It is left as a raw read rather than routed through testsupport.UTCDay deliberately: this is the case the ledger exists to HOLD, and its sibling four lines up -- the same expression, load-bearing -- is the case it exists to keep empty. The `spans two days` case here is also what makes a widened window unavailable as a repair anywhere else in this tree, so the two readings sit beside each other on purpose."
+    },
+    {
+      "file": "internal/api/api_failure_test.go",
+      "symbol": "TestAdminSurfaceStorageFailures",
+      "kind": "day-granular-now",
+      "bucket": "verdict-day-independent",
+      "why": "The activity_events table has been DROPPED one line above, so the only possible answer is 500 and the window is there to get past request validation. A day flip cannot turn a missing table into a present one. The test asserts nothing about which events come back, because none can."
+    },
+    {
+      "file": "internal/testsupport/clock_test.go",
+      "symbol": "TestUTCDayIsADayAndIsUTC",
+      "kind": "day-granular-now",
+      "bucket": "asserts-about-today",
+      "why": "This is the ORACLE for UTCDay, so it cannot avoid reading a clock: proving the helper reads UTC rather than local time requires an independent reading to compare against. The straddle is handled rather than hoped against -- the call is bracketed by two reads and EITHER of their days is accepted, so a midnight crossing inside the bracket passes while a local-time read or a day outside it still fails. Comparing against a single later read is the defect this whole change removes, and writing it that way first is also what found the checker's missing two-statement shape."
+    },
+    {
+      "file": "python/tests/test_check_runtime_floor_freshness.py",
+      "symbol": "test_the_repositorys_own_file_parses_and_is_currently_fresh",
+      "kind": "day-granular-now",
+      "bucket": "asserts-about-today",
+      "why": "The claim IS about today -- that docs/runtime-floor.json's recorded reading has not aged out as of now -- and the test's own docstring says so: 'this is the one that will start failing when the reading ages out, which is the point.' There is one read and one use, with no second clock reading to straddle, and the other side of the comparison is a date stored in a file. A day flip advances the question by a day, which is the intended behaviour of a freshness gate rather than a flake."
+    },
+    {
+      "file": "e2e/az-rest/driver.py",
+      "symbol": "utc_day",
+      "kind": "day-granular-now",
+      "bucket": "straddle-primitive",
+      "why": "The one clock read in this driver, and the primitive the repair is built on: activity_days() calls it to detect the straddle, and driver() calls it once BEFORE the creates whose events the window must contain. The Go half of the same repair lives in internal/testsupport/clock.go, which the Go checker does not scan at all because it is not a _test.go file -- the same exemption internal/testsupport/wait.go has from the Go sleep checker. This driver cannot do that: it is copied INTO the azure-cli image and run as `python3 /driver.py`, so e2e/ is not on its import path and the helper has to live in the scanned file. Recorded rather than exempted by filename, because an unledgered escape hatch is how a checker stops mattering."
+    }
+  ]
+}
