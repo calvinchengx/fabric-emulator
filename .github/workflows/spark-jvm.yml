@@ -19,14 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite spark-jvm
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -38,14 +38,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-run
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -57,14 +57,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite eventstream
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -76,21 +76,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite sail-jvm-client
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
       # Keyed on the fetcher because the client coordinate lives there and
       # everything else is derived from its pom — a bump changes the file and
       # invalidates this in one move.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: e2e/sail-jvm-client/jars
           key: connect-client-jars-${{ hashFiles('scripts/fetch_connect_client_jars.py') }}

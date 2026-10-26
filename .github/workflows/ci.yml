@@ -103,7 +103,7 @@ jobs:
     steps:
       # Full history: the classifier diffs against the base commit, and the
       # default depth-1 checkout cannot see it.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # The self-test runs BESIDE the real classification, every time. A path
@@ -171,8 +171,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -327,7 +327,7 @@ jobs:
       # Uploaded as an artifact rather than committed: the docs site consumes
       # it on its own schedule (docs-site.yml), so no generated number lands in
       # the repository's history.
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           python-version: '3.12'
@@ -338,9 +338,9 @@ jobs:
       # Node as well, because the portal is the third measured tier and all five
       # badge numbers are written by one script — a second publisher would be a
       # second place for them to disagree.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           node-version: '22'
@@ -369,7 +369,7 @@ jobs:
           uv run --frozen --group test python scripts/coverage_badges.py \
             --out badges --go "$go_pct" ${py_pct:+--python "$py_pct"} \
             ${portal_pct:+--portal "$portal_pct"}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           name: coverage-badges
@@ -383,11 +383,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-run --suite sail --suite livy
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # Real e2e suites, instrumented. Every harness layers
@@ -428,7 +428,7 @@ jobs:
       - id: merge
         run: scripts/coverage_merge.sh
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-merged
           path: coverage-merged.out
@@ -441,7 +441,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-matrix
@@ -457,7 +457,7 @@ jobs:
       # Retrying does not fix a sustained per-IP limit; not making the request
       # does. The Dockerfile falls back to curl when the cache is cold, so this
       # is an optimisation rather than a dependency.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -471,7 +471,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
@@ -491,7 +491,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
@@ -500,7 +500,7 @@ jobs:
           version: "0.11.32"
       # Maven Central rate-limits GitHub-hosted runners (shared IP pools).
       # Same cache + prefetch as engine-matrix / notebook-jvm.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -523,11 +523,11 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite conformance
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -552,8 +552,8 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       # Strict: all 67 claims are mapped, so a new supported row without a
@@ -1128,8 +1128,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # THE DETECTION GAP THIS CLOSES. Before this job,
@@ -1175,8 +1175,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1225,8 +1225,8 @@ jobs:
       # Full history is not needed, but the check asks GIT for its file list
       # rather than walking the filesystem — running either example leaves
       # artifacts behind, and only one of the pair is ever run at a time.
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       # No job dependency and no emulator: this is a source-level claim, so it
@@ -1242,8 +1242,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1266,9 +1266,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: pnpm
@@ -1326,13 +1326,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: pnpm
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1429,14 +1429,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cicd
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1454,14 +1454,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cicd
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1486,14 +1486,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite arm-capacities
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1515,14 +1515,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-target
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1542,7 +1542,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rti
@@ -1568,14 +1568,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-eventhouse
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1593,7 +1593,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite s3
@@ -1617,7 +1617,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite azurite-shortcut
@@ -1641,7 +1641,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite salesforce
@@ -1667,7 +1667,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite environment
@@ -1692,7 +1692,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite environment-notebook
@@ -1723,7 +1723,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rest-helix
@@ -1753,7 +1753,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite rest-servicenow
@@ -1783,7 +1783,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite external-shortcuts
@@ -1807,11 +1807,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite governance
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1830,18 +1830,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite portal-terminal
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: pnpm
@@ -1888,11 +1888,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite governance
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1914,14 +1914,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite delta-rs
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1944,14 +1944,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite adls-sdk
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -1973,14 +1973,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite purview-datamap
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -2003,14 +2003,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-core
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -2031,14 +2031,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-fabriciq
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -2067,14 +2067,14 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite mcp-datawarehouse
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -2096,14 +2096,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite azcopy
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       # Microsoft's real `azcopy` binary uploads a multi-block file (Put Block +
@@ -2123,7 +2123,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Builds the distroless image and runs it with a persistent volume,
       # asserting the nonroot user opens its SQLite DB and writes state to
       # the volume — the container path nothing else in CI exercised.
@@ -2136,7 +2136,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite vscode-extension
@@ -2154,7 +2154,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite airflow
@@ -2172,7 +2172,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite spark
@@ -2191,7 +2191,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite eventstream
@@ -2207,7 +2207,7 @@ jobs:
       # engine reads GET .../sources/{did} where Sail reads .../sources/{did}/events,
       # so the two engines credit different routes. The baseline is derived from
       # what THIS job produces, not from the default engine a developer runs.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-eventstream
@@ -2221,7 +2221,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite agent-contract
@@ -2244,7 +2244,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite livy
@@ -2263,7 +2263,7 @@ jobs:
       # not worth coupling the conformance gate to the heaviest stack in this
       # repository, because an absent recording takes that gate red for a
       # reason that is not its own.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-livy
@@ -2277,7 +2277,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-display
@@ -2298,7 +2298,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-matrix
@@ -2319,7 +2319,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite two-context
@@ -2341,7 +2341,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite jupyter
@@ -2364,7 +2364,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-driven
@@ -2385,7 +2385,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite sail
@@ -2403,7 +2403,7 @@ jobs:
       # not worth coupling the conformance gate to the heaviest stack in this
       # repository, because an absent recording takes that gate red for a
       # reason that is not its own.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-sail
@@ -2417,7 +2417,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite data-science-loop
@@ -2435,7 +2435,7 @@ jobs:
       # the same time and REVERTED: one route does not justify coupling the
       # conformance gate to a suite, since an absent recording takes it red for
       # a reason that is not its own.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-data-science-loop
@@ -2449,7 +2449,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fabric-cli
@@ -2474,7 +2474,7 @@ jobs:
       # The recording is an artifact rather than a file anybody commits: it is
       # regenerated by every run, and reading it is how a finding above gets
       # diagnosed without re-running the suite locally.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-fabric-cli
@@ -2488,7 +2488,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite az-rest
@@ -2504,7 +2504,7 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/az-rest/run.py
       # Feeds the aggregate `openapi-conformance` job: the union is what the
       # route ratchet is measured over, since each suite drives a slice.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-az-rest
@@ -2518,7 +2518,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite pipeline-activities
@@ -2538,7 +2538,7 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/pipeline-activities/run.py
       # Feeds the aggregate `openapi-conformance` job: the union is what the
       # route ratchet is measured over, since each suite drives a slice.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-pipeline-activities
@@ -2552,7 +2552,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite engine-activities
@@ -2576,7 +2576,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite databricks-chain
@@ -2604,7 +2604,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite terraform-fabric
@@ -2620,7 +2620,7 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/terraform-fabric/run.py
       # Feeds the aggregate `openapi-conformance` job: the union is what the
       # route ratchet is measured over, since each suite drives a slice.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-terraform-fabric
@@ -2634,7 +2634,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite fab-driven
@@ -2657,7 +2657,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite deployment-pipelines
@@ -2679,7 +2679,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite powerbi-ps
@@ -2702,7 +2702,7 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/powerbi-ps/run.py
       # Feeds the aggregate `openapi-conformance` job: the union is what the
       # route ratchet is measured over, since each suite drives a slice.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-powerbi-ps
@@ -2716,7 +2716,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite dbt-fabricspark
@@ -2737,7 +2737,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite dbt-fabric
@@ -2805,7 +2805,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite ${{ matrix.harness }}
@@ -2817,7 +2817,7 @@ jobs:
       # Scoped by runner.arch as well as OS because the .debs are architecture
       # specific, and carrying a -v1 so a package-list change can invalidate it
       # deliberately rather than by hoping the key changes.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/odbc-debs
           key: odbc18-${{ runner.os }}-${{ runner.arch }}-msodbcsql18-unixodbc-krb5-v1
@@ -2914,7 +2914,7 @@ jobs:
       # unique per workflow run, so a fixed name would have them collide; only
       # the `medallion` harness records, and the rest upload nothing under
       # if-no-files-found: warn.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: recording-${{ matrix.harness }}
@@ -2924,7 +2924,7 @@ jobs:
       # A leg cannot compare itself: the counterpart is built by a different
       # example on a different runner, which is why compare.py skips when run
       # inside a single leg.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: silver-summary-${{ matrix.harness }}
@@ -2936,7 +2936,7 @@ jobs:
       # simple legs, which write neither file, are not made to look broken.
       # `ignore` for exactly that reason: on a simple leg finding nothing here
       # is correct, and `warn` would train people to skim past it.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: advanced-summaries-${{ matrix.harness }}
@@ -2970,12 +2970,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: silver-summary-medallion
           path: examples/medallion-pyspark
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: silver-summary-medallion-dbt-fabricspark
           path: examples/medallion-dbt-fabricspark
@@ -3011,20 +3011,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: silver-summary-medallion-advanced
           path: examples/medallion-advanced-pyspark
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: advanced-summaries-medallion-advanced
           path: examples/medallion-advanced-pyspark
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: silver-summary-medallion-advanced-dbt-fabricspark
           path: examples/medallion-advanced-dbt-fabricspark
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: advanced-summaries-medallion-advanced-dbt-fabricspark
           path: examples/medallion-advanced-dbt-fabricspark
@@ -3055,14 +3055,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite duckdb
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -3083,14 +3083,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebookutils
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -3124,7 +3124,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite notebook-run
@@ -3141,7 +3141,7 @@ jobs:
       # Retrying does not fix a sustained per-IP limit; not making the request
       # does. The Dockerfile falls back to curl when the cache is cold, so this
       # is an optimisation rather than a dependency.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: docker/spark-runtime/jars
           key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
@@ -3163,8 +3163,8 @@ jobs:
         ports:
           - 1433:1433
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # entra-emulator runs in-process (a go.mod dependency); fabric's SQL/TDS
@@ -3188,14 +3188,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite semantic-model
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       # Publishes the golden TMSL model as a SemanticModel item and runs the
@@ -3219,7 +3219,7 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/semantic-model/run.py
         env:
           FABRIC_RECORD_RESPONSES: ${{ matrix.os == 'ubuntu-latest' && format('{0}/e2e/semantic-model/recording/responses.jsonl', github.workspace) || '' }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && matrix.os == 'ubuntu-latest'
         with:
           name: recording-semantic-model
@@ -3237,14 +3237,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite great-expectations
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -3264,8 +3264,8 @@ jobs:
     # 'pending' and 'stuck' look identical.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -3288,7 +3288,7 @@ jobs:
       # default 7 days, so a poisoned set expires in a day rather than a week.
       # NOT `skip-cache: true`: that pays the full analysis cost on every run
       # forever to route around one bad artifact.
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
           cache-invalidation-interval: 1
@@ -3300,7 +3300,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # EVERY recording, validated TOGETHER.
       #
       # Conformance would work per-suite; route coverage would not. Each suite
@@ -3308,7 +3308,7 @@ jobs:
       # routes -- so a ratchet measured per-suite would fail on every pull
       # request while the tree was getting better. The union is the only
       # honest denominator.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: recording-*
           path: recordings
