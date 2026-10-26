@@ -17,14 +17,16 @@ on:
         default: false
 
 permissions:
-  contents: write # create the GitHub Release
-  packages: write # push the image to GHCR
+  contents: read
 
 jobs:
   # Gate: the Makefile is what users are told to run, on all three platforms.
   # A release that publishes binaries whose documented entry point is broken on
   # Windows or macOS is worse than a late release.
   make-targets:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     uses: ./.github/workflows/make-targets.yml
 
   fabric-qualification:
@@ -47,18 +49,22 @@ jobs:
     secrets: inherit
 
   binaries:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Cross-platform binaries (GoReleaser)
     needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # GoReleaser needs full history/tags
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v7
+          cache: false
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: '~> v2'
           args: release --clean
@@ -103,27 +109,30 @@ jobs:
         run: uv run --no-project --python 3.12 scripts/check_cask_stanzas.py --rendered dist/homebrew
 
   image:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Docker image → GHCR
     needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v6
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -148,12 +157,15 @@ jobs:
   # contract cannot see at all: `createDataFrame` against a live engine, which
   # is where the `'3GB'` conf assumption died without any shape being wrong.
   agent-contract:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Consumer SQL shapes execute on the built agent
     needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Warm the images this job builds and pulls
         if: runner.os == 'Linux'
         run: python3 scripts/warm_base_images.py --suite agent-contract
@@ -172,6 +184,9 @@ jobs:
   # consumer contract must not reach GHCR, because once it does the only thing
   # standing between it and a consumer is that consumer's own upgrade.
   compute-images:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Compute sidecar images → GHCR
     needs: [fabric-qualification, make-targets, agent-contract]
     runs-on: ubuntu-latest
@@ -189,10 +204,10 @@ jobs:
             dockerfile: docker/spark-agent/Dockerfile
             build_args: ""
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -207,7 +222,7 @@ jobs:
       # image FOR; the old one keeps every existing reference resolving until
       # they have moved. The old name keeps its release-version tag, because
       # that is what those references already pin.
-      - uses: docker/metadata-action@v6
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
           images: |
@@ -217,7 +232,7 @@ jobs:
             type=raw,value=${{ steps.dep.outputs.version }},enable=true
             type=semver,pattern={{version}}
             type=raw,value=latest
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -245,13 +260,16 @@ jobs:
   # before it exists 404s. `--clobber` mirrors release.replace_existing_artifacts
   # in .goreleaser.yaml, so re-running a published tag is safe.
   fixtures:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Published wheels → the release
     needs: binaries
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -264,7 +282,7 @@ jobs:
       - run: python scripts/build_fixture_wheels.py
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
-      - run: gh release upload "${{ github.ref_name }}" dist/fixtures/*.whl --clobber
+      - run: gh release upload "${GITHUB_REF_NAME}" dist/fixtures/*.whl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -295,6 +313,9 @@ jobs:
   # expired is silence, which is why the acceptance workflow also runs on a
   # daily schedule — see its own comment.
   dispatch:
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
     name: Tell every Fabric platform to verify this release
     needs: [fixtures, image, compute-images]
     runs-on: ubuntu-latest
