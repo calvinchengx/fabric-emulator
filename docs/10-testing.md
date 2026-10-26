@@ -171,7 +171,8 @@ this could go wrong:
 - **A deletion or rename is never docs-only**, whatever the paths say.
   `internal/api/examples_readme_test.go` reads `examples/README.md` and fails
   when a `(../docs/<file>)` link points at nothing, so removing a page *can*
-  break a Go test. Adding or editing one cannot.
+  break a Go test. Adding or editing one cannot. Such a change takes the portal
+  lane below instead of `full`, because that lane runs the Go tests.
 - **Skipped, not absent.** The gate is a job-level `if:`, not `paths-ignore:`
   on the workflow, so a documentation pull request shows sixty-odd jobs
   explicitly declining to run and the classifier's reasoning is in the run's
@@ -182,6 +183,43 @@ this could go wrong:
 Not covered: `make-targets.yml` (three jobs) still runs on every change. It is
 also the release gate via `workflow_call`, and a gate that can be skipped is
 worth more care than three runner-minutes.
+
+## The portal lane — what a portal or front-end dependency change runs
+
+A **pull request** confined to `portal/`, the pnpm workspace files
+(`pnpm-lock.yaml`, `pnpm-workspace.yaml`, the root `package.json`) and
+documentation runs the **Go test matrix and the four portal jobs**, not the e2e
+stacks. The same classifier answers it, as `lane=portal` beside `docs_only`.
+About half the pull requests on 2026-10-25 — bits-ui, jsdom, svelte, vitest,
+mermaid, playwright, svelte-check, lucide — were of this kind, and each ran
+~110 checks: Spark, medallion, OpenMetadata, Kafka and dbt, none of which can
+see a Svelte component.
+
+Which jobs can see one was found by looking, and the answer is wider than
+`portal/`. `portal/dist` is **embedded in the Go binary** (`portal/embed.go`)
+and eight Go test files read it, so the Go tests run on every operating system.
+`portal`, `portal-types` and `portal-terminal` read `portal/` directly. Those
+four are `PORTAL_LANE_JOBS` in `scripts/docs_only_change.py`, each with its
+reason; `e2e/semantic-model`'s check that an unrouted path does not fall through
+to the portal's HTML is decided by the Go router, not by anything in `portal/`,
+so it is not among them. The pnpm files belong because the workspace is exactly
+`portal` and `website`, the lockfile's only importers, and the site builds in
+`docs-site.yml`, which filters on its own paths.
+
+The tests hold the workflow to that set in both directions. Every gated job is
+either in `PORTAL_LANE_JOBS` or full-only, with no third form, so a new job has
+to choose; and a job whose steps read the portal can never be full-only, since a
+full-only job is *skipped* on exactly the change it would catch. Full-only jobs
+are written `lane != 'docs' && lane != 'portal'` rather than `lane == 'full'`:
+if the classify step ever fails to write the output it reads as empty, and
+`== 'full'` would then skip everything, while "not a reduced lane" runs
+everything — the docs lane's `docs_only != 'true'`, one level up. The two
+medallion comparisons run under `!cancelled()`, so they would start even with
+their inputs skipped; they are full-only explicitly.
+
+As with the docs lane, **a push to main runs everything**, and a rename inside
+`portal/` is allowed here where it is not in the docs lane: every rebuild renames
+a hashed dist asset, and the lane runs the jobs that would notice.
 
 ## The failure this codebase keeps producing
 

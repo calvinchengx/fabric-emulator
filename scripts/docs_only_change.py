@@ -1,5 +1,34 @@
 #!/usr/bin/env python3
-"""Is this change confined to documentation? Decides whether CI may run its cheap lane.
+"""Which CI lane does this change need? Decides whether CI may skip work it cannot use.
+
+Three lanes, and the safe direction between them is always toward `full`:
+
+  docs    documentation only -- the gates that read prose run, and nothing else
+  portal  documentation and/or the portal (its source, its committed dist, the
+          pnpm workspace that builds it) -- the Go test matrix and the four
+          jobs that can observe the portal run, and the e2e stacks do not
+  full    anything else -- everything runs
+
+THE PORTAL LANE, and why it is shaped like this. On 2026-10-25 roughly half the
+pull requests -- bits-ui, jsdom, svelte, vitest, mermaid, playwright,
+svelte-check, lucide -- changed nothing but `portal/` or the pnpm lockfile, and
+each ran ~110 checks: Spark, medallion, OpenMetadata, Kafka, dbt, none of which
+can see a Svelte component. The jobs that CAN see one were found by looking, not
+guessed: `portal/dist` is EMBEDDED in the Go binary (portal/embed.go) and eight
+Go test files read it, so the Go test matrix runs; `portal`, `portal-types` and
+`portal-terminal` read `portal/` directly. Those are PORTAL_LANE_JOBS below, and
+the test module asserts ci.yml gates exactly them on `lane != 'docs'` and every
+other conditional job on `lane == 'full'`, so the set cannot drift from the
+workflow.
+
+`pnpm-lock.yaml`, `pnpm-workspace.yaml` and the root `package.json` belong to the
+lane because the workspace is exactly `portal` and `website` -- the lockfile's
+only importers -- and the root manifest holds build scripts and nothing else.
+
+A deletion or rename is allowed in the portal lane where it is not in the docs
+lane: every portal rebuild renames a hashed dist asset, and the docs lane's one
+deletion hazard (a Go test asserting examples/README.md's links) is a Go test,
+which this lane runs.
 
 WHY THIS EXISTS. A one-file edit to `website/scripts/sync-docs.mjs` (#363) ran
 **95 checks** on the pull request and the same matrix again on main: three
@@ -60,6 +89,43 @@ def is_doc(path: str) -> bool:
     return path.startswith(DOC_TREES) or path in DOC_FILES
 
 
+# The portal, and the pnpm workspace files that can only reach it or the site.
+PORTAL_TREES = ("portal/",)
+PORTAL_FILES = ("pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json")
+
+# Jobs in ci.yml that run in the portal lane, WITH the reason each can observe a
+# portal change. Every other conditional job in ci.yml runs in `full` only.
+PORTAL_LANE_JOBS = {
+    "test": "portal/dist is embedded in the Go binary and eight Go test files read it",
+    "portal": "builds portal/ from source, checks the committed dist, smokes it in a browser",
+    "portal-types": "type-checks portal/ (svelte-check)",
+    "portal-terminal": "drives the portal's terminal pane in a real browser",
+}
+
+
+def is_portal(path: str) -> bool:
+    return path.startswith(PORTAL_TREES) or path in PORTAL_FILES
+
+
+def lane(name_status: str) -> tuple[str, str]:
+    """Return (lane, reason) for the output of `git diff --name-status`."""
+    rows = [ln.split("\t") for ln in name_status.splitlines() if ln.strip()]
+    if not rows:
+        return "full", "no changed files could be determined; running everything"
+    for row in rows:
+        if len(row) < 2:
+            return "full", f"unparseable diff row {row!r}; running everything"
+    docs_only, why = classify(name_status)
+    if docs_only:
+        return "docs", why
+    for row in rows:
+        for path in row[1:]:
+            if not (is_doc(path) or is_portal(path)):
+                return "full", f"{path} is outside the docs and portal lanes"
+    return "portal", (f"all {len(rows)} changed path(s) are documentation or the "
+                      "portal; the Go tests and the portal jobs run")
+
+
 def classify(name_status: str) -> tuple[bool, str]:
     """Return (docs_only, reason) for the output of `git diff --name-status`."""
     rows = [ln.split("\t") for ln in name_status.splitlines() if ln.strip()]
@@ -92,12 +158,15 @@ def classify(name_status: str) -> tuple[bool, str]:
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return self_test()
-    docs_only, reason = classify(sys.stdin.read())
+    name_status = sys.stdin.read()
+    docs_only, _ = classify(name_status)
+    which, reason = lane(name_status)
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a", encoding="utf-8") as fh:
             fh.write(f"docs_only={'true' if docs_only else 'false'}\n")
-    print(f"docs_only={'true' if docs_only else 'false'} — {reason}")
+            fh.write(f"lane={which}\n")
+    print(f"lane={which} docs_only={'true' if docs_only else 'false'} — {reason}")
     return 0
 
 
@@ -127,15 +196,34 @@ def self_test() -> int:
         ("", False, "empty diff means unknown, not clean"),
         ("M", False, "unparseable row"),
     ]
+    lane_cases: list[tuple[str, str, str]] = [
+        ("M\tdocs/01-quickstart.md", "docs", "docs stay docs"),
+        ("M\tportal/src/App.svelte", "portal", "portal source"),
+        ("M\tportal/package.json\nM\tpnpm-lock.yaml", "portal", "a portal dependency bump"),
+        ("R100\tportal/dist/assets/index-a.js\tportal/dist/assets/index-b.js\nM\tportal/dist/index.html",
+         "portal", "a dist rebuild renames its hashed asset"),
+        ("D\tdocs/55-new.md", "portal",
+         "a deleted page: its one hazard is a Go test, and this lane runs the Go tests"),
+        ("M\tportal/src/App.svelte\nM\tinternal/store/bus.go", "full", "portal plus Go"),
+        ("M\tportal/src/App.svelte\nM\t.github/workflows/ci.yml", "full", "a workflow"),
+        ("M\tportalx/thing.ts", "full", "a prefix that only resembles the portal"),
+        ("M\twebsite/package.json\nM\tpnpm-lock.yaml", "portal", "a site dependency bump"),
+        ("", "full", "empty diff"),
+        ("M", "full", "unparseable row"),
+    ]
     bad = []
     for diff, want, label in cases:
         got, reason = classify(diff)
         if got != want:
             bad.append(f"  {label}: wanted docs_only={want}, got {got} ({reason})")
+    for diff, want, label in lane_cases:
+        got, reason = lane(diff)
+        if got != want:
+            bad.append(f"  {label}: wanted lane={want}, got {got} ({reason})")
     if bad:
         print("docs_only_change --self-test FAILED:\n" + "\n".join(bad))
         return 1
-    print(f"docs_only_change --self-test: {len(cases)} cases pass")
+    print(f"docs_only_change --self-test: {len(cases) + len(lane_cases)} cases pass")
     return 0
 
 

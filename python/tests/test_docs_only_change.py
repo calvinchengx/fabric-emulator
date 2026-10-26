@@ -130,7 +130,7 @@ def test_main_writes_the_github_output_and_says_why(tmp_path, monkeypatch, capsy
 
     assert c.main([]) == 0
 
-    assert out.read_text(encoding="utf-8") == "docs_only=true\n"
+    assert out.read_text(encoding="utf-8") == "docs_only=true\nlane=docs\n"
     printed = capsys.readouterr().out
     assert "docs_only=true" in printed
     assert "documentation" in printed
@@ -148,7 +148,7 @@ def test_main_appends_rather_than_truncating(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO("M\tinternal/api/items.go\n"))
 
     assert c.main([]) == 0
-    assert out.read_text(encoding="utf-8") == "something_else=1\ndocs_only=false\n"
+    assert out.read_text(encoding="utf-8") == "something_else=1\ndocs_only=false\nlane=full\n"
 
 
 def test_main_outside_actions_still_answers(monkeypatch, capsys):
@@ -178,3 +178,116 @@ def test_the_self_test_would_notice_a_broken_classifier(monkeypatch, capsys):
     monkeypatch.setattr(c, "classify", lambda _diff: (True, "everything is docs"))
     assert c.self_test() == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+# --- the portal lane ------------------------------------------------------------
+#
+# The asymmetry is the same as the docs lane's, one level up: a wrong `portal`
+# skips the e2e stacks on a change that needed them, a wrong `full` costs runner
+# minutes. So these press on everything that could produce `portal`, and the
+# wiring tests below press on the two ways the WORKFLOW could skip work it needs.
+
+import re  # noqa: E402
+
+import yaml  # noqa: E402
+
+CI = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+FULL = "needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'"
+PORTAL = "needs.changes.outputs.docs_only != 'true'"
+
+
+@pytest.mark.parametrize("diff, want", [
+    ("M\tportal/src/App.svelte", "portal"),
+    ("M\tportal/package.json\nM\tpnpm-lock.yaml", "portal"),
+    ("M\twebsite/package.json\nM\tpnpm-lock.yaml", "portal"),
+    ("M\tpnpm-workspace.yaml", "portal"),
+    ("M\tpackage.json", "portal"),
+    # Every dist rebuild renames its hashed bundle; the lane must survive it.
+    ("R100\tportal/dist/assets/index-a.js\tportal/dist/assets/index-b.js", "portal"),
+    ("D\tdocs/55-new.md", "portal"),
+    ("M\tdocs/01-quickstart.md", "docs"),
+])
+def test_lane_reduced_cases(diff, want):
+    assert c.lane(diff)[0] == want
+
+
+@pytest.mark.parametrize("diff", [
+    "M\tportal/src/App.svelte\nM\tinternal/store/bus.go",
+    "M\tportal/src/App.svelte\nM\t.github/workflows/ci.yml",
+    "M\tportal/src/App.svelte\nM\tscripts/docs_only_change.py",
+    "M\tportalx/thing.ts",
+    "M\tportal",          # the bare name, not the tree
+    "M\te2e/portal-terminal/run.py",
+    "R100\tportal/x.ts\tinternal/x.go",   # a rename OUT of the lane
+    "",
+    "M",
+])
+def test_anything_outside_the_lanes_runs_everything(diff):
+    assert c.lane(diff)[0] == "full"
+
+
+def test_main_writes_the_lane_beside_docs_only(tmp_path, monkeypatch, capsys):
+    out = tmp_path / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(sys, "stdin", io.StringIO("M\tportal/src/App.svelte\n"))
+    assert c.main([]) == 0
+    assert out.read_text(encoding="utf-8").splitlines() == ["docs_only=false", "lane=portal"]
+    assert "lane=portal" in capsys.readouterr().out
+
+
+def _jobs():
+    return yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+
+
+def test_every_gated_job_is_in_exactly_one_lane_and_the_portal_set_is_the_declared_one():
+    """The single source of truth is PORTAL_LANE_JOBS. A job is either one of
+    them -- gated `docs_only != 'true'`, so it runs in portal and full -- or
+    full-only. No third form, so a new job has to pick."""
+    problems, portal = [], set()
+    for jid, job in _jobs().items():
+        cond = str(job.get("if", ""))
+        if "needs.changes" not in cond:
+            continue
+        bare = cond.replace("${{", "").replace("}}", "").replace("!cancelled() &&", "").strip()
+        if jid in c.PORTAL_LANE_JOBS:
+            portal.add(jid)
+            if bare != PORTAL:
+                problems.append(f"{jid}: portal-lane job gated {cond!r}")
+        elif bare != FULL:
+            problems.append(f"{jid}: gated {cond!r}, want the full-only form")
+    assert problems == []
+    assert portal == set(c.PORTAL_LANE_JOBS), "a declared portal-lane job is missing from ci.yml"
+
+
+def test_a_job_that_reads_the_portal_is_never_full_only():
+    """The under-testing direction. A full-only job is SKIPPED on a portal
+    change, so a job that reads `portal/` and is not in PORTAL_LANE_JOBS would
+    miss exactly the changes it exists to catch."""
+    for jid, job in _jobs().items():
+        steps = " ".join(str(s) for s in job.get("steps", []))
+        if re.search(r"\bportal\b|portal/|portal-", steps):
+            assert jid in c.PORTAL_LANE_JOBS or "needs.changes" not in str(job.get("if", "")), jid
+
+
+def test_a_missing_lane_output_runs_everything():
+    """If the classify step ever fails to write `lane`, the output is empty.
+    `lane == 'full'` is FALSE on an empty string and would skip every heavy
+    job; the form used is "not a reduced lane", which an empty value satisfies.
+    The early exits must write `lane=full` too, not leave it unset."""
+    assert "== 'full'" not in CI.read_text(encoding="utf-8")
+    for lane in ("", "full"):
+        reduced = lane in ("docs", "portal")
+        assert not reduced, "an empty or full lane must run the full-only jobs"
+    run = " ".join(str(s.get("run", "")) for s in _jobs()["changes"]["steps"])
+    assert run.count('echo "docs_only=false"') == run.count('echo "lane=full"') == 2
+    assert "lane" in _jobs()["changes"]["outputs"]
+
+
+def test_the_two_cancelled_tolerant_aggregates_are_full_only():
+    """`!cancelled()` jobs run even when their inputs were skipped. The two
+    medallion comparisons would then start in a portal lane, find no medallion
+    artifacts, and fail -- so they must be full-only, explicitly."""
+    tolerant = {jid: str(j["if"]) for jid, j in _jobs().items() if "!cancelled()" in str(j.get("if", ""))}
+    assert len(tolerant) == 2, tolerant
+    for jid, cond in tolerant.items():
+        assert FULL in cond, (jid, cond)

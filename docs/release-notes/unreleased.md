@@ -331,3 +331,19 @@ inherited one that cannot be built. Minor bumps of `library/python` are now
 held with a `LIFT THIS` naming the upstream change that retires the hold —
 minors rather than 3.15 alone, because 3.16 fails the same way until the wheel
 exists, while 3.14 patch updates still arrive inside the tag.
+
+## A portal or front-end dependency change no longer runs the e2e stacks
+
+A pull request confined to `portal/`, the pnpm workspace files and
+documentation now runs the Go test matrix and the four jobs that can observe the
+portal, instead of all ~110 checks. On 2026-10-25 about half the pull requests
+were of this kind, and the account's runners were the bottleneck: at points one
+job ran with 24 runs queued behind it. `portal/dist` is embedded in the Go
+binary, so the Go tests still run on every OS; `portal`, `portal-types` and
+`portal-terminal` read `portal/` directly. Every commit on `main` still runs
+everything.
+
+Dependabot no longer fires every ecosystem on the same day — Go on Monday
+through GitHub Actions on Friday — and npm's minor and patch updates arrive as
+one weekly pull request rather than one each. Seven separate npm pull requests
+arrived that way on 2026-10-25; majors stay individual.

@@ -8,8 +8,12 @@ updates:
   # keeps the witness suites upgrading as a compatible set.
   - package-ecosystem: gomod
     directory: /
+    # A different weekday per ecosystem. All five used to fire on the same day,
+    # and on 2026-10-25 eight pull requests (~110 checks each) arrived within
+    # 34 minutes, ahead of everything already queued.
     schedule:
       interval: weekly
+      day: monday
     open-pull-requests-limit: 5
     groups:
       azure-sdk:
@@ -23,6 +27,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: tuesday
     open-pull-requests-limit: 5
     groups:
       # Starlight peers a specific Astro major, so they must move as a pair —
@@ -31,6 +36,15 @@ updates:
         patterns: ['astro', '@astrojs/*', 'sharp']
       portal:
         patterns: ['svelte', '@sveltejs/*', 'vite']
+      # Everything else, minor and patch only, in one weekly pull request. The two
+      # groups above were the only npm grouping, so bits-ui, jsdom, vitest,
+      # mermaid, lucide, svelte-check and playwright each opened their OWN pull
+      # request and each ran the full matrix. Majors stay separate: they are the
+      # ones that need a human to read the changelog. Listed last because a
+      # dependency joins the first group it matches.
+      npm-minor-patch:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
     ignore:
       # TypeScript 7 is held back by svelte-check, not by us. Its version gate
       # (bin/ts-version-check.js, still there in the current 4.7.5) throws on
@@ -98,6 +112,7 @@ updates:
       - /examples/*
     schedule:
       interval: weekly
+      day: wednesday
     open-pull-requests-limit: 5
     groups:
       python:
@@ -230,6 +245,7 @@ updates:
       - /docker/*
     schedule:
       interval: weekly
+      day: thursday
     open-pull-requests-limit: 3
     groups:
       # One PR for the four runtimes that share `python:3.12-slim`, rather than
@@ -285,6 +301,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: friday
     open-pull-requests-limit: 5
     groups:
       actions:
