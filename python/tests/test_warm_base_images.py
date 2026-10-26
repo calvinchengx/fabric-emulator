@@ -52,11 +52,14 @@ def test_from_refs_strips_platform_and_skips_stage_and_arg_references(tmp_path):
 def test_the_root_dockerfile_builds_on_the_two_images_the_incident_was_about():
     """Pins the subject. golang:1.27 is the image whose layer the mirror could
     not serve; if this stops reading it, the warm step no longer covers the one
-    failure it was written for."""
-    assert w.from_refs(REPO / "Dockerfile") == [
+    failure it was written for. Both are pinned by digest, and the digest is
+    part of the reference warmed: it is what the build will ask for."""
+    refs = w.from_refs(REPO / "Dockerfile")
+    assert [r.split("@")[0] for r in refs] == [
         "mirror.gcr.io/library/golang:1.27",
         "gcr.io/distroless/static-debian12:nonroot",
     ]
+    assert all(re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", r) for r in refs), refs
 
 
 # --- compose build stanzas ------------------------------------------------------
@@ -305,9 +308,10 @@ def test_a_dockerfile_in_a_subdirectory_of_the_suite_is_read(tmp_path, monkeypat
 def test_the_cron_suites_that_run_docker_directly_now_warm_their_images():
     """Against the real tree: before these two readers existed, xmla and sempy
     -- both of which run containers -- resolved to nothing at all."""
-    assert w.suite_images("xmla") == ["mcr.microsoft.com/dotnet/sdk:8.0"]
+    [xmla] = w.suite_images("xmla")
+    assert _bare(xmla) == "mcr.microsoft.com/dotnet/sdk:8.0"
     sempy_bases = [r for p in w.suite_dockerfiles("sempy") if p.is_file() for r in w.from_refs(p)]
-    assert sempy_bases == ["mcr.microsoft.com/dotnet/sdk:8.0"]
+    assert sempy_bases == [xmla], "the image xmla pulls is the base sempy builds on"
     [kusto] = w.suite_images("mcp-eventhouse")
     assert kusto.startswith("mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest@sha256:")
 
@@ -350,6 +354,11 @@ def docker(monkeypatch):
 
 
 MIRRORED = "mirror.gcr.io/library/golang:1.27"
+
+
+def _bare(ref):
+    """The reference without its digest: what a test about WHICH image means."""
+    return ref.split("@")[0]
 UPSTREAM = "docker.io/library/golang:1.27"
 
 
@@ -408,6 +417,34 @@ def test_a_tag_that_fails_is_a_failure_not_a_success(docker):
     assert err and "could not tag it" in err
 
 
+PINNED = MIRRORED + "@sha256:" + "ab12" * 16
+PINNED_UPSTREAM = UPSTREAM + "@sha256:" + "ab12" * 16
+
+
+def test_a_pinned_reference_falls_back_by_pulling_the_mirror_again_not_by_tagging(docker):
+    """A digest FROM resolves only through a repo digest recorded for its own
+    name, and only a pull records one -- `docker tag` cannot even name a
+    digest. So the layers come from Docker Hub and the mirror is asked again,
+    for the manifest alone. Retries are spent on the mirror first, exactly
+    as for a tag."""
+    docker.fail[PINNED] = len(w.BACKOFF)
+    assert w.warm(PINNED, sleep=lambda _s: None) is None
+    pulls = [c[-1] for c in docker.calls]
+    assert pulls == [PINNED] * len(w.BACKOFF) + [PINNED_UPSTREAM, PINNED]
+    assert not any(c[0] == "tag" for c in docker.calls)
+
+
+def test_a_pinned_reference_whose_mirror_serves_no_manifest_is_a_failure(docker):
+    """The one case the re-tag covered and this cannot: Docker Hub has the
+    layers, the mirror cannot serve even the manifest. 'Pulled upstream' is
+    then not 'ready', and the error says which half was missing."""
+    docker.fail[PINNED] = 2 * len(w.BACKOFF)
+    err = w.warm(PINNED, sleep=lambda _s: None)
+    assert err and err.startswith(PINNED)
+    assert "could not serve even the manifest" in err
+    assert not any(c[0] == "tag" for c in docker.calls)
+
+
 # --- main -----------------------------------------------------------------------
 
 
@@ -425,7 +462,7 @@ def test_main_warms_and_succeeds(docker, capsys):
     # The exact set the suite's three Dockerfiles build on, rather than two
     # memberships: stronger, and no host string in an `in` test for CodeQL to
     # read as URL sanitisation.
-    assert set(pulled) == {
+    assert {_bare(r) for r in pulled} == {
         MIRRORED,
         "gcr.io/distroless/static-debian12:nonroot",
         "mirror.gcr.io/library/python:3.14-slim",
@@ -435,10 +472,11 @@ def test_main_warms_and_succeeds(docker, capsys):
 
 
 def test_main_fails_naming_what_neither_source_could_supply(docker, capsys):
-    docker.fail[MIRRORED] = docker.fail[UPSTREAM] = len(w.BACKOFF)
+    golang = w.from_refs(REPO / "Dockerfile")[0]  # the real, pinned reference
+    docker.fail[golang] = docker.fail[w.UPSTREAM + golang[len(w.MIRROR):]] = len(w.BACKOFF)
     assert w.main([], sleep=lambda _s: None) == 1
     err = capsys.readouterr().err
-    assert "neither source could supply" in err and MIRRORED in err
+    assert "neither source could supply" in err and golang in err
 
 
 @pytest.mark.parametrize("which, info_rc, ostype, said", [

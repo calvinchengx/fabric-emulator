@@ -138,7 +138,7 @@ PORT = int(os.environ.get("XMLA_PORT", "18446"))
 TOKEN = "xmla-e2e-marker-8f21"
 # Reachable from inside the container; the cert is issued for it.
 CONTAINER_HOST = "host.docker.internal"
-SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk:8.0"
+SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk:8.0@sha256:ff39a765f04619c8d146796fc09b38499ae5984f4a2a4c3a0a57d0022855daee"
 
 # Set by CI. Without it a machine with no Docker skips, which is right locally
 # and would be a lie in CI — a skipped suite that reports success is the exact

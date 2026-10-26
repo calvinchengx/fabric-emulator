@@ -12,7 +12,7 @@
 #
 # TARGETOS/TARGETARCH are supplied automatically by BuildKit. They are empty
 # under the legacy builder, where empty GOOS/GOARCH correctly mean "host".
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27 AS build
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc AS build
 ARG VERSION=dev
 # The image is what serves the portal, so it carries the same identity the
 # released binaries do. Empty is honest for a local `docker build`.
@@ -50,7 +50,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # nonroot ownership — distroless has no shell to mkdir/chown at runtime.
 RUN mkdir /data /covdata
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /fabric-emulator /usr/local/bin/fabric-emulator
 # State (SQLite + persisted TLS cert) lives here; mount to persist. It MUST be
 # owned by the nonroot uid (65532) or the server can't open its SQLite DB —
