@@ -1,0 +1,14 @@
+# Advisories osv-scanner (and OpenSSF Scorecard's Vulnerabilities check, which
+# reads this file next to go.mod) is told not to report, and why each one is
+# safe to ignore. An entry here is a claim about reachability, so each one
+# names the check that would catch the claim going false.
+
+[[IgnoredVulns]]
+# golang.org/x/crypto/openpgp is unmaintained and unsafe by design. The
+# advisory covers EVERY x/crypto version (introduced 0, no fix), so no bump
+# can clear it; it is scoped to the openpgp import paths. Nothing here imports
+# them: x/crypto arrives indirectly, through go-mssqldb's NTLM auth (x/crypto/md4).
+# Scorecard scans versions, not imports. govulncheck in security.yml is
+# import-aware, and it fails the day anything here starts importing openpgp.
+id = "GO-2026-5932"
+reason = "Affects only golang.org/x/crypto/openpgp, which nothing in this module imports; govulncheck (import-aware) guards that. No fixed version exists."
