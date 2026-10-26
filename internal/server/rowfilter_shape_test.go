@@ -37,6 +37,15 @@ func predicateShape(expr string) error {
 	if err != nil {
 		return fmt.Errorf("does not parse as T-SQL: %w", err)
 	}
+	// A filter is ONE predicate, so a second statement is what to reject -- not
+	// something to walk past because the WHERE that was found looks clean. Up to
+	// sqlglot-go 0.4.0 ParseOne refused a batch ("more than one statement"); from
+	// 0.6.0 it reads one the way T-SQL does, as a Block holding every statement,
+	// and the WHERE below would be a clean predicate with a DROP TABLE beside it.
+	// Checked here so the oracle does not depend on which parser release refuses.
+	if tree.Class != "Select" {
+		return fmt.Errorf("parses as a %s, not one SELECT: more than one statement", tree.Class)
+	}
 	where := tree.FindAll("Where")
 	if len(where) != 1 {
 		return fmt.Errorf("has %d WHERE clauses, want 1", len(where))
@@ -92,7 +101,7 @@ func TestThePredicateShapeCheckCatchesWhatItIsFor(t *testing.T) {
 		"r.[a] IN (SELECT x FROM hr)":    "Select",
 		"r.[a] = USER_NAME()":            "Anonymous",
 		"hr.[a] = 1":                     "a column not read from the one table",
-		"r.[a] = 1; DROP TABLE dbo.t":    "does not parse",
+		"r.[a] = 1; DROP TABLE dbo.t":    "more than one statement",
 		"EXISTS (SELECT 1 FROM hr)":      "Exists",
 		"r.[a] = (SELECT MAX(x) FROM z)": "Subquery",
 	} {
