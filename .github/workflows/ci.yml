@@ -1300,8 +1300,28 @@ jobs:
       # browser catches that, so assert the built dist actually renders.
       # Bounded for the same reason as the ODBC step: a stalled browser download
       # took a job to its 25-minute timeout on main the same day.
-      - run: pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium
-        timeout-minutes: 10
+      #
+      # Bounding alone turned that hang into a 10-minute red: on 2026-10-25 main
+      # stalled mid-download from azure.archive.ubuntu.com (after `Get:18 ...
+      # xvfb`, then silence) and was killed by this timeout with nothing wrong in
+      # the repository. `--with-deps` runs apt-get ITSELF, so per-request
+      # timeouts and retries cannot go on a command line we do not own; they go
+      # in apt's own config, the same values the medallion ODBC step passes with
+      # -o. A stalled fetch is then abandoned after 60s and retried, and the
+      # whole install is retried once more on failure. The step timeout stays as
+      # the backstop. Not wrapped in `timeout`: killing apt mid-dpkg can leave
+      # the package database needing repair, which is worse than the stall.
+      - name: Chromium and its system packages, with apt timeouts and a retry
+        timeout-minutes: 12
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-ci-network >/dev/null
+          for attempt in 1 2; do
+            pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium && exit 0
+            echo "::warning::playwright install failed (attempt $attempt/2)"
+            sleep 20
+          done
+          echo "::error::playwright install failed twice"; exit 1
       - run: pnpm --filter fabric-emulator-portal smoke
 
   portal-types:
@@ -1835,8 +1855,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Bounded for the same reason as the ODBC step: a stalled browser download
       # took a job to its 25-minute timeout on main the same day.
-      - run: pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium
-        timeout-minutes: 10
+      #
+      # Bounding alone turned that hang into a 10-minute red: on 2026-10-25 main
+      # stalled mid-download from azure.archive.ubuntu.com (after `Get:18 ...
+      # xvfb`, then silence) and was killed by this timeout with nothing wrong in
+      # the repository. `--with-deps` runs apt-get ITSELF, so per-request
+      # timeouts and retries cannot go on a command line we do not own; they go
+      # in apt's own config, the same values the medallion ODBC step passes with
+      # -o. A stalled fetch is then abandoned after 60s and retried, and the
+      # whole install is retried once more on failure. The step timeout stays as
+      # the backstop. Not wrapped in `timeout`: killing apt mid-dpkg can leave
+      # the package database needing repair, which is worse than the stall.
+      - name: Chromium and its system packages, with apt timeouts and a retry
+        timeout-minutes: 12
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "60";\nAcquire::https::Timeout "60";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-ci-network >/dev/null
+          for attempt in 1 2; do
+            pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium && exit 0
+            echo "::warning::playwright install failed (attempt $attempt/2)"
+            sleep 20
+          done
+          echo "::error::playwright install failed twice"; exit 1
       # The pane is a shell reachable through the portal's own origin, and until
       # this existed it was witnessed only by unit tests against an httptest
       # server. Those cover the proxy's rules; none of them can say that a

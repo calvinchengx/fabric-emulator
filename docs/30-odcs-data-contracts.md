@@ -173,7 +173,7 @@ produces a witness, in the pattern of
 |---|---|---|---|
 | **O1** | **Measure the physical types.** Run the medallion stack, read the Delta log and `INFORMATION_SCHEMA`, fill in every `physicalType`. | corrected contracts | values are measured, not authored |
 | **O2** | **The drift check.** `scripts/check_contracts.py`: for each contract, resolve its servers, read the observed schema, and fail on any column that is declared-but-absent, absent-but-declared, or type-mismatched. | the declared-minus-observed subtraction | `ci:medallion` |
-| **O3** | **Rules are enforced, not decorative.** Assert every ODCS `quality` rule maps to something that actually runs — a dbt test or a pipeline assert. A rule with no enforcer fails the check. | the third-copy problem closed | `ci:medallion` |
+| **O3** | **Rules are enforced, not decorative.** Assert every ODCS `quality` rule maps to something that actually runs — a dbt test or a pipeline assert. A rule with no enforcer fails the check. **Done for gold:** `python/tests/test_odcs_gold_contract_enforcers.py` fails on any `gold-sales` rule with no dbt test, and on any dbt test the contract never promised. Silver and landing rules are fixture assertions run by the pipeline and are not covered. | the third-copy problem closed | `test_every_contract_rule_has_a_dbt_test_and_every_dbt_test_is_promised` |
 | **O4** | **Execute the contract directly.** Run the library and sql rules against the warehouse over TDS, so the contract can fail data on its own rather than by proxy. | contract-as-test | `ci:medallion` |
 
 O2 is the one that carries the value; O1 is its prerequisite. O3 is cheap and
