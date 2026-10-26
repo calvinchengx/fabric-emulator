@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test test-race check lint docs-build docs-serve
+.PHONY: help doctor merge up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test test-race check lint docs-build docs-serve
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -83,6 +83,13 @@ sbom: ## Write a CycloneDX SBOM of every locked dependency to sbom.cdx.json
 
 doctor: ## Check the toolchain and the docker context this Makefile needs
 	@sh scripts/doctor.sh
+
+# GitHub's generated squash message appends Co-authored-by for every commit
+# author on the branch; six squash commits landed that way. This passes the
+# message explicitly and reads the landed commit back (scripts/merge_pr.py).
+merge: ## Squash-merge PR=N with our own message, so GitHub adds no Co-authored-by
+	@test -n "$(PR)" || { echo "usage: make merge PR=<number>" >&2; exit 1; }
+	$(PY) scripts/merge_pr.py $(PR)
 
 up: ## Start the whole stack in the background
 	@$(COMPOSE) up -d || { sh scripts/port_conflict.sh; exit 1; }

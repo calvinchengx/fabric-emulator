@@ -1,0 +1,66 @@
+name: Attribution
+
+# No Co-authored-by or Claude-Session trailers, from any contributor, in any
+# commit or in the pull request description (scripts/check_attribution.py).
+# `make merge PR=N` squash-merges with the description as the commit message,
+# so the description is what lands on main; merged any other way, this
+# repository's squash default (COMMIT_MESSAGES) lands every commit message on
+# the branch, which is why the commits are checked as well.
+#
+# Its own workflow rather than a job in ci.yml because it must rerun when the
+# description is EDITED, and adding `edited` to ci.yml would rerun the whole
+# suite on every description change. It never skips: the rule applies to a
+# docs-only change as much as to code.
+#
+# The push run exists because a merge can add trailers the pull request never
+# had: GitHub's generated squash message appends `Co-authored-by:` for the
+# pull request's commit authors: #639, #641, #642, #655, #663 and #664 landed
+# with one before this check existed, none of which their branches contained.
+# That run cannot block anything; it makes the commit that landed one fail
+# loudly. Merge with `make merge PR=N` (scripts/merge_pr.py), which passes the
+# message explicitly and checks the commit that landed. Ported from
+# entra-emulator, where the same workflow first caught one.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  trailers:
+    name: No co-authorship trailers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.32"
+      # The checker's own controls first: a gate that never fires is
+      # indistinguishable from a clean pull request.
+      - run: uv run --no-project --python 3.12 python -m unittest python/tests/test_check_attribution.py python/tests/test_merge_pr.py
+      # The description goes through env and a file, never into the script
+      # text: it is attacker-controlled input on a fork pull request.
+      - name: Check commits and description
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          uv run --no-project --python 3.12 python scripts/check_attribution.py \
+            --range "$BASE_SHA..$HEAD_SHA" --body-file "$RUNNER_TEMP/pr-body.md"
+      - name: Check the commits this push landed
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          uv run --no-project --python 3.12 python scripts/check_attribution.py --range "$BEFORE..$AFTER"

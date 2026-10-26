@@ -347,3 +347,17 @@ Dependabot no longer fires every ecosystem on the same day — Go on Monday
 through GitHub Actions on Friday — and npm's minor and patch updates arrive as
 one weekly pull request rather than one each. Seven separate npm pull requests
 arrived that way on 2026-10-25; majors stay individual.
+
+## No co-authorship trailers on main, checked rather than trusted
+
+GitHub's generated squash message appends a `Co-authored-by:` line for every
+commit author on a pull request's branch, and six squash commits on `main`
+(#639, #641, #642, #655, #663, #664) landed with one that none of their branches
+contained. entra-emulator's attribution check is now ported here: a workflow
+that fails a pull request whose commits or description carry `Co-authored-by:`
+or `Claude-Session:`, reruns when the description is edited, and on every push
+to `main` checks only the commits that push landed — so it does not re-flag the
+six, which are left in place. `make merge PR=N` squash-merges with an explicit
+message built from the title and description, refuses if the branch moved since
+it was read, and reads the landed commit back to fail loudly if GitHub added a
+trailer anyway. A Dependabot merge stays authored by `dependabot[bot]`.
