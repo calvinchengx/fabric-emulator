@@ -152,7 +152,7 @@ has to land in dev, test, and prod with different ids.
 
 ## Version sensitivity
 
-`fab` is pinned to **1.6.1** in the [`Dockerfile`](Dockerfile), and the emulator
+`fab` is pinned to **1.6.1**, with every dependency hashed, in [`requirements.txt`](requirements.txt), and the emulator
 images are pinned in [`.env`](.env) — which compose reads automatically, so every
 command resolves the same images regardless of your shell. `fab`'s verb
 set and output shape move between releases, and `--output_format json` is what

@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk:8.0"
+SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk:8.0@sha256:ff39a765f04619c8d146796fc09b38499ae5984f4a2a4c3a0a57d0022855daee"
 
 if not shutil.which("docker"):
     sys.exit("docker is not on PATH; the assembly read needs the .NET 8 SDK image")

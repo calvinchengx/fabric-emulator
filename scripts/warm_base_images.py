@@ -32,6 +32,20 @@ both:
     so pulling the same reference from Docker Hub and tagging it under the
     mirror's name yields the same bytes under the name the Dockerfile asks for.
 
+    DIGEST PINS change the second half of that. Every FROM here is pinned
+    `tag@sha256:...` (OpenSSF Scorecard's Pinned-Dependencies), and BuildKit
+    resolves a digest FROM only through a repo digest recorded for that exact
+    name -- a re-tag records none, and the build goes back to the registry
+    (checked: a tag under an unresolvable name, then a digest FROM of it,
+    fails `load metadata`). So for a pinned reference the fallback pulls the
+    layers from Docker Hub and then pulls the MIRROR's reference again: with
+    every layer already local, that asks the mirror for the manifest alone,
+    and records the repo digest the build needs. Checked against a registry
+    whose layer blob was deleted while its manifest still served -- the
+    2026-10-25 shape: the first pull fails, the second succeeds, and the
+    build then resolves with both registries stopped. What it cannot cover is
+    a mirror serving no manifest at all; the plain re-tag never needed one.
+
 WHY PRE-PULLING WORKS AT ALL. With the image in the local store, BuildKit on
 the docker driver builds `FROM <ref>` without contacting the registry -- checked
 against a registry name that does not resolve (`unreachable.invalid/...`), which
@@ -416,6 +430,18 @@ def warm(ref: str, sleep=time.sleep) -> str | None:
     ok, up_err = _pull(upstream, sleep)
     if not ok:
         return f"{ref}: mirror: {err}; Docker Hub: {up_err}"
+    if "@sha256:" in ref:
+        # A digest pin cannot be re-tagged into place: BuildKit resolves
+        # `FROM name:tag@sha256:...` only through a repo digest recorded for
+        # THAT name, which only a pull records. The layers are local now, so
+        # pull the mirror's reference again: it needs nothing from the mirror
+        # but the manifest, which is what it kept serving on 2026-10-25.
+        ok, again = _pull(ref, sleep)
+        if not ok:
+            return (f"{ref}: pulled {upstream}, but the mirror could not serve even "
+                    f"the manifest the pin needs: {again}")
+        log(f"{ref}: ready (layers from {upstream}, manifest from the mirror)")
+        return None
     tagged = _docker("tag", upstream, ref)
     if tagged.returncode != 0:
         return f"{ref}: pulled {upstream} but could not tag it: {tagged.stderr.strip()}"

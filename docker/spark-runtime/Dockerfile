@@ -20,7 +20,7 @@
 #
 # Copying a JDK from the Temurin image instead has no package manager in it to
 # disagree with anything, and the compiler never reaches the runtime image.
-FROM mirror.gcr.io/apache/spark:3.5.5-scala2.12-java11-python3-ubuntu AS build
+FROM mirror.gcr.io/apache/spark:3.5.5-scala2.12-java11-python3-ubuntu@sha256:39321d67b23e2e0953f81b60778f74bf40c40a18dfb0e881e6a38593af60afa1 AS build
 USER root
 COPY --from=mirror.gcr.io/library/eclipse-temurin:11-jdk /opt/java/openjdk /opt/jdk
 
@@ -64,7 +64,7 @@ RUN /opt/jdk/bin/javac -cp "/opt/spark/jars/*" -d /tmp/classes \
     && rm -rf /tmp/src /tmp/classes
 
 # --------------------------------------------------------------- runtime stage
-FROM mirror.gcr.io/apache/spark:3.5.5-scala2.12-java11-python3-ubuntu
+FROM mirror.gcr.io/apache/spark:3.5.5-scala2.12-java11-python3-ubuntu@sha256:39321d67b23e2e0953f81b60778f74bf40c40a18dfb0e881e6a38593af60afa1
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 USER root
 # The jars, including the compiled token provider. No compiler, no apt, no
