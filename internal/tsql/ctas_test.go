@@ -357,3 +357,50 @@ func TestUnquoteRejectsMalformedLiterals(t *testing.T) {
 		}
 	}
 }
+
+// A CTAS that is not the batch's FIRST statement. dbt's Fabric adapter sends
+// its DDL as `SET NOCOUNT ON; EXEC('CREATE TABLE … AS SELECT …')`, and looking
+// only at the first statement left the CREATE unrewritten, which the sidecar
+// rejects with Msg 156 -- the failure behind every nightly acceptance run on
+// its gold models.
+func TestRewriteCTASAnywhereInTheBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{
+			name: "after SET NOCOUNT ON",
+			sql:  "SET NOCOUNT ON; CREATE TABLE [dbo].[t] AS select 1 as a",
+			want: "SET NOCOUNT ON; select 1 as a into [dbo].[t]",
+		},
+		{
+			name: "two CTAS in one batch",
+			sql:  "CREATE TABLE [dbo].[a] AS select 1 as x; CREATE TABLE [dbo].[b] AS select 2 as y",
+			want: "select 1 as x into [dbo].[a]; select 2 as y into [dbo].[b]",
+		},
+		{
+			name: "inside the dynamic SQL dbt actually sends",
+			sql:  "SET NOCOUNT ON;\nEXEC('CREATE TABLE [db].[dbo].[x__dbt_tmp] AS SELECT * FROM dbo.s');",
+			want: "SET NOCOUNT ON;\nEXEC('SELECT * into [db].[dbo].[x__dbt_tmp] FROM dbo.s');",
+		},
+		{
+			name: "a batch with no CTAS is untouched",
+			sql:  "SET NOCOUNT ON; SELECT a FROM t",
+			want: "SET NOCOUNT ON; SELECT a FROM t",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, changed, err := Adapt(tc.sql)
+			if err != nil {
+				t.Fatalf("Adapt(%q): %v", tc.sql, err)
+			}
+			if out != tc.want {
+				t.Errorf("Adapt(%q)\n  want %s\n  got  %s", tc.sql, tc.want, out)
+			}
+			if got := out != tc.sql; got != changed {
+				t.Errorf("changed=%v but the text %s", changed, map[bool]string{true: "moved", false: "did not"}[got])
+			}
+		})
+	}
+}
