@@ -361,3 +361,13 @@ six, which are left in place. `make merge PR=N` squash-merges with an explicit
 message built from the title and description, refuses if the branch moved since
 it was read, and reads the landed commit back to fail loudly if GitHub added a
 trailer anyway. A Dependabot merge stays authored by `dependabot[bot]`.
+
+## Scorecard stops reporting an x/crypto advisory nothing here can reach
+
+GO-2026-5932 covers every version of `golang.org/x/crypto`, because it is about
+the unmaintained `openpgp` package, so no version bump could clear it.
+Scorecard's Vulnerabilities check matches versions, not imports, and so it kept
+flagging the module. The x/crypto dependency comes in indirectly, through
+go-mssqldb's NTLM support (`md4`), and nothing imports `openpgp`. A root
+`osv-scanner.toml` now records the ignore and the reason. govulncheck, which
+does check imports, would fail if `openpgp` became reachable.

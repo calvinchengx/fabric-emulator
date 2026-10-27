@@ -192,6 +192,11 @@ and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
 - **`scripts/check_dismissed_advisories.py`**, which re-asks whether each
   dismissed alert's justification has expired. GitHub never re-raises a
   dismissal when upstream ships a fix.
+- **`osv-scanner.toml`**, next to `go.mod`, lists the advisories that
+  osv-scanner and OpenSSF Scorecard's version-level scan are told to ignore.
+  Each entry is a reachability claim that govulncheck re-checks on every push.
+  Today the only entry is GO-2026-5932, for `x/crypto/openpgp`: it affects every
+  `x/crypto` version, and nothing here imports that package.
 - **Dependabot** across five ecosystems — `gomod`, `npm`, `uv`, `docker`,
   `github-actions` — which is *version currency plus GitHub's advisory graph*,
   not reachability analysis.
