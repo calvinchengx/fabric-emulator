@@ -41,5 +41,25 @@
     "fact becomes a permanent decision on the strength of that fact unless something re-asks the",
     "question. `LIFT THIS` must name an upstream change someone can go and check."
   ],
-  "holds": []
+  "holds": [
+    {
+      "id": "GHSA-gcqx-w48m-w2h4",
+      "ecosystem": "npm",
+      "package": "deepmerge",
+      "lockfile": "pnpm-lock.yaml",
+      "summary": "mergeObject() allows prototype poisoning of returned objects (CVSS 5.3)",
+      "why": [
+        "No fixed release exists: the advisory covers >= 4.2.0, <= 4.3.1, and 4.3.1 is the latest",
+        "deepmerge on npm (checked 2026-10-28), so there is nothing to upgrade or override to.",
+        "It arrives through @sveltejs/vite-plugin-svelte 7.3.1 (`deepmerge ^4.3.1`), also the latest.",
+        "",
+        "The exposure is bounded by what is merged. vite-plugin-svelte runs at BUILD time and merges",
+        "its own Svelte/Vite config objects, which come from this repository's config files, not from",
+        "request or user input. Prototype poisoning needs attacker-controlled keys in the merged",
+        "input. Recorded rather than dismissed because that reasoning is about where the package sits",
+        "today, and a direct use of deepmerge on untrusted input would not be covered by it."
+      ],
+      "exit": "LIFT THIS when deepmerge publishes a release above 4.3.1 that fixes GHSA-gcqx-w48m-w2h4 (re-check with `npm view deepmerge version`), or when @sveltejs/vite-plugin-svelte drops the dependency."
+    }
+  ]
 }
