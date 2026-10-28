@@ -30,10 +30,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pinned: an unpinned module moves on its own, and a witness that changes
 # underneath the claim it supports is not evidence of anything.
 ARG PBI_VERSION=1.3.84
+# PSGallery intermittently 404s a package it lists (2026-10-27: one of six
+# fetches of MicrosoftPowerBIMgmt.Reports/1.3.84 failed), and Install-Module
+# reports that as a non-terminating error -- pwsh exited 0 and the build
+# shipped an image with no module, which surfaced only at Import-Module in the
+# driver. So: errors stop, the install retries, and the Import-Module here
+# fails the build rather than the run.
 RUN pwsh -NoProfile -Command \
-      "Set-PSRepository PSGallery -InstallationPolicy Trusted; \
-       Install-Module MicrosoftPowerBIMgmt -RequiredVersion ${PBI_VERSION} \
-         -Scope AllUsers -Force -AllowClobber"
+      "\$ErrorActionPreference = 'Stop'; \
+       Set-PSRepository PSGallery -InstallationPolicy Trusted; \
+       foreach (\$attempt in 1..4) { \
+         try { Install-Module MicrosoftPowerBIMgmt -RequiredVersion ${PBI_VERSION} -Scope AllUsers -Force -AllowClobber; break } \
+         catch { \
+           if (\$attempt -eq 4) { throw }; \
+           Write-Warning \"Install-Module failed (attempt \$attempt/4): \$_\"; \
+           Start-Sleep (\$attempt * 15) \
+         } \
+       }; \
+       Import-Module MicrosoftPowerBIMgmt"
 
 COPY driver.ps1 /driver.ps1
 ENTRYPOINT ["pwsh", "-NoProfile", "-File", "/driver.ps1"]
