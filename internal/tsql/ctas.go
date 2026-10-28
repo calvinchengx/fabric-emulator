@@ -33,10 +33,67 @@ package tsql
 
 import "strings"
 
-// RewriteCTAS converts a CREATE TABLE … AS SELECT statement into the
+// RewriteCTAS converts every CREATE TABLE … AS SELECT in a batch into the
 // equivalent SELECT … INTO. It reports changed=false, and returns sql
-// untouched, for anything that is not a CTAS it fully understands.
+// untouched, when the batch holds no CTAS it fully understands.
+//
+// EVERY statement in the batch, not only the first. dbt's Fabric adapter
+// sends its DDL as `SET NOCOUNT ON; EXEC('CREATE TABLE … AS SELECT …')`, and
+// looking only at the batch's first statement left the CREATE unrewritten --
+// which the sidecar rejects with Msg 156, "Incorrect syntax near the keyword
+// 'select'", the exact failure that made every nightly acceptance run fail on
+// its gold models.
 func RewriteCTAS(sql string) (out string, changed bool, err error) {
+	toks, err := Tokenize(sql)
+	if err != nil {
+		return sql, false, err
+	}
+	var b strings.Builder
+	anyChanged := false
+	start, depth := 0, 0
+	flush := func(end int) error {
+		chunk, chunkChanged, cerr := rewriteOneCTAS(sql[start:end])
+		if cerr != nil {
+			return cerr
+		}
+		b.WriteString(chunk)
+		anyChanged = anyChanged || chunkChanged
+		return nil
+	}
+	for _, t := range toks {
+		if t.Kind != Punct {
+			continue
+		}
+		switch t.Text {
+		case "(":
+			depth++
+		case ")":
+			depth--
+		case ";":
+			if depth != 0 {
+				continue
+			}
+			end := t.Pos + len(t.Text)
+			if err := flush(end); err != nil {
+				return sql, false, err
+			}
+			start = end
+		}
+	}
+	if start < len(sql) {
+		if err := flush(len(sql)); err != nil {
+			return sql, false, err
+		}
+	}
+	if !anyChanged {
+		return sql, false, nil
+	}
+	return b.String(), true, nil
+}
+
+// rewriteOneCTAS rewrites a single statement, which must be the batch's first
+// statement of the text it is handed.
+func rewriteOneCTAS(sql string) (out string, changed bool, err error) {
 	toks, err := Tokenize(sql)
 	if err != nil {
 		return sql, false, err
