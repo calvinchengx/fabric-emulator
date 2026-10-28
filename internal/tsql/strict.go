@@ -20,12 +20,14 @@ package tsql
 //	IDENTITY(seed, increment), an IDENTITY column added by ALTER TABLE,
 //	enforced PRIMARY KEY / UNIQUE / FOREIGN KEY,
 //	multi-column statistics, PREDICT, sp_showspaceused, FOR JSON inside a
-//	subquery, and a `/` or `\` in the name of a schema or table being created.
+//	subquery, a `/` or `\` in the name of a schema or table being created, and
+//	a CREATE INDEX on a view created in the same batch.
 //
 // Deliberately not enforced, with the reason, because a lexer cannot see them:
 //
-//   - indexed ("materialized") views — needs correlating CREATE INDEX with the
-//     view it targets, across statements;
+//   - indexed ("materialized") views created across batches — the check below
+//     correlates a CREATE INDEX with a view created in the SAME batch only,
+//     since a view made in an earlier batch is not visible to a lexer;
 //   - queries against system tables, and the vector data type — the sidecar
 //     (SQL Server 2022) has no vector type either, so that row is not actually
 //     a divergence here.
@@ -106,6 +108,9 @@ func CheckStrict(sql string) error {
 		return err
 	}
 	if err := checkObjectNames(sig); err != nil {
+		return err
+	}
+	if err := checkIndexedView(sig); err != nil {
 		return err
 	}
 	return checkRecursiveCTE(sql)
@@ -387,4 +392,83 @@ func checkNameAt(sig []Token, i int) error {
 		break
 	}
 	return nil
+}
+
+// checkIndexedView rejects an index on a view: Fabric has no indexed
+// ("materialized") views. The index is correlated with its view only when both
+// are in this batch, matching on schema and name (schema defaulting to dbo,
+// case-insensitive); a view created in an earlier batch is invisible here.
+func checkIndexedView(sig []Token) error {
+	views := map[string]bool{}
+	for i := range sig {
+		name := i + 2
+		switch {
+		case matchAt(sig, i, "create", "view"), matchAt(sig, i, "alter", "view"):
+		case matchAt(sig, i, "create", "or", "alter", "view"):
+			name = i + 4
+		default:
+			continue
+		}
+		if k := nameKey(sig, name); k != "" {
+			views[k] = true
+		}
+	}
+	if len(views) == 0 {
+		return nil
+	}
+	for i := range sig {
+		if !matchAt(sig, i, "create") {
+			continue
+		}
+		j := i + 1
+		if matchAt(sig, j, "unique") {
+			j++
+		}
+		if matchAt(sig, j, "clustered") || matchAt(sig, j, "nonclustered") {
+			j++
+		}
+		if matchAt(sig, j, "columnstore") {
+			j++
+		}
+		if !matchAt(sig, j, "index") {
+			continue
+		}
+		// CREATE INDEX <name> ON <target>
+		for k := j + 1; k < len(sig); k++ {
+			if sig[k].Kind == Punct && sig[k].Text == ";" {
+				break
+			}
+			if matchAt(sig, k, "on") {
+				if views[nameKey(sig, k+1)] {
+					return &UnsupportedError{"indexed-view", "indexed (materialized) views are not supported"}
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// nameKey reads a (possibly dotted) name at sig[i] and returns "schema.name"
+// folded to lower case, with dbo assumed when the schema is omitted. It
+// returns "" if there is no name there.
+func nameKey(sig []Token, i int) string {
+	var parts []string
+	for i < len(sig) && (sig[i].Kind == Word || sig[i].Kind == QuotedIdent) {
+		parts = append(parts, strings.ToLower(Ident(sig[i].Text)))
+		i++
+		if i < len(sig) && sig[i].Kind == Punct && sig[i].Text == "." {
+			i++
+			continue
+		}
+		break
+	}
+	switch n := len(parts); {
+	case n == 0:
+		return ""
+	case n == 1:
+		return "dbo." + parts[0]
+	default:
+		return parts[n-2] + "." + parts[n-1]
+	}
 }
