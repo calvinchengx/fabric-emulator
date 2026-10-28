@@ -229,23 +229,21 @@ LOCKFILE_NAMES = ("uv.lock", "pnpm-lock.yaml", "package-lock.json")
 # cross a path separator here (see `matches`), so a pattern states how deep it
 # reaches instead of quietly covering more than it says.
 EXCLUDED: tuple[tuple[str, str], ...] = (
-    (
-        "e2e/*/Dockerfile*",
-        "e2e harness image: built inside a CI run, never published and never "
-        "reachable, so a base bump here competes for the same PR budget as the "
-        "images that ship. Stated in .github/dependabot.yml's docker entry, "
-        "which also says to add /e2e/* there if that judgement changes",
-    ),
-    (
-        "e2e/*/*/Dockerfile*",
-        "the same judgement for e2e/sempy/image, which sits one directory "
-        "deeper than its siblings",
-    ),
-    (
-        "examples/fab-driven/Dockerfile",
-        "built by e2e/fab-driven/run.py and published nowhere -- named "
-        "explicitly beside the e2e images in .github/dependabot.yml",
-    ),
+    # EMPTY, and that is the current truth rather than a gap. It held three
+    # entries -- e2e/*/Dockerfile*, e2e/*/*/Dockerfile* and
+    # examples/fab-driven/Dockerfile -- excusing the harness images from
+    # Dependabot on the grounds that they are never published and a base bump
+    # would spend PR budget the shipped images need.
+    #
+    # That reasoning depended on those bases FLOATING. #685 pinned all eleven by
+    # digest for Scorecard, so they no longer re-resolve, and an unwatched pin is
+    # frozen rather than current. .github/dependabot.yml's docker entry now
+    # watches /e2e/*, /e2e/*/* and /examples/*, which left these three rows
+    # excusing nothing -- the exact stale-exclusion case `--strict` rejects,
+    # and it is what caught this when only the Dependabot half had been written.
+    #
+    # Deleted rather than kept as history: this tuple's job is to say what is
+    # unwatched TODAY, and a row that excuses nothing hides the next real omission.
 )
 
 
