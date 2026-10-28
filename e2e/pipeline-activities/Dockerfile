@@ -6,7 +6,7 @@
 # stub `az login` insists on, private-cloud registration) are hard-won and
 # identical here; duplicating them would mean two copies drifting apart, and
 # the copy that drifts is the one nobody is looking at.
-FROM mcr.microsoft.com/azure-cli:2.89.0-azurelinux3.0@sha256:0926e9e5230a66eac8061beab122ffee5750c4fb924a7b5608c8d3cdd3511158
+FROM mcr.microsoft.com/azure-cli:2.91.0-azurelinux3.0@sha256:933eb8dcb81aecb6f77e03c5b8660f0a1dfa9e1d16525763a27f86ff3b83a044
 RUN python3 --version
 COPY az-rest/driver.py /azrest.py
 COPY pipeline-activities/driver.py /driver.py
