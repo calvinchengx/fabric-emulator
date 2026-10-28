@@ -222,7 +222,7 @@ spark-agent-dbt = [
     # the same condition the dependabot hold already names. At that point the
     # conflict declaration goes too, and there is nothing left for an exact pin
     # to hold still.
-    "dbt-databricks==1.12.7",
+    "dbt-databricks==1.12.8",
     # The engine, in the AGENT image. Fabric starts a Spark session per notebook
     # and shares one only within a single-user boundary, so the agent needs to
     # be able to start an engine per user rather than route every caller through
