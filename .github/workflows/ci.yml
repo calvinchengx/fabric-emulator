@@ -1141,15 +1141,20 @@ jobs:
     if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
     name: The Go suite under the race detector, in randomised order
     runs-on: ubuntu-latest
-    # 45, NOT 25, because the race detector changes the distribution rather
+    # 60, NOT 25, because the race detector changes the distribution rather
     # than sitting inside it. The suite takes ~7 minutes unraced on a many-core
     # machine and `internal/server` alone is 155s of that; the detector is
-    # 5-10x, and a 4-core runner has no spare parallelism to hide it. In CI the
-    # job ran to the cap and was reported `cancelled` -- which reads as
-    # infrastructure noise, the trap the uniform 25 exists to avoid -- with no
-    # failing assertion anywhere in it. spark-jvm and the live conformance jobs
-    # already carry 45 for the same class of reason.
-    timeout-minutes: 45
+    # 5-10x, and a 4-core runner has no spare parallelism to hide it. Measured:
+    # the job ran 30 minutes in CI and was cancelled AT the old cap, and
+    # serialising packages to two (`-p 2`, tried and reverted) took it to 55 --
+    # so the natural runtime is ~30 and the parallelism is not the problem.
+    #
+    # A job cancelled at its timeout reports as `cancelled` and gets rerun
+    # rather than investigated, which is the trap the uniform 25 exists to
+    # avoid. spark-jvm and the live conformance jobs already carry 45 for the
+    # same class of reason; this one needs more because the detector is slower
+    # than any of them.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
