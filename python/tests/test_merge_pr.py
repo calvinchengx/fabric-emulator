@@ -78,11 +78,19 @@ class Merge(unittest.TestCase):
 
     def test_trailers_github_adds_anyway_fail_the_merge_loudly(self):
         """The read-back is the point: the message we sent being clean says
-        nothing about what GitHub wrote."""
-        status, _, _, err = self.run_main(landed="fix: x (#7)\n\nCo-authored-by: dependabot[bot] <b@b>\n")
+        nothing about what GitHub wrote. The fixture is a PERSON, because a
+        dependency bot's trailer is allowed now -- see the test below."""
+        status, _, _, err = self.run_main(landed="fix: x (#7)\n\nCo-authored-by: Someone <s@s>\n")
         self.assertEqual(status, 1)
         self.assertIn("landed WITH trailers despite the explicit message", err)
-        self.assertIn("Co-authored-by: dependabot[bot]", err)
+        self.assertIn("Co-authored-by: Someone", err)
+
+    def test_a_dependency_bot_trailer_is_not_a_failure(self):
+        """GitHub writes one for every Dependabot squash merge made by someone
+        else, and a dependency service is not claiming authorship."""
+        status, _, out, _ = self.run_main(landed="fix: x (#7)\n\nCo-authored-by: dependabot[bot] <b@b>\n")
+        self.assertEqual(status, 0)
+        self.assertIn("landed as mmmmmmmmmmmm with no co-authorship trailers", out)
 
 
 if __name__ == "__main__":
