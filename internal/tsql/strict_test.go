@@ -47,8 +47,14 @@ var strictCorpus = []struct {
 	{"CTAS into a name with a slash", `create table dbo."a/b" as select 1 x`, "object-name-character"},
 	{"ALTER VIEW with a slash", "alter view dbo.[a/b] as select 1 x", "object-name-character"},
 	{"CREATE OR ALTER VIEW with a slash", "create or alter view [a/b] as select 1 x", "object-name-character"},
+	{"index on a view in the same batch", "create view dbo.v with schemabinding as select a from dbo.t; create unique clustered index ix on dbo.v (a)", "indexed-view"},
+	{"index on a view, schema omitted, mixed case", "create view V as select 1 a; create nonclustered index ix on [dbo].[v] (a)", "indexed-view"},
+	{"index on a view created with CREATE OR ALTER", "create or alter view s.v as select 1 a; create index ix on s.v (a)", "indexed-view"},
 
 	// --- allowed: legitimate Fabric T-SQL that must not be refused ----------
+	{"index on a table beside a view", "create view dbo.v as select 1 a; create index ix on dbo.t (a)", ""},
+	{"same view name in another schema", "create view s.v as select 1 a; create index ix on dbo.v (a)", ""},
+	{"index on an unseen object", "create index ix on dbo.v (a)", ""},
 	{"plain select", "select * from t", ""},
 	{"sequential CTE", "with a as (select 1 x), b as (select x from a) select * from b", ""},
 	{"nested CTE (T6 rewrites, T7 must not refuse)", "with o as (with i as (select 1 x) select * from i) select * from o", ""},
@@ -115,7 +121,7 @@ func TestStrictCorpusCoversEveryFeature(t *testing.T) {
 		"recursive-cte", "triggers", "synonyms", "create-user", "set-isolation-level",
 		"set-rowcount", "identity-insert", "for-xml", "predict", "sp-showspaceused",
 		"identity-seed", "enforced-constraint", "multi-column-stats",
-		"for-json-subquery", "object-name-character",
+		"for-json-subquery", "object-name-character", "indexed-view",
 	} {
 		if !seen[want] {
 			t.Errorf("strict corpus no longer covers %q", want)
@@ -167,5 +173,20 @@ func TestRecursiveCheckSkipsUnparseableBody(t *testing.T) {
 	}
 	if err := recursiveIn(nil); err != nil {
 		t.Fatalf("nil list reported: %v", err)
+	}
+}
+
+// An index on a view is correlated within one batch; anything the lexer cannot
+// tie to a view in that batch is left alone.
+func TestCheckIndexedViewLeavesUnrelatedStatementsAlone(t *testing.T) {
+	for _, sql := range []string{
+		"create view dbo.v as select 1 a; create table dbo.t (a int)",
+		"create view dbo.v as select 1 a; create index ix; select 1 on dbo.v",
+		"create view; create index ix on dbo.v (a)",
+		"create view dbo.v as select 1 a; create index ix",
+	} {
+		if err := CheckStrict(sql); err != nil {
+			t.Errorf("%q was refused: %v", sql, err)
+		}
 	}
 }
