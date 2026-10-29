@@ -1,7 +1,7 @@
 # sempy needs a .NET runtime for its XMLA path (pythonnet + the ADOMD.NET and
 # Tabular assemblies it ships), so the SDK image is the base rather than a
 # python one. linux/amd64 is not optional: the NuGet payload is amd64-only.
-FROM mcr.microsoft.com/dotnet/sdk:8.0@sha256:ff39a765f04619c8d146796fc09b38499ae5984f4a2a4c3a0a57d0022855daee
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b
 RUN apt-get -qq update \
  && apt-get -qq install -y --no-install-recommends python3 python3-venv \
  && rm -rf /var/lib/apt/lists/*
