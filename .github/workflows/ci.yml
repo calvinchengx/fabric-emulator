@@ -174,7 +174,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # 25 IS TOO TIGHT HERE, and only on macOS.
+    # Measured on the last three runs: macOS 15m49s and 20m47s (both passed),
+    # then 25m32s, cancelled AT the cap. 20m47s against a 25-minute bound is
+    # 20% of headroom, not a bound, and a job cancelled at its timeout reads as
+    # infrastructure noise and gets rerun rather than investigated -- the
+    # failure mode the 25 is meant to prevent. It is the only job whose macOS
+    # leg is a full Go build plus the entra e2e, so it is a different
+    # distribution from the 10.2-minute worst case the uniform number came
+    # from, not a slower instance of it. 40 keeps a real hang distinguishable
+    # from a slow runner.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1131,7 +1141,20 @@ jobs:
     if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
     name: The Go suite under the race detector, in randomised order
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 60, NOT 25, because the race detector changes the distribution rather
+    # than sitting inside it. The suite takes ~7 minutes unraced on a many-core
+    # machine and `internal/server` alone is 155s of that; the detector is
+    # 5-10x, and a 4-core runner has no spare parallelism to hide it. Measured:
+    # the job ran 30 minutes in CI and was cancelled AT the old cap, and
+    # serialising packages to two (`-p 2`, tried and reverted) took it to 55 --
+    # so the natural runtime is ~30 and the parallelism is not the problem.
+    #
+    # A job cancelled at its timeout reports as `cancelled` and gets rerun
+    # rather than investigated, which is the trap the uniform 25 exists to
+    # avoid. spark-jvm and the live conformance jobs already carry 45 for the
+    # same class of reason; this one needs more because the detector is slower
+    # than any of them.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -3295,7 +3318,7 @@ jobs:
       # forever to route around one bad artifact.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          version: v2.14.0
           cache-invalidation-interval: 1
 
   openapi-conformance:
