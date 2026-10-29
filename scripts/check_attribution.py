@@ -30,12 +30,35 @@ import re
 import subprocess
 import sys
 
-TRAILER_RE = re.compile(r"^\s*(co-authored-by|claude-session)\s*:", re.IGNORECASE)
+TRAILER_RE = re.compile(r"^\s*(co-authored-by|claude-session)\s*:\s*(.*)$", re.IGNORECASE)
+
+# A DEPENDENCY BOT IS NOT A CO-AUTHOR OF THE CHANGE. GitHub appends a
+# `Co-authored-by:` trailer for the pull request's commit authors whenever a
+# squash merge is made by someone else, so every Dependabot update lands with
+# one unless the merge passes its message explicitly -- and the rule this file
+# enforces is about ATTRIBUTION of authorship, which is what an AI assistant
+# claiming a share of it is. `dependabot[bot]` and `renovate[bot]` are the
+# dependency-update services; their trailer is a fact about who opened the pull
+# request, not a claim on the change.
+#
+# Everything else stays forbidden, including a human co-author: a
+# `Co-authored-by:` naming a person still fails, because this repository's rule
+# is one author per commit.
+DEPENDENCY_BOT_RE = re.compile(r"^(dependabot|renovate)\[bot\]\s*<", re.IGNORECASE)
 
 
 def offending_lines(text):
     """Return the lines of `text` that are forbidden trailers."""
-    return [line.strip() for line in text.splitlines() if TRAILER_RE.match(line)]
+    offending = []
+    for line in text.splitlines():
+        match = TRAILER_RE.match(line)
+        if not match:
+            continue
+        name, value = match.group(1).lower(), match.group(2).strip()
+        if name == "co-authored-by" and DEPENDENCY_BOT_RE.match(value):
+            continue
+        offending.append(line.strip())
+    return offending
 
 
 def commits_in_range(rev_range):
