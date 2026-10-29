@@ -89,7 +89,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # 40, for the same reason ci.yml's `Build, vet & tests` carries it: the
+    # macOS leg of a full `make test` is a cold Go build plus the suite, and it
+    # was cancelled AT this cap twice in one day (25m30s, 25m36s). A job
+    # cancelled at its timeout reports as `cancelled` and reads as
+    # infrastructure noise, which is what the 25 exists to avoid -- but 25 is
+    # not a bound for this leg, it is where it happens to land.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
