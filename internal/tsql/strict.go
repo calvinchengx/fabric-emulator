@@ -463,10 +463,10 @@ func nameKey(sig []Token, i int) string {
 		}
 		break
 	}
-	switch n := len(parts); {
-	case n == 0:
+	switch n := len(parts); n {
+	case 0:
 		return ""
-	case n == 1:
+	case 1:
 		return "dbo." + parts[0]
 	default:
 		return parts[n-2] + "." + parts[n-1]
