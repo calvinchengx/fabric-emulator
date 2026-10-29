@@ -1621,7 +1621,7 @@ s3 = [
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 sail = [
-    { name = "pysail", specifier = "==0.7.2" },
+    { name = "pysail", specifier = "==0.7.1" },
     { name = "pyspark-client", specifier = "==4.2.0" },
 ]
 sail-delta = [
@@ -1644,7 +1644,7 @@ spark-agent-dbt = [
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyjks", specifier = ">=20,<22" },
-    { name = "pysail", specifier = "==0.7.2" },
+    { name = "pysail", specifier = "==0.7.1" },
     { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
@@ -4521,15 +4521,15 @@ wheels = [
 
 [[package]]
 name = "pysail"
-version = "0.7.2"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/50/11/f9a0681c813a005d9a8b32609810ae66bb3a58ba3a9e82e14239d8ec4463/pysail-0.7.2.tar.gz", hash = "sha256:59a1bb8f39941dceed2ab975388e93e52ea81dcb88d3f276c76625ffd2a2e165", size = 4132203, upload-time = "2026-09-29T15:23:07.589Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/00/ce8f3508abcf06e2457eaf82f1ef7e66a38b18e4e570dc672de3d8223640/pysail-0.7.1.tar.gz", hash = "sha256:7d7ad335e1c8542c0df98b54700751bfa10b51a5223f0831825b96522df4ac26", size = 3585861, upload-time = "2026-08-24T13:22:50.032Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/b0/f508814a92a5e99e62251eb26b7682ebe4fd789a81fd3ac4ff6c16a75033/pysail-0.7.2-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:741f7f714d32fd16fbcddca31994b898b81eb123a00f43c4307076a416426c48", size = 61763478, upload-time = "2026-09-29T15:22:46.52Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/4a/ac32504434ea36f4ae7923340e5f6e8f16cf973f09689da03604e7020e5e/pysail-0.7.2-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:0b89b32c0f81b263c138291580ce0ae3a98607a173e1c16b16cbb9ca1d3fbe27", size = 57498108, upload-time = "2026-09-29T15:22:51.188Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/43/84eba31685c3e508d0b242f3e3e85314eedada87f5e7ee52d686c82f5ea1/pysail-0.7.2-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0c1557ece17e5e277c6f16fa54697e2546717f463add2b8e2f0d5e10a9d92012", size = 63071356, upload-time = "2026-09-29T15:22:55.641Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/78/64ee272daf8b64384bc85c23da58cf1679e1cbf776a2d85727cca68e332d/pysail-0.7.2-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:51565ea3d840467f8a02bffa9e70f90688021822c0acd7749a2c2bb21c18e80c", size = 59768564, upload-time = "2026-09-29T15:22:59.574Z" },
-    { url = "https://files.pythonhosted.org/packages/96/a6/120bcdd60138b05e6e3682c9ae87104d04caf68d570b34ac42b13ae62ce1/pysail-0.7.2-cp38-abi3-win_amd64.whl", hash = "sha256:e32420e38a301888b4ec9166a39fecb64e39ded3b560817ea99c1d7f885812e4", size = 68815094, upload-time = "2026-09-29T15:23:04.369Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/a6/006caf84465aa9c0d502b2b81157ed1c03ed6c5816a1f54902144bde1c58/pysail-0.7.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:2117edb62a08b11321d7442b2b6f55cc785e064a8f89ed72074122ee47442eb6", size = 56055694, upload-time = "2026-08-24T13:22:31.966Z" },
+    { url = "https://files.pythonhosted.org/packages/03/73/566755afe12f186fefb4aed8560e9ff31d80877e72b1a13b055996f06e02/pysail-0.7.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:ab265f8f9e10c44d5c533a071cee0938dc42b291341473b8441b16c727d52917", size = 52113186, upload-time = "2026-08-24T13:22:35.505Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/17/940716d4eecc275e4caafa70f73033eb468317f63fe8784eb51e3a97a694/pysail-0.7.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:360410b168608effc5ac80af478861cc27f6dc17172c11b3200f346dd448d7c9", size = 57298946, upload-time = "2026-08-24T13:22:39.009Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/6e/aba6026cc0916d9ed99fad9d584076d6a9652ccef71939b3b933be65ec55/pysail-0.7.1-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:61ffe5d970b2b273c326df1579c7bf262dc4e148013d6d0c592fb7c097ff9ae9", size = 54150621, upload-time = "2026-08-24T13:22:42.888Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/04/95aa5db17c616a9fef7f751576057d70720eaa65d716c355eac7a353ea22/pysail-0.7.1-cp38-abi3-win_amd64.whl", hash = "sha256:c59a352aa079280f766cf4881940b2edb1621e89477a05448405e10d6bd254fa", size = 63520089, upload-time = "2026-08-24T13:22:46.903Z" },
 ]
 
 [[package]]
