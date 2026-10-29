@@ -174,7 +174,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # THE ONE JOB THAT NEEDS MORE THAN 25, and it needs it on macOS only.
+    # Measured on the last three runs: macOS 15m49s and 20m47s (both passed),
+    # then 25m32s, cancelled AT the cap. 20m47s against a 25-minute bound is
+    # 20% of headroom, not a bound, and a job cancelled at its timeout reads as
+    # infrastructure noise and gets rerun rather than investigated -- the
+    # failure mode the 25 is meant to prevent. It is the only job whose macOS
+    # leg is a full Go build plus the entra e2e, so it is a different
+    # distribution from the 10.2-minute worst case the uniform number came
+    # from, not a slower instance of it. 40 keeps a real hang distinguishable
+    # from a slow runner.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
