@@ -1142,26 +1142,32 @@ jobs:
     name: The Go suite under the race detector (${{ matrix.group }})
     strategy:
       fail-fast: false
-      # THREE JOBS, because ONE job could not finish. The suite ran 30, 52 and
+      # FOUR JOBS, because ONE job could not finish. The suite ran 30, 52 and
       # 55 minutes in CI and was killed each time before `internal/api` or
       # `internal/server` reported; 19 of 21 packages passed every time. Those
       # two are the largest in the tree -- 116s and 155s UNRACED on a many-core
       # machine -- and under instrumentation they are the whole job.
       #
-      # Sharding them onto their own runners is the fix rather than a bigger
-      # ceiling: each leg now bounds itself at roughly one package's cost, and
-      # a leg that dies takes one group's verdict with it instead of the
-      # suite's. The groups are the two big packages and everything else, which
-      # is also the split that keeps the cheap 19 packages from queueing behind
-      # them.
+      # Sharding is the fix rather than a bigger ceiling. Measured once split:
+      # `api` 3m55s and `server` 12m10s, both green, against a combined job that
+      # never finished -- the two were thrashing each other's cache and CPU.
+      #
+      # `data` exists because the first `rest` group (the other 19 packages) was
+      # killed 3 times out of 3 at ~7 minutes while a 12-minute single-package
+      # leg passed, which points at peak memory rather than duration: 19
+      # instrumented packages at `-p 4` is the spike. onelake, store and purview
+      # are the next three heaviest, so they get their own leg and the light
+      # remainder runs alone.
       matrix:
         include:
           - group: api
             packages: ./internal/api/...
           - group: server
             packages: ./internal/server/...
+          - group: data
+            packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
           - group: rest
-            packages: $(go list ./... | grep -vE '/internal/(api|server)$')
+            packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview)$' | tr '\n' ' ')
     runs-on: ubuntu-latest
     # 45 each, which is ~2x the measured cost of the largest single package
     # under instrumentation on a 4-core runner. The uniform 25 is not enough
