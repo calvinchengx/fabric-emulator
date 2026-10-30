@@ -1139,22 +1139,34 @@ jobs:
   race:
     needs: changes
     if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
-    name: The Go suite under the race detector, in randomised order
+    name: The Go suite under the race detector (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      # THREE JOBS, because ONE job could not finish. The suite ran 30, 52 and
+      # 55 minutes in CI and was killed each time before `internal/api` or
+      # `internal/server` reported; 19 of 21 packages passed every time. Those
+      # two are the largest in the tree -- 116s and 155s UNRACED on a many-core
+      # machine -- and under instrumentation they are the whole job.
+      #
+      # Sharding them onto their own runners is the fix rather than a bigger
+      # ceiling: each leg now bounds itself at roughly one package's cost, and
+      # a leg that dies takes one group's verdict with it instead of the
+      # suite's. The groups are the two big packages and everything else, which
+      # is also the split that keeps the cheap 19 packages from queueing behind
+      # them.
+      matrix:
+        include:
+          - group: api
+            packages: ./internal/api/...
+          - group: server
+            packages: ./internal/server/...
+          - group: rest
+            packages: $(go list ./... | grep -vE '/internal/(api|server)$')
     runs-on: ubuntu-latest
-    # 60, NOT 25, because the race detector changes the distribution rather
-    # than sitting inside it. The suite takes ~7 minutes unraced on a many-core
-    # machine and `internal/server` alone is 155s of that; the detector is
-    # 5-10x, and a 4-core runner has no spare parallelism to hide it. Measured:
-    # the job ran 30 minutes in CI and was cancelled AT the old cap, and
-    # serialising packages to two (`-p 2`, tried and reverted) took it to 55 --
-    # so the natural runtime is ~30 and the parallelism is not the problem.
-    #
-    # A job cancelled at its timeout reports as `cancelled` and gets rerun
-    # rather than investigated, which is the trap the uniform 25 exists to
-    # avoid. spark-jvm and the live conformance jobs already carry 45 for the
-    # same class of reason; this one needs more because the detector is slower
-    # than any of them.
-    timeout-minutes: 60
+    # 45 each, which is ~2x the measured cost of the largest single package
+    # under instrumentation on a 4-core runner. The uniform 25 is not enough
+    # for an instrumented build of these two; see the comment on `jobs:`.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1192,9 +1204,9 @@ jobs:
       # covered by the `test` matrix.
       #
       # Measured at 2m04s locally under `-race -shuffle=on`, against 25s for a
-      # plain `go test ./...`. The 25-minute timeout is this file's uniform
-      # value; see the comment on the `jobs:` key for why it is one number.
-      - run: make test-race
+      # plain `go test ./...`; the two big packages are what the shard split
+      # above exists for.
+      - run: make test-race PACKAGES="${{ matrix.packages }}"
 
   lint:
     needs: changes

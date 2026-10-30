@@ -600,8 +600,15 @@ test: check ## Repo invariants, then Go build, vet and unit tests
 # Both flags together, deliberately. `-race` finds unsynchronised access;
 # `-shuffle=on` finds the other half, a test that passes only because an earlier
 # test in the same file left state behind. Neither sees what the other does.
+#
+# PACKAGES exists so CI can SHARD this. `internal/api` and `internal/server`
+# take 116s and 155s unraced and several times that instrumented; a single job
+# carrying all 21 packages was killed at 30, 52 and 55 minutes before either
+# reported, with the other 19 green. The default is still the whole tree, so a
+# local `make test-race` means exactly what it always did.
+PACKAGES ?= ./...
 test-race: ## The race detector and randomised test order over the whole Go suite
-	go test -race -shuffle=on -count=1 ./...
+	go test -race -shuffle=on -count=1 $(PACKAGES)
 
 # ---------------------------------------------------------------------------
 # The documentation site.
