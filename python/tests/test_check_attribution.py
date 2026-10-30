@@ -31,6 +31,21 @@ class TrailerMatching(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(attribution.offending_lines(f"fix: x\n\nbody\n\n{line}\n"), [line.strip()])
 
+    def test_allows_a_dependency_bot_but_not_a_person(self):
+        for line in (
+            "Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+            "co-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(attribution.offending_lines(f"fix: x\n\n{line}\n"), [])
+        # A human co-author still fails: the rule is one author per commit.
+        for line in (
+            "Co-authored-by: Someone <a@b.c>",
+            "Co-authored-by: dependabot <a@b.c>",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(attribution.offending_lines(f"fix: x\n\n{line}\n"), [line.strip()])
+
     def test_allows_mentions_that_are_not_trailers(self):
         text = "docs: explain why we reject `Co-authored-by:` trailers\n\nNo Claude-Session: here either."
         self.assertEqual(attribution.offending_lines(text), [])
