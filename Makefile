@@ -607,8 +607,15 @@ test: check ## Repo invariants, then Go build, vet and unit tests
 # reported, with the other 19 green. The default is still the whole tree, so a
 # local `make test-race` means exactly what it always did.
 PACKAGES ?= ./...
+# MAKE TREATS A NEWLINE INSIDE A RECIPE EXPANSION AS A NEW COMMAND LINE. A
+# caller passing `PACKAGES=$(go list ./...)` -- one path per line -- gets its
+# SECOND package run as a shell command; CI did exactly that and failed with
+# `make: <path>: No such file or directory` after the first package passed.
+# Collapsing to spaces here makes the seam safe for every caller rather than
+# for the one that remembered.
+RACE_PACKAGES := $(shell echo $(PACKAGES))
 test-race: ## The race detector and randomised test order over the whole Go suite
-	go test -race -shuffle=on -count=1 $(PACKAGES)
+	go test -race -shuffle=on -count=1 $(RACE_PACKAGES)
 
 # ---------------------------------------------------------------------------
 # The documentation site.
