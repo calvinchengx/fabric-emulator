@@ -1166,19 +1166,10 @@ jobs:
             packages: ./internal/server/...
           - group: data
             packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
+          - group: sql
+            packages: ./internal/tsql/... ./internal/varlib/... ./internal/warehouse/... ./internal/xmla/... ./pkg/onelakesec/... ./portal/...
           - group: rest
-            packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview)$' | tr '\n' ' ')
-            # ONE PACKAGE AT A TIME. Nineteen of this leg's twenty-five
-            # packages report in seconds and the job then sat for fifty minutes
-            # with no output at all -- and, twice, would not even accept a
-            # cancel, which is a dead runner rather than a slow test. Serialised
-            # the log names the last package that finished, so the next stall
-            # says which one it was in.
-            #
-            # NOT `-v`: the verbose log for twenty-five packages is megabytes,
-            # and a step whose output runs past GitHub's log limit is its own
-            # failure mode.
-            flags: -p 1
+            packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview|tsql|varlib|warehouse|xmla)$|/pkg/onelakesec$|/portal$' | tr '\n' ' ')
     runs-on: ubuntu-latest
     # 45 each, which is ~2x the measured cost of the largest single package
     # under instrumentation on a 4-core runner. The uniform 25 is not enough
