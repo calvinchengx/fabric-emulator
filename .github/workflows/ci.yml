@@ -1139,22 +1139,54 @@ jobs:
   race:
     needs: changes
     if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
-    name: The Go suite under the race detector, in randomised order
+    name: The Go suite under the race detector (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      # FOUR JOBS, because ONE job could not finish. The suite ran 30, 52 and
+      # 55 minutes in CI and was killed each time before `internal/api` or
+      # `internal/server` reported; 19 of 21 packages passed every time. Those
+      # two are the largest in the tree -- 116s and 155s UNRACED on a many-core
+      # machine -- and under instrumentation they are the whole job.
+      #
+      # Sharding is the fix rather than a bigger ceiling. Measured once split:
+      # `api` 3m55s and `server` 12m10s, both green, against a combined job that
+      # never finished -- the two were thrashing each other's cache and CPU.
+      #
+      # `data` exists because the first `rest` group (the other 19 packages) was
+      # killed 3 times out of 3 at ~7 minutes while a 12-minute single-package
+      # leg passed, which points at peak memory rather than duration: 19
+      # instrumented packages at `-p 4` is the spike. onelake, store and purview
+      # are the next three heaviest, so they get their own leg and the light
+      # remainder runs alone.
+      matrix:
+        include:
+          - group: api
+            packages: ./internal/api/...
+            shard: ''
+          # `internal/server` is 282 tests and 155s unraced; instrumented it ran
+          # 11 minutes once and 24 another, and the runners killed both. It is
+          # one PACKAGE, so it shards by TEST -- three equal slices of a sorted
+          # `go test -list`, which partitions 282/282 with nothing run twice.
+          - group: server-1
+            shard: 1
+          - group: server-2
+            shard: 2
+          - group: server-3
+            shard: 3
+          - group: data
+            packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
+            shard: ''
+          - group: sql
+            packages: ./internal/tsql/... ./internal/varlib/... ./internal/warehouse/... ./internal/xmla/... ./pkg/onelakesec/... ./portal/...
+            shard: ''
+          - group: rest
+            packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview|tsql|varlib|warehouse|xmla)$|/pkg/onelakesec$|/portal$' | tr '\n' ' ')
+            shard: ''
     runs-on: ubuntu-latest
-    # 60, NOT 25, because the race detector changes the distribution rather
-    # than sitting inside it. The suite takes ~7 minutes unraced on a many-core
-    # machine and `internal/server` alone is 155s of that; the detector is
-    # 5-10x, and a 4-core runner has no spare parallelism to hide it. Measured:
-    # the job ran 30 minutes in CI and was cancelled AT the old cap, and
-    # serialising packages to two (`-p 2`, tried and reverted) took it to 55 --
-    # so the natural runtime is ~30 and the parallelism is not the problem.
-    #
-    # A job cancelled at its timeout reports as `cancelled` and gets rerun
-    # rather than investigated, which is the trap the uniform 25 exists to
-    # avoid. spark-jvm and the live conformance jobs already carry 45 for the
-    # same class of reason; this one needs more because the detector is slower
-    # than any of them.
-    timeout-minutes: 60
+    # 45 each, which is ~2x the measured cost of the largest single package
+    # under instrumentation on a 4-core runner. The uniform 25 is not enough
+    # for an instrumented build of these two; see the comment on `jobs:`.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -1192,9 +1224,17 @@ jobs:
       # covered by the `test` matrix.
       #
       # Measured at 2m04s locally under `-race -shuffle=on`, against 25s for a
-      # plain `go test ./...`. The 25-minute timeout is this file's uniform
-      # value; see the comment on the `jobs:` key for why it is one number.
-      - run: make test-race
+      # plain `go test ./...`; the two big packages are what the shard split
+      # above exists for.
+      # THE DOWNLOAD IS ITS OWN STEP. Inside `make`, a module fetch that hangs
+      # looks exactly like a test that hangs: no output, no failure, and the
+      # job sits until something kills it. Here it fails in the step that names
+      # it, and every leg after it starts from a warm module cache.
+      - run: go mod download
+      - if: matrix.shard == ''
+        run: make test-race PACKAGES="${{ matrix.packages }}" RACE_FLAGS="${{ matrix.flags }}"
+      - if: matrix.shard != ''
+        run: make test-race-shard PKG=./internal/server SHARD=${{ matrix.shard }} OF=3
 
   lint:
     needs: changes
