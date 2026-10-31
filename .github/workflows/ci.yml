@@ -1168,12 +1168,17 @@ jobs:
             packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
           - group: rest
             packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview)$' | tr '\n' ' ')
-            # ONE PACKAGE AT A TIME, and verbose, because this leg is the one
-            # that stalls: 19 of its 25 packages report in seconds and the job
-            # then sits for 50 minutes with no output at all. With `-p 4` the
-            # stall hides behind three other packages; serialised, the last
-            # "ok" names the culprit and `-v` names the test inside it.
-            flags: -p 1 -v
+            # ONE PACKAGE AT A TIME. Nineteen of this leg's twenty-five
+            # packages report in seconds and the job then sat for fifty minutes
+            # with no output at all -- and, twice, would not even accept a
+            # cancel, which is a dead runner rather than a slow test. Serialised
+            # the log names the last package that finished, so the next stall
+            # says which one it was in.
+            #
+            # NOT `-v`: the verbose log for twenty-five packages is megabytes,
+            # and a step whose output runs past GitHub's log limit is its own
+            # failure mode.
+            flags: -p 1
     runs-on: ubuntu-latest
     # 45 each, which is ~2x the measured cost of the largest single package
     # under instrumentation on a 4-core runner. The uniform 25 is not enough
@@ -1218,6 +1223,11 @@ jobs:
       # Measured at 2m04s locally under `-race -shuffle=on`, against 25s for a
       # plain `go test ./...`; the two big packages are what the shard split
       # above exists for.
+      # THE DOWNLOAD IS ITS OWN STEP. Inside `make`, a module fetch that hangs
+      # looks exactly like a test that hangs: no output, no failure, and the
+      # job sits until something kills it. Here it fails in the step that names
+      # it, and every leg after it starts from a warm module cache.
+      - run: go mod download
       - run: make test-race PACKAGES="${{ matrix.packages }}" RACE_FLAGS="${{ matrix.flags }}"
 
   lint:
