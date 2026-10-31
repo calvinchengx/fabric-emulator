@@ -600,8 +600,49 @@ test: check ## Repo invariants, then Go build, vet and unit tests
 # Both flags together, deliberately. `-race` finds unsynchronised access;
 # `-shuffle=on` finds the other half, a test that passes only because an earlier
 # test in the same file left state behind. Neither sees what the other does.
+#
+# PACKAGES exists so CI can SHARD this. `internal/api` and `internal/server`
+# take 116s and 155s unraced and several times that instrumented; a single job
+# carrying all 21 packages was killed at 30, 52 and 55 minutes before either
+# reported, with the other 19 green. The default is still the whole tree, so a
+# local `make test-race` means exactly what it always did.
+PACKAGES ?= ./...
+# MAKE TREATS A NEWLINE INSIDE A RECIPE EXPANSION AS A NEW COMMAND LINE. A
+# caller passing `PACKAGES=$(go list ./...)` -- one path per line -- gets its
+# SECOND package run as a shell command; CI did exactly that and failed with
+# `make: <path>: No such file or directory` after the first package passed.
+# Collapsing to spaces here makes the seam safe for every caller rather than
+# for the one that remembered.
+RACE_PACKAGES := $(shell echo $(PACKAGES))
+# RACE_FLAGS is the other half of the same seam: CI runs one shard serially so
+# the log names the package that stalls instead of a batch of four.
+RACE_FLAGS ?=
 test-race: ## The race detector and randomised test order over the whole Go suite
-	go test -race -shuffle=on -count=1 ./...
+	go test -race -shuffle=on -count=1 $(RACE_FLAGS) $(RACE_PACKAGES)
+
+# A SHARD OF ONE PACKAGE, for the one package too big for a runner.
+# `internal/server` is 282 tests and 155s unraced; instrumented on a 4-core
+# runner it ran 11 minutes once and 24 another time, and the hosted runners
+# killed both. Splitting by TEST rather than by package is what makes that
+# boundable, and the list is read from `go test -list` at run time so a test
+# added tomorrow lands in a shard without anyone editing this file.
+#
+# THE THREE SHARDS PARTITION THE TESTS: sorted, cut into ceil(n/of) chunks.
+# Nothing is skipped and nothing runs twice, and the recipe prints the range it
+# took so the log says which third it was.
+SHARD ?= 1
+OF ?= 1
+test-race-shard: ## One N/th of a package's tests: make test-race-shard PKG=./internal/server SHARD=1 OF=3
+	@test -n "$(PKG)" || { echo "usage: make test-race-shard PKG=<package> [SHARD=1 OF=3]"; exit 2; }
+	@tests=$$(go test -list '^Test' $(PKG) | grep -E '^Test' | sort); \
+	total=$$(printf '%s\n' "$$tests" | wc -l | tr -d ' '); \
+	per=$$(( (total + $(OF) - 1) / $(OF) )); \
+	start=$$(( ($(SHARD) - 1) * per + 1 )); \
+	end=$$(( start + per - 1 )); \
+	sel=$$(printf '%s\n' "$$tests" | sed -n "$${start},$${end}p" | paste -sd'|' -); \
+	echo "shard $(SHARD)/$(OF): tests $${start}..$${end} of $$total in $(PKG)"; \
+	test -n "$$sel" || { echo "shard $(SHARD)/$(OF) is empty -- $(OF) shards for $$total tests"; exit 1; }; \
+	go test -race -shuffle=on -count=1 -run "^($$sel)$$" $(PKG)
 
 # ---------------------------------------------------------------------------
 # The documentation site.
