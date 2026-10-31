@@ -1168,6 +1168,12 @@ jobs:
             packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
           - group: rest
             packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview)$' | tr '\n' ' ')
+            # ONE PACKAGE AT A TIME, and verbose, because this leg is the one
+            # that stalls: 19 of its 25 packages report in seconds and the job
+            # then sits for 50 minutes with no output at all. With `-p 4` the
+            # stall hides behind three other packages; serialised, the last
+            # "ok" names the culprit and `-v` names the test inside it.
+            flags: -p 1 -v
     runs-on: ubuntu-latest
     # 45 each, which is ~2x the measured cost of the largest single package
     # under instrumentation on a 4-core runner. The uniform 25 is not enough
@@ -1212,7 +1218,7 @@ jobs:
       # Measured at 2m04s locally under `-race -shuffle=on`, against 25s for a
       # plain `go test ./...`; the two big packages are what the shard split
       # above exists for.
-      - run: make test-race PACKAGES="${{ matrix.packages }}"
+      - run: make test-race PACKAGES="${{ matrix.packages }}" RACE_FLAGS="${{ matrix.flags }}"
 
   lint:
     needs: changes

@@ -614,8 +614,11 @@ PACKAGES ?= ./...
 # Collapsing to spaces here makes the seam safe for every caller rather than
 # for the one that remembered.
 RACE_PACKAGES := $(shell echo $(PACKAGES))
+# RACE_FLAGS is the other half of the same seam: CI runs one shard serially so
+# the log names the package that stalls instead of a batch of four.
+RACE_FLAGS ?=
 test-race: ## The race detector and randomised test order over the whole Go suite
-	go test -race -shuffle=on -count=1 $(RACE_PACKAGES)
+	go test -race -shuffle=on -count=1 $(RACE_FLAGS) $(RACE_PACKAGES)
 
 # ---------------------------------------------------------------------------
 # The documentation site.
