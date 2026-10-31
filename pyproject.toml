@@ -167,7 +167,18 @@ sail = [
     # change in the engine this repository ships, so it is a measurement (the
     # three combinations above) rather than a version bump -- there is no
     # upstream release to wait for, which is what makes it policy and not delay.
-    "pysail==0.7.2",
+    #
+    # 0.7.1, NOT 0.7.2. 0.7.2 returns a WRONG count() for a plan that joins a
+    # frame built from an aggregate to another frame: 132 where collect() and
+    # the written table both have 180. Measured on the same fixture, same
+    # client (pyspark-client 4.2.0), 0.7.0 and 0.7.1 return 180 and 0.7.2
+    # returns 132; `repartition(4).count()` on 0.7.2 returns 180, so it is the
+    # count() rewrite, not the data. It reached a consumer as a red acceptance
+    # run (fabric-platform-notebook-pipelines, silver_fx_daily 132 != 4 * 45),
+    # which is how a silently wrong aggregate should be found -- but not by
+    # them. The hold is until upstream fixes it; e2e/sail/driver.py asserts
+    # count() == the rows so the next bump cannot bring it back quietly.
+    "pysail==0.7.1",
     { include-group = "spark-client" },
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
@@ -233,8 +244,9 @@ spark-agent-dbt = [
     # PERMANENT HOLD, on the justification already given in the sentence above:
     # the pin is what makes "the same Sail everywhere" true, so it is policy
     # rather than a deferred upgrade. It moves with the `sail` group or not at
-    # all.
-    "pysail==0.7.2",
+    # all -- including the 0.7.2 count() regression written out in the `sail`
+    # group above.
+    "pysail==0.7.1",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
