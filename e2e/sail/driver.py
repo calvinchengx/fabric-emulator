@@ -178,6 +178,48 @@ got = {r["kind"]: r["n"] for r in rows}
 assert got == {"purchase": 1, "signup": 2}, got
 print(f"sql over delta OK: {got}")
 
+# AGGREGATE FIDELITY: count() must equal the rows it claims to count.
+#
+# This is not a hypothetical. pysail 0.7.2 returned 4 for a plan whose
+# collect() had 88 rows -- a frame built from a grouped aggregate, joined to
+# the same source again. `repartition(4).count()` on the same frame returns the
+# right number, so the bug is in the count() rewrite, not the data, and nothing
+# about the DataFrame looks wrong from the outside.
+#
+# It was found by a CONSUMER: fabric-platform-notebook-pipelines went red on
+# `silver_fx_daily 132 != fx_currencies 4 * fx_calendar_days 45` -- a dense FX
+# table of 180 rows whose count() reported 132. A silently wrong aggregate is
+# the worst shape of engine defect: it fails only where a number is compared to
+# another number, so it is asserted here, on every engine, rather than left to
+# the next consumer to discover.
+#
+# THE SHAPE IS THE TEST. A flat count() passes and proves nothing; so does a
+# two-level join. What breaks is a distinct() under a cross join, a non-equi
+# join, a groupBy, and then an equi join back to the same source -- so that is
+# what this builds.
+step("aggregate fidelity: count() equals the rows")
+from pyspark.sql import functions as F  # noqa: E402
+
+cal = spark.range(45).select((F.col("id") + 1).alias("day"))
+rates = spark.sql("SELECT * FROM VALUES (1,'a'),(2,'a'),(3,'b'),(4,'b') AS t(q, ccy)")
+currencies = rates.select("ccy").distinct()
+quoted = (
+    cal.crossJoin(currencies)
+    .alias("d")
+    .join(rates.alias("p"), (F.col("d.ccy") == F.col("p.ccy")) & (F.col("p.q") <= F.col("d.day")))
+    .groupBy("d.day", "d.ccy")
+    .agg(F.max("p.q").alias("quoted_on"))
+)
+dense = quoted.alias("e").join(
+    rates.alias("q"), (F.col("e.ccy") == F.col("q.ccy")) & (F.col("e.quoted_on") == F.col("q.q"))
+)
+claimed, actual = dense.count(), len(dense.collect())
+assert claimed == actual, (
+    f"count() said {claimed}, the frame has {actual} rows: "
+    "the engine's count() rewrite is not counting what it returns"
+)
+print(f"aggregate fidelity OK: count() == collect() == {claimed}")
+
 # Append — a second Delta commit exercises the conditional-PUT log protocol.
 step("delta append")
 spark.sql("SELECT * FROM VALUES (4,'purchase','eu') AS t(id, kind, region)") \

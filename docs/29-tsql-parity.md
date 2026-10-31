@@ -104,7 +104,7 @@ because refusing them removes capability that works today.
 | `SET ROWCOUNT` | Medium | ✅ `set-rowcount` |
 | `IDENTITY` seed/increment, `IDENTITY_INSERT` | Medium | ✅ `identity-seed`, `identity-insert` |
 | `ALTER TABLE ADD` identity, non-`BIGINT` identity | Medium | ✅ `identity-alter-add` — the IDENTITY keyword after an `ADD` in an `ALTER TABLE`; no column-type analysis is needed, because no type is allowed |
-| **Materialized (indexed) views** | Medium | ⬜ needs correlating `CREATE INDEX` with its view, across statements |
+| **Materialized (indexed) views** | Medium | 🟠 `indexed-view` — a `CREATE INDEX` on a view created in the **same batch**; a view made in an earlier batch is invisible to a lexer, so that case is still unrefused |
 | `SELECT … FOR XML` | Low | ✅ `for-xml` |
 | `CREATE USER` | Low | ✅ `create-user` |
 | Multi-column statistics | Low | ✅ `multi-column-stats` |
