@@ -1162,14 +1162,26 @@ jobs:
         include:
           - group: api
             packages: ./internal/api/...
-          - group: server
-            packages: ./internal/server/...
+            shard: ''
+          # `internal/server` is 282 tests and 155s unraced; instrumented it ran
+          # 11 minutes once and 24 another, and the runners killed both. It is
+          # one PACKAGE, so it shards by TEST -- three equal slices of a sorted
+          # `go test -list`, which partitions 282/282 with nothing run twice.
+          - group: server-1
+            shard: 1
+          - group: server-2
+            shard: 2
+          - group: server-3
+            shard: 3
           - group: data
             packages: ./internal/onelake/... ./internal/store/... ./internal/purview/...
+            shard: ''
           - group: sql
             packages: ./internal/tsql/... ./internal/varlib/... ./internal/warehouse/... ./internal/xmla/... ./pkg/onelakesec/... ./portal/...
+            shard: ''
           - group: rest
             packages: $(go list ./... | grep -vE '/internal/(api|server|onelake|store|purview|tsql|varlib|warehouse|xmla)$|/pkg/onelakesec$|/portal$' | tr '\n' ' ')
+            shard: ''
     runs-on: ubuntu-latest
     # 45 each, which is ~2x the measured cost of the largest single package
     # under instrumentation on a 4-core runner. The uniform 25 is not enough
@@ -1219,7 +1231,10 @@ jobs:
       # job sits until something kills it. Here it fails in the step that names
       # it, and every leg after it starts from a warm module cache.
       - run: go mod download
-      - run: make test-race PACKAGES="${{ matrix.packages }}" RACE_FLAGS="${{ matrix.flags }}"
+      - if: matrix.shard == ''
+        run: make test-race PACKAGES="${{ matrix.packages }}" RACE_FLAGS="${{ matrix.flags }}"
+      - if: matrix.shard != ''
+        run: make test-race-shard PKG=./internal/server SHARD=${{ matrix.shard }} OF=3
 
   lint:
     needs: changes
