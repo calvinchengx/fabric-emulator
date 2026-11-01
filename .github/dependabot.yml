@@ -316,6 +316,21 @@ updates:
       - dependency-name: library/python
         update-types: ['version-update:semver-minor']
 
+      # A DISTRO MAJOR IS NOT A DEPENDENCY BUMP. debian 12 -> 13 renames
+      # packages wholesale -- libicu72 becomes libicu76 -- and the two harness
+      # images that install PowerShell's dependencies stopped building on it:
+      #
+      #   apt-get install ... libicu72 ...  ->  exit code 100, no such package
+      #
+      # Taking it is a migration, not a merge: it changes what the image IS and
+      # has to be re-measured by the PowerShell and deployment-pipeline e2e.
+      # Held at 12, which is supported to 2028, so there is nothing urgent
+      # being deferred here.
+      #
+      # LIFT THIS when the harness images are moved to trixie deliberately, in
+      # a change that updates libicu72 and runs both of those e2e suites.
+      - dependency-name: debian
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
