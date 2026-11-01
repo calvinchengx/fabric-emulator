@@ -193,6 +193,7 @@ import yaml  # noqa: E402
 
 CI = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 FULL = "needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'"
+FULL_E2E = FULL + " && needs.changes.outputs.e2e == 'true'"
 PORTAL = "needs.changes.outputs.docs_only != 'true'"
 
 
@@ -253,7 +254,7 @@ def test_every_gated_job_is_in_exactly_one_lane_and_the_portal_set_is_the_declar
             portal.add(jid)
             if bare != PORTAL:
                 problems.append(f"{jid}: portal-lane job gated {cond!r}")
-        elif bare != FULL:
+        elif bare not in (FULL, FULL_E2E):
             problems.append(f"{jid}: gated {cond!r}, want the full-only form")
     assert problems == []
     assert portal == set(c.PORTAL_LANE_JOBS), "a declared portal-lane job is missing from ci.yml"
