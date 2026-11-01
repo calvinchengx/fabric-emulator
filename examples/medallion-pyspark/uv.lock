@@ -113,7 +113,7 @@ wheels = [
 
 [[package]]
 name = "azure-identity"
-version = "1.26.0"
+version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -122,9 +122,9 @@ dependencies = [
     { name = "msal-extensions" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/87/e88098a024d74b7434de5b110c261da024fe5d6c139f1847f6f8a2b76678/azure_identity-1.26.0.tar.gz", hash = "sha256:61b4538b87df10d2d6d44b77cd5ea28a8929fd4929d58b45bf3f230f7daba02e", size = 310151, upload-time = "2026-10-01T14:17:47.825Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/33/0b881d0093d64c965bb20fcf71b806c7097881b544a2a55d519cdcf3bab9/azure_identity-1.27.0.tar.gz", hash = "sha256:6a4c50e25e8e9a47b324a95ad024897e56cb3c6241e0094e93b126a2bf71edc5", size = 331360, upload-time = "2026-10-26T21:17:39.095Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/d5/ae45ce8009d0d015304b206c7c4a6cbab02c03f8f07eedefb32b099ccee3/azure_identity-1.26.0-py3-none-any.whl", hash = "sha256:3c60d9682b3ac01507388d474cb5a5ffbe54152a96b6cdcaa7013da9315cf186", size = 195958, upload-time = "2026-10-01T14:17:49.705Z" },
+    { url = "https://files.pythonhosted.org/packages/29/1e/6a2fe486576f41884a120ef7b2c3774f334f9143402fb73650c67db94ddd/azure_identity-1.27.0-py3-none-any.whl", hash = "sha256:92fd2a93c0d2f777dac6c04e5fd7d5734f6643582b983544ef66b4575844e46d", size = 203474, upload-time = "2026-10-26T21:17:40.92Z" },
 ]
 
 [[package]]
@@ -579,7 +579,7 @@ wheels = [
 
 [[package]]
 name = "dbt-fabric"
-version = "1.11.1"
+version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -590,9 +590,9 @@ dependencies = [
     { name = "mssql-python" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/9e/940744ae2555e835d29ea14c8edcc052ec11d90827b1bec8830384039c1d/dbt_fabric-1.11.1.tar.gz", hash = "sha256:6927abb6c71950fc7decb6f5b02afd06bc2b395eb13c87b0891c1a5ac90a2846", size = 145552, upload-time = "2026-08-20T04:31:25.649Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/df/0c23db8c4a42817031fd7e1c1b2fccf8024f83d18a9aecc372c57b09c00b/dbt_fabric-1.12.0.tar.gz", hash = "sha256:69d1a80a1e635c69c2ee13cf92c531bcd388a01fec5759d5b7a1d3aa09982359", size = 216560, upload-time = "2026-10-26T07:09:19.653Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/97/5b1e6edd560cec4d7d128b69f79647a2835bb75c398ae08a616a6855e417/dbt_fabric-1.11.1-py3-none-any.whl", hash = "sha256:f82e349d582ac52e12a0b7a197b6fb379627f4bc2f775388355e737901df2f89", size = 126399, upload-time = "2026-08-20T04:31:24.485Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/3c/551d3b5efdeca26a70d42f46b1d11547fe0e7cf70b1353a9a099d3764db8/dbt_fabric-1.12.0-py3-none-any.whl", hash = "sha256:e15cc4983c4a75c59d62b93b01dae67e2c32039102b9f54e7e98e564dba8eee3", size = 150842, upload-time = "2026-10-26T07:09:18.342Z" },
 ]
 
 [[package]]
@@ -671,7 +671,7 @@ requires-dist = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyodbc", specifier = ">=5.2,<6" },
-    { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "pyspark-client", specifier = "==4.2.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 
@@ -1472,7 +1472,7 @@ wheels = [
 
 [[package]]
 name = "pyspark-client"
-version = "4.2.0"
+version = "4.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1485,7 +1485,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/1b/b7fc2cb3cb34a9d71790bd556ac5802c2d93e861c6af850f6e97e3e92b7c/pyspark_client-4.2.0.tar.gz", hash = "sha256:4008fe5e537bf0e57e7243d03abfaac089b7c87316bd07024784d8ea726f5d41", size = 1675557, upload-time = "2026-07-14T22:41:58.134Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/a0/2bfff9d10cacc2e87765456e2590a65e623872cb3b841bf18fea01da9e62/pyspark_client-4.2.1.tar.gz", hash = "sha256:f009f71e1fd0f1efa7e252e18d848e612bc25fcda962a25ed67250dae2af90f5", size = 1678691, upload-time = "2026-10-27T17:33:04.173Z" }
 
 [[package]]
 name = "python-dateutil"
