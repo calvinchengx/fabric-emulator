@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` and `unlabeled` are NOT in GitHub's default set, and the e2e
+    # gate reads the `full-ci` label -- so without them the label would change
+    # nothing until the next push, which is the opposite of an escape hatch.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # PR refs supersede; MAIN COMMITS DO NOT.
 #
@@ -103,6 +107,24 @@ jobs:
       # docs | portal | full. Read only as "not a reduced lane" (see the jobs
       # below), so an output that is missing or empty runs everything.
       lane: ${{ steps.classify.outputs.lane }}
+      # true | false -- whether the END-TO-END matrix runs for this event.
+      #
+      # THE CEILING, measured rather than guessed. This workflow is 103 job
+      # instances. GitHub gives a Free account 20 concurrent jobs (5 for
+      # macOS), so ONE run is five waves and about half an hour -- fine. Four
+      # open pull requests plus main is 500 jobs against those 20 slots, and
+      # the queue then takes hours: on 2026-10-31 a run created at 06:21 had
+      # its race legs start at 00:27 the NEXT DAY and be killed six minutes in
+      # with `the runner has received a shutdown signal`. Every one of those
+      # reds was the queue, not the code.
+      #
+      # So PRs run the FAST GATE -- build, vet, unit, race, lint, portal, the
+      # witness check, the wheel build, 16 jobs -- and the e2e matrix runs on
+      # main and on a PR that asks for it with the `full-ci` label. Main still
+      # gets a full verdict on every commit it ships, which is the rule this
+      # file already states; what changes is that iterating on a pull request
+      # no longer costs a hundred jobs per push.
+      e2e: ${{ steps.classify.outputs.e2e }}
     steps:
       # Full history: the classifier diffs against the base commit, and the
       # default depth-1 checkout cannot see it.
@@ -124,8 +146,19 @@ jobs:
           # running everything.
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           set -euo pipefail
+          # THE E2E GATE, decided before anything else so the early exits below
+          # cannot forget it. A pull request runs the e2e matrix only when it
+          # carries `full-ci`; every other event -- a push to main, a dispatch
+          # -- runs it. See the `e2e` output for why the ceiling makes this
+          # necessary.
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && ! printf '%s' "${LABELS}" | grep -q '"full-ci"'; then
+            echo "e2e=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          fi
           # THE LANE IS FOR PULL REQUESTS. EVERY COMMIT ON MAIN GETS THE FULL
           # MATRIX, whatever it touched.
           #
@@ -172,7 +205,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # UBUNTU ONLY ON A PULL REQUEST, all three on main. The macOS and
+        # Windows legs are the claim that this works on a developer's laptop,
+        # and main makes that claim on every commit it ships; a pull request
+        # spending two of the account's twenty concurrent slots -- five of the
+        # macOS ones -- on a commit nobody ships is the wrong trade. `full-ci`
+        # puts them back.
+        os: ${{ fromJSON(needs.changes.outputs.e2e == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     # 25 IS TOO TIGHT HERE, and only on macOS.
     # Measured on the last three runs: macOS 15m49s and 20m47s (both passed),
@@ -393,7 +432,7 @@ jobs:
 
   coverage-e2e:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Coverage over unit + an instrumented live stack
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -451,7 +490,7 @@ jobs:
 
   engine-matrix:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Spark engine matrix (Sail vs JVM) is current
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -481,7 +520,7 @@ jobs:
 
   conformance-sail:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Framework conformance (sail)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -501,7 +540,7 @@ jobs:
 
   conformance-jvm:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Framework conformance (jvm)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -525,7 +564,7 @@ jobs:
 
   conformance-warehouse:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Framework conformance (warehouse)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1285,7 +1324,7 @@ jobs:
 
   example-parity:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Each medallion pair differs only in silver
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1488,7 +1527,7 @@ jobs:
 
   fabric-cicd:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real fabric-cicd tool publishes into the emulator
     strategy:
       fail-fast: false
@@ -1517,7 +1556,7 @@ jobs:
 
   fabric-cicd-lro:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real fabric-cicd tool follows the forced 202 outcomes
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1545,7 +1584,7 @@ jobs:
 
   arm-capacities:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: ARM-created capacities appear on GET /v1/capacities
     strategy:
       fail-fast: false
@@ -1574,7 +1613,7 @@ jobs:
 
   fabric-target:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: fabric_target toggle drives the emulator profile (T0)
     strategy:
       fail-fast: false
@@ -1605,7 +1644,7 @@ jobs:
 
   rti:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Microsoft's Kusto engine (kustainer) executes KQL behind Eventhouse (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1630,7 +1669,7 @@ jobs:
 
   mcp-eventhouse:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Python mcp SDK witnesses Eventhouse MCP, as users, on kustainer (containerized)
     # Linux/amd64 only, as rti: kustainer's native layer needs AVX2.
     runs-on: ubuntu-latest
@@ -1656,7 +1695,7 @@ jobs:
 
   external-s3:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real S3 server (SeaweedFS) behind a OneLake shortcut, SigV4 enforced (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1680,7 +1719,7 @@ jobs:
 
   azurite-shortcut:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: ADLS Gen2 shortcut reads against Azurite, SAS enforced (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1704,7 +1743,7 @@ jobs:
 
   salesforce:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Salesforce round trip through Bulk API 2.0 (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1730,7 +1769,7 @@ jobs:
 
   environment:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: An Environment item installs a package the image lacks (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1755,7 +1794,7 @@ jobs:
 
   environment-notebook:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: A notebook's own Environment binding installs a package (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1786,7 +1825,7 @@ jobs:
 
   rest-helix:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: BMC Helix incidents ingest through the REST connector (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1816,7 +1855,7 @@ jobs:
 
   rest-servicenow:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: ServiceNow Table API ingest through the REST connector (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1846,7 +1885,7 @@ jobs:
 
   external-shortcuts:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Shortcut target kinds resolve through OneLake (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1870,7 +1909,7 @@ jobs:
 
   governance:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1951,7 +1990,7 @@ jobs:
 
   governance-sso:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: OpenMetadata authenticates against entra-emulator (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1973,7 +2012,7 @@ jobs:
 
   delta-rs:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real delta-rs writes Delta through OneLake
     strategy:
       fail-fast: false
@@ -2003,7 +2042,7 @@ jobs:
 
   adls-sdk:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real Azure Blob SDK round-trips through OneLake
     strategy:
       fail-fast: false
@@ -2032,7 +2071,7 @@ jobs:
 
   purview-datamap:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: pyapacheatlas witnesses the Purview Data Map
     # Single OS deliberately. This asserts a WIRE CONTRACT against a pure-python
     # client, so a three-OS matrix would re-run the same HTTP conversation for
@@ -2062,7 +2101,7 @@ jobs:
 
   mcp-core:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Python mcp SDK witnesses Fabric Core MCP
     # Single OS deliberately. This asserts a WIRE CONTRACT against a pure-python
     # client, so a three-OS matrix would re-run the same HTTP conversation for
@@ -2092,7 +2131,7 @@ jobs:
 
   mcp-fabriciq:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Python mcp SDK witnesses Fabric IQ MCP, as users
     # Single OS for the same reason as mcp-core: a wire contract driven by a
     # pure-python client.
@@ -2120,7 +2159,7 @@ jobs:
 
   mcp-datawarehouse:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Python mcp SDK witnesses Fabric Data Warehouse MCP, as users, on SQL Server
     # Single OS: a wire contract driven by a pure-python client, and SQL Server
     # is a Linux container (as in warehouse-tds).
@@ -2159,7 +2198,7 @@ jobs:
 
   azcopy:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real azcopy transfers through OneLake
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2186,7 +2225,7 @@ jobs:
 
   docker-smoke:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Production image runs and persists (container smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2199,7 +2238,7 @@ jobs:
 
   vscode-extension:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Fabric Data Engineering VS Code extension contract (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2217,7 +2256,7 @@ jobs:
 
   airflow:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Apache Airflow job runs on the real Fabric-pinned engine (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2235,7 +2274,7 @@ jobs:
 
   spark-a2:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Spark Connect API on Sail writes Delta through OneLake (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2254,7 +2293,7 @@ jobs:
 
   eventstream-sail:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Eventstream notebook API on Sail + Kafka
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2284,7 +2323,7 @@ jobs:
 
   agent-contract:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Consumer SQL shapes execute on the built agent (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2307,7 +2346,7 @@ jobs:
 
   livy-native:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Native Livy sessions drive Sail (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2340,7 +2379,7 @@ jobs:
 
   notebook-display:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: display() renders through a real Jupyter kernel (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2361,7 +2400,7 @@ jobs:
 
   engine-probes-notebook:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Engine probes run as a notebook (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2382,7 +2421,7 @@ jobs:
 
   two-context:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: A notebook cell runs without the agent's credentials (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2404,7 +2443,7 @@ jobs:
 
   jupyter:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: The shipped JupyterLab image runs a notebook, twice (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2427,7 +2466,7 @@ jobs:
 
   notebook-driven:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: A notebook runs with no runner in the stack (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2448,7 +2487,7 @@ jobs:
 
   sail:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: LakeSail Sail (Rust Spark Connect) writes Delta through OneLake
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2480,7 +2519,7 @@ jobs:
 
   data-science-loop:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Spark to Direct Lake DAX to MLflow to dbt (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2512,7 +2551,7 @@ jobs:
 
   fabric-cli:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Microsoft's Fabric CLI (fab) drives the control plane + deployment pipelines (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2551,7 +2590,7 @@ jobs:
 
   az-rest:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Azure CLI az rest drives Fabric REST + Power BI activityevents (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2581,7 +2620,7 @@ jobs:
 
   pipeline-activities:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Azure CLI drives Data Factory pipeline activities (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2615,7 +2654,7 @@ jobs:
 
   engine-activities:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Custom, HDInsightSpark and SparkJobDefinition run real code on the agent (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -2639,7 +2678,7 @@ jobs:
 
   databricks-chain:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: fabric submits to databricks-emulator, the Databricks SDK confirms it (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -2667,7 +2706,7 @@ jobs:
 
   terraform-fabric:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: microsoft/fabric Terraform provider drives Fabric REST (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2697,7 +2736,7 @@ jobs:
 
   fab-driven:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: The fab-driven example — fab imports definitions, RUNS them, and the bytes are checked
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2720,7 +2759,7 @@ jobs:
 
   deployment-pipelines-ps:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Azure PowerShell drives deployment pipelines (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2742,7 +2781,7 @@ jobs:
 
   powerbi-ps:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: MicrosoftPowerBIMgmt drives the Power BI admin surfaces (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2779,7 +2818,7 @@ jobs:
 
   dbt-fabricspark:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Microsoft's dbt-fabricspark drives Livy HC on Sail (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2800,7 +2839,7 @@ jobs:
 
   dbt-fabric:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Microsoft's dbt-fabric drives the TDS warehouse via mssql-python (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -2836,7 +2875,7 @@ jobs:
   # Linux-only: the SQL Server image is amd64 and ships no arm64 manifest.
   medallion:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: ${{ matrix.title }}
     strategy:
       fail-fast: false
@@ -3034,7 +3073,7 @@ jobs:
     # check below decides. A missing summary fails loudly rather than skipping,
     # which is noisier when a basic leg is already red and worth it: this job
     # exists so the comparison cannot quietly not happen.
-    if: ${{ !cancelled() && needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' }}
+    if: ${{ !cancelled() && needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -3075,7 +3114,7 @@ jobs:
     # See medallion-compare: `needs` on a matrix waits on EVERY leg, so an
     # unrelated failing leg would skip this one — and a skip is not a failure,
     # so the assertion would quietly stop being made.
-    if: ${{ !cancelled() && needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' }}
+    if: ${{ !cancelled() && needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -3114,7 +3153,7 @@ jobs:
 
   duckdb:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real DuckDB SQL over lakehouse Delta
     strategy:
       fail-fast: false
@@ -3142,7 +3181,7 @@ jobs:
 
   notebookutils:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: notebookutils shim drives the family (notebook loop)
     strategy:
       fail-fast: false
@@ -3187,7 +3226,7 @@ jobs:
 
   notebook-run:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Sail executes representative notebook cells (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -3218,7 +3257,7 @@ jobs:
 
   warehouse-tds:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real SQL Server relay through the TDS endpoint
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -3247,7 +3286,7 @@ jobs:
 
   semantic-model:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real DAX over a semantic model (executeQueries)
     strategy:
       fail-fast: false
@@ -3296,7 +3335,7 @@ jobs:
 
   great-expectations:
     needs: changes
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Real Great Expectations validates semantic-model data
     strategy:
       fail-fast: false
@@ -3363,7 +3402,7 @@ jobs:
 
   openapi-conformance:
     needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model, livy-native, sail, eventstream-sail, data-science-loop]
-    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal'
+    if: needs.changes.outputs.lane != 'docs' && needs.changes.outputs.lane != 'portal' && needs.changes.outputs.e2e == 'true'
     name: Responses conform to Microsoft's OpenAPI, and route coverage only ratchets
     runs-on: ubuntu-latest
     timeout-minutes: 10
