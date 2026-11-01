@@ -316,6 +316,34 @@ updates:
       - dependency-name: library/python
         update-types: ['version-update:semver-minor']
 
+      # A DISTRO MAJOR IS NOT A DEPENDENCY BUMP. debian 12 -> 13 renames
+      # packages wholesale -- libicu72 becomes libicu76 -- and the two harness
+      # images that install PowerShell's dependencies stopped building on it:
+      #
+      #   apt-get install ... libicu72 ...  ->  exit code 100, no such package
+      #
+      # Taking it is a migration, not a merge: it changes what the image IS and
+      # has to be re-measured by the PowerShell and deployment-pipeline e2e.
+      # Held at 12, which is supported to 2028, so there is nothing urgent
+      # being deferred here.
+      #
+      # LIFT THIS when the harness images are moved to trixie deliberately, in
+      # a change that updates libicu72 and runs both of those e2e suites.
+      - dependency-name: debian
+
+      # .NET 8 -> 10 IS A MIGRATION, NOT A BUMP. The xmla suite builds an app
+      # that targets net8.0 and runs it with the SDK image's `dotnet`; the 10.0
+      # image carries no .NET 8 runtime, so the contract would build and then
+      # fail to start. The two harness images must also stay on ONE base -- a
+      # test asserts the image xmla pulls is the base sempy builds on -- so a
+      # bump on one side alone breaks the invariant.
+      #
+      # LIFT THIS when the xmla app targets net10.0 (or the image enables
+      # DOTNET_ROLL_FORWARD=Major): move BOTH images and the xmla SDK_IMAGE
+      # together, then take the major again.
+      - dependency-name: mcr.microsoft.com/dotnet/sdk
+        update-types: ['version-update:semver-major']
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
