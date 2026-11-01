@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` and `unlabeled` are NOT in GitHub's default set, and the e2e
+    # gate reads the `full-ci` label -- so without them the label would change
+    # nothing until the next push, which is the opposite of an escape hatch.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 # PR refs supersede; MAIN COMMITS DO NOT.
 #
