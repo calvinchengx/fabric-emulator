@@ -158,7 +158,7 @@ spark-client = [
     # which client the shipped Sail server was built against, not a dependency
     # kept current: it moves when pysail does, or not at all. The same class as
     # `apache/spark` in .github/dependabot.yml.
-    "pyspark-client==4.2.0",
+    "pyspark-client==4.2.1",
 ]
 sail = [
     # PERMANENT HOLD, for the reason written out above: the server version and
@@ -178,7 +178,7 @@ sail = [
     # which is how a silently wrong aggregate should be found -- but not by
     # them. The hold is until upstream fixes it; e2e/sail/driver.py asserts
     # count() == the rows so the next bump cannot bring it back quietly.
-    "pysail==0.7.1",
+    "pysail==0.7.2",
     { include-group = "spark-client" },
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
@@ -233,7 +233,7 @@ spark-agent-dbt = [
     # the same condition the dependabot hold already names. At that point the
     # conflict declaration goes too, and there is nothing left for an exact pin
     # to hold still.
-    "dbt-databricks==1.12.8",
+    "dbt-databricks==1.13.0",
     # The engine, in the AGENT image. Fabric starts a Spark session per notebook
     # and shares one only within a single-user boundary, so the agent needs to
     # be able to start an engine per user rather than route every caller through
@@ -246,7 +246,7 @@ spark-agent-dbt = [
     # rather than a deferred upgrade. It moves with the `sail` group or not at
     # all -- including the 0.7.2 count() regression written out in the `sail`
     # group above.
-    "pysail==0.7.1",
+    "pysail==0.7.2",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
