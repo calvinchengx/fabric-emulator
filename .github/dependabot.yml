@@ -331,6 +331,19 @@ updates:
       # a change that updates libicu72 and runs both of those e2e suites.
       - dependency-name: debian
 
+      # .NET 8 -> 10 IS A MIGRATION, NOT A BUMP. The xmla suite builds an app
+      # that targets net8.0 and runs it with the SDK image's `dotnet`; the 10.0
+      # image carries no .NET 8 runtime, so the contract would build and then
+      # fail to start. The two harness images must also stay on ONE base -- a
+      # test asserts the image xmla pulls is the base sempy builds on -- so a
+      # bump on one side alone breaks the invariant.
+      #
+      # LIFT THIS when the xmla app targets net10.0 (or the image enables
+      # DOTNET_ROLL_FORWARD=Major): move BOTH images and the xmla SDK_IMAGE
+      # together, then take the major again.
+      - dependency-name: mcr.microsoft.com/dotnet/sdk
+        update-types: ['version-update:semver-major']
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
