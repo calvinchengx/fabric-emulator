@@ -20,10 +20,10 @@ importers:
     dependencies:
       '@lucide/svelte':
         specifier: ^1.61.0
-        version: 1.61.0(svelte@5.57.2)
+        version: 1.61.0(svelte@5.57.3)
       bits-ui:
         specifier: ^2.20.2
-        version: 2.20.2(@internationalized/date@3.12.4)(svelte@5.57.2)
+        version: 2.20.2(@internationalized/date@3.12.4)(svelte@5.57.3)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -42,7 +42,7 @@ importers:
         version: 1.64.1
       '@sveltejs/vite-plugin-svelte':
         specifier: ^7.3.1
-        version: 7.3.1(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+        version: 7.3.1(svelte@5.57.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
@@ -51,7 +51,7 @@ importers:
         version: 7.0.1(@testing-library/dom@10.4.1)(vitest@5.0.5)
       '@testing-library/svelte':
         specifier: ^5.4.2
-        version: 5.4.2(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.0.5)
+        version: 5.4.2(svelte@5.57.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.0.5)
       '@vitest/coverage-v8':
         specifier: ^5.0.5
         version: 5.0.5(vitest@5.0.5)
@@ -59,11 +59,11 @@ importers:
         specifier: ^30.1.3
         version: 30.1.3
       svelte:
-        specifier: ^5.57.2
-        version: 5.57.2
+        specifier: ^5.57.3
+        version: 5.57.3
       svelte-check:
         specifier: ^4.7.7
-        version: 4.7.7(picomatch@4.0.7)(svelte@5.57.2)(typescript@6.0.3)
+        version: 4.7.7(picomatch@4.0.7)(svelte@5.57.3)(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -1223,8 +1223,8 @@ packages:
   '@types/estree-jsx@1.0.5':
     resolution: {integrity: sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==}
 
-  '@types/estree@1.0.9':
-    resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+  '@types/estree@1.0.10':
+    resolution: {integrity: sha512-lTyOMnOcmRBzdCv6/4zUZCrEhV0xrqQiUZBZtVcbmLHBXKLnN8q89v/wKRF/Q0HbwVsqbIG3o5HDoFl9sduM+g==}
 
   '@types/geojson@7946.0.16':
     resolution: {integrity: sha512-6C8nqWur3j98U6+lXDfTUWIfgvZU+EumvpHKcYjujKH7woYyLj2sUmff0tRhrqM7BohUw7Pz3ZB1jj2gW9Fvmg==}
@@ -2932,8 +2932,8 @@ packages:
     peerDependencies:
       svelte: ^5.30.2
 
-  svelte@5.57.2:
-    resolution: {integrity: sha512-1YiPCAXT0Ct6g1vOMmSLa0Nsc3QRMvtDF32ihgglGVrugIuIK38RyDiFNXVDhtQ81TJjSO57NdMw6DyYLqSGDQ==}
+  svelte@5.57.3:
+    resolution: {integrity: sha512-5mAftM3SoDV9X0zdF386F9p2pv8iKOwi/KfBS1XnBAkVCKFzVOLHUoa8iGWAt4buoicLmyWVRpuuD5wplXOQsg==}
     engines: {node: '>=18'}
 
   svgo@4.1.0:
@@ -3903,13 +3903,13 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@lucide/svelte@1.61.0(svelte@5.57.2)':
+  '@lucide/svelte@1.61.0(svelte@5.57.3)':
     dependencies:
-      svelte: 5.57.2
+      svelte: 5.57.3
 
   '@mdx-js/mdx@3.1.1':
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       '@types/mdx': 2.0.14
@@ -4079,12 +4079,12 @@ snapshots:
 
   '@sveltejs/load-config@0.2.3': {}
 
-  '@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))':
+  '@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))':
     dependencies:
       deepmerge: 4.3.1
       magic-string: 1.4.2
       obug: 2.2.1
-      svelte: 5.57.2
+      svelte: 5.57.3
       vite: 8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
       vitefu: 1.1.3(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
@@ -4183,15 +4183,15 @@ snapshots:
     optionalDependencies:
       vitest: 5.0.5(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
-  '@testing-library/svelte-core@1.1.3(svelte@5.57.2)':
+  '@testing-library/svelte-core@1.1.3(svelte@5.57.3)':
     dependencies:
-      svelte: 5.57.2
+      svelte: 5.57.3
 
-  '@testing-library/svelte@5.4.2(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.0.5)':
+  '@testing-library/svelte@5.4.2(svelte@5.57.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.0.5)':
     dependencies:
       '@testing-library/dom': 10.4.1
-      '@testing-library/svelte-core': 1.1.3(svelte@5.57.2)
-      svelte: 5.57.2
+      '@testing-library/svelte-core': 1.1.3(svelte@5.57.3)
+      svelte: 5.57.3
     optionalDependencies:
       vite: 8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
       vitest: 5.0.5(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
@@ -4333,9 +4333,9 @@ snapshots:
 
   '@types/estree-jsx@1.0.5':
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
 
-  '@types/estree@1.0.9': {}
+  '@types/estree@1.0.10': {}
 
   '@types/geojson@7946.0.16': {}
 
@@ -4623,15 +4623,15 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
-  bits-ui@2.20.2(@internationalized/date@3.12.4)(svelte@5.57.2):
+  bits-ui@2.20.2(@internationalized/date@3.12.4)(svelte@5.57.3):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0
       '@internationalized/date': 3.12.4
       esm-env: 1.2.2
-      runed: 0.35.1(svelte@5.57.2)
-      svelte: 5.57.2
-      svelte-toolbelt: 0.10.6(svelte@5.57.2)
+      runed: 0.35.1(svelte@5.57.3)
+      svelte: 5.57.3
+      svelte-toolbelt: 0.10.6(svelte@5.57.3)
       tabbable: 6.5.1
     transitivePeerDependencies:
       - '@sveltejs/kit'
@@ -5058,7 +5058,7 @@ snapshots:
 
   estree-util-attach-comments@3.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
 
   estree-util-build-jsx@3.0.1:
     dependencies:
@@ -5071,7 +5071,7 @@ snapshots:
 
   estree-util-scope@1.0.1:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       devlop: 1.1.0
 
   estree-util-to-js@2.0.0:
@@ -5087,7 +5087,7 @@ snapshots:
 
   estree-walker@3.0.3:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
 
   eventemitter3@5.0.4: {}
 
@@ -5256,7 +5256,7 @@ snapshots:
 
   hast-util-to-estree@3.1.3:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       '@types/estree-jsx': 1.0.5
       '@types/hast': 3.0.5
       comma-separated-tokens: 2.0.3
@@ -5291,7 +5291,7 @@ snapshots:
 
   hast-util-to-jsx-runtime@2.3.6:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       '@types/hast': 3.0.5
       '@types/unist': 3.0.3
       comma-separated-tokens: 2.0.3
@@ -5399,7 +5399,7 @@ snapshots:
 
   is-reference@3.0.3:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
 
   jiti@2.7.0: {}
 
@@ -5924,7 +5924,7 @@ snapshots:
 
   micromark-extension-mdx-expression@3.0.1:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-factory-mdx-expression: 2.0.3
       micromark-factory-space: 2.1.0
@@ -5935,7 +5935,7 @@ snapshots:
 
   micromark-extension-mdx-jsx@3.0.2:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       estree-util-is-identifier-name: 3.0.0
       micromark-factory-mdx-expression: 2.0.3
@@ -5952,7 +5952,7 @@ snapshots:
 
   micromark-extension-mdxjs-esm@3.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-core-commonmark: 2.0.4
       micromark-util-character: 2.1.1
@@ -5988,7 +5988,7 @@ snapshots:
 
   micromark-factory-mdx-expression@2.0.3:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       devlop: 1.1.0
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
@@ -6056,7 +6056,7 @@ snapshots:
 
   micromark-util-events-to-acorn@2.0.3:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       '@types/unist': 3.0.3
       devlop: 1.1.0
       estree-util-visit: 2.0.0
@@ -6295,7 +6295,7 @@ snapshots:
 
   recma-build-jsx@1.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       estree-util-build-jsx: 3.0.1
       vfile: 6.0.3
 
@@ -6310,14 +6310,14 @@ snapshots:
 
   recma-parse@1.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       esast-util-from-js: 2.0.1
       unified: 11.0.5
       vfile: 6.0.3
 
   recma-stringify@1.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       estree-util-to-js: 2.0.0
       unified: 11.0.5
       vfile: 6.0.3
@@ -6349,7 +6349,7 @@ snapshots:
 
   rehype-recma@1.0.0:
     dependencies:
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       '@types/hast': 3.0.5
       hast-util-to-estree: 3.1.3
     transitivePeerDependencies:
@@ -6477,12 +6477,12 @@ snapshots:
       points-on-curve: 0.2.0
       points-on-path: 0.2.1
 
-  runed@0.35.1(svelte@5.57.2):
+  runed@0.35.1(svelte@5.57.3):
     dependencies:
       dequal: 2.0.3
       esm-env: 1.2.2
       lz-string: 1.5.0
-      svelte: 5.57.2
+      svelte: 5.57.3
 
   rw@1.3.3: {}
 
@@ -6601,7 +6601,7 @@ snapshots:
 
   stylis@4.4.0: {}
 
-  svelte-check@4.7.7(picomatch@4.0.7)(svelte@5.57.2)(typescript@6.0.3):
+  svelte-check@4.7.7(picomatch@4.0.7)(svelte@5.57.3)(typescript@6.0.3):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@sveltejs/load-config': 0.2.3
@@ -6609,26 +6609,26 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.7)
       picocolors: 1.1.1
       sade: 1.8.1
-      svelte: 5.57.2
+      svelte: 5.57.3
       typescript: 6.0.3
     transitivePeerDependencies:
       - picomatch
 
-  svelte-toolbelt@0.10.6(svelte@5.57.2):
+  svelte-toolbelt@0.10.6(svelte@5.57.3):
     dependencies:
       clsx: 2.1.1
-      runed: 0.35.1(svelte@5.57.2)
+      runed: 0.35.1(svelte@5.57.3)
       style-to-object: 1.0.14
-      svelte: 5.57.2
+      svelte: 5.57.3
     transitivePeerDependencies:
       - '@sveltejs/kit'
 
-  svelte@5.57.2:
+  svelte@5.57.3:
     dependencies:
       '@jridgewell/remapping': 2.3.5
       '@jridgewell/sourcemap-codec': 1.6.0
       '@sveltejs/acorn-typescript': 1.0.13(acorn@8.19.0)
-      '@types/estree': 1.0.9
+      '@types/estree': 1.0.10
       acorn: 8.19.0
       aria-query: 5.3.1
       axobject-query: 4.1.0
