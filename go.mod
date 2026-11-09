@@ -4,12 +4,12 @@ go 1.27.3
 
 require (
 	github.com/calvinchengx/entra-emulator v0.9.0
-	github.com/calvinchengx/sqlglot-go v0.7.0
+	github.com/calvinchengx/sqlglot-go v0.9.0
 	github.com/jmespath-community/go-jmespath v1.1.1
 	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/segmentio/kafka-go v0.4.51
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
