@@ -148,7 +148,7 @@ brew install calvinchengx/tap/fabric-emulator
 ```
 
 ```bash
-# Anywhere Go runs -- needs Go >= 1.27.3
+# Anywhere Go runs -- needs Go >= 1.27.4
 go install github.com/calvinchengx/fabric-emulator/cmd/fabric-emulator@latest
 ```
 
